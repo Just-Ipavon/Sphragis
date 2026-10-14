@@ -29,8 +29,10 @@ of a clone.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
+
+from .observations import MemoryObservationStore, Observation, ObservationStore
 
 
 class RiskLevel(str, Enum):
@@ -45,13 +47,6 @@ class Signal:
     name: str
     weight: int
     detail: str
-
-
-@dataclass
-class Observation:
-    counter: int
-    timestamp: float
-    reader_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +73,10 @@ class CloneDetector:
                          closer than this imply two physical tags.
     gap_threshold      : counter jump above which we raise a weak gap signal.
     history_limit      : max observations retained per UID.
+    store              : where the per-UID history lives. Defaults to an
+                         in-process store; pass a shared one (e.g.
+                         `SqliteObservationStore`) when several processes score
+                         the same tags.
     """
 
     def __init__(
@@ -85,14 +84,15 @@ class CloneDetector:
         min_travel_seconds: float = 60.0,
         gap_threshold: int = 1000,
         history_limit: int = 50,
+        store: ObservationStore | None = None,
     ) -> None:
         self.min_travel_seconds = min_travel_seconds
         self.gap_threshold = gap_threshold
         self.history_limit = history_limit
-        self._history: dict[str, list[Observation]] = {}
+        self._store: ObservationStore = store or MemoryObservationStore()
 
     def history(self, uid_hex: str) -> list[Observation]:
-        return list(self._history.get(uid_hex.upper(), []))
+        return self._store.history(uid_hex.upper())
 
     def analyze(
         self,
@@ -103,7 +103,11 @@ class CloneDetector:
     ) -> DetectionResult:
         uid_hex = uid_hex.upper()
         now = time.time() if timestamp is None else timestamp
-        hist = self._history.get(uid_hex, [])
+        # Read the prior history and record this tap in one atomic step, so
+        # concurrent taps for the same UID are scored against each other.
+        hist = self._store.observe(
+            uid_hex, Observation(counter, now, reader_id), self.history_limit
+        )
         signals: list[Signal] = []
 
         seen_counters = {o.counter for o in hist}
@@ -146,9 +150,7 @@ class CloneDetector:
                 f"(+{counter - max_seen}); unusual but not conclusive",
             ))
 
-        result = self._aggregate(signals)
-        self._record(uid_hex, Observation(counter, now, reader_id))
-        return result
+        return self._aggregate(signals)
 
     def _aggregate(self, signals: list[Signal]) -> DetectionResult:
         score = min(100, sum(s.weight for s in signals))
@@ -173,9 +175,3 @@ class CloneDetector:
         else:
             detail = "counter advancing normally; no duplication signals"
         return DetectionResult(level, score, tuple(signals), detail)
-
-    def _record(self, uid_hex: str, obs: Observation) -> None:
-        hist = self._history.setdefault(uid_hex, [])
-        hist.append(obs)
-        if len(hist) > self.history_limit:
-            del hist[0 : len(hist) - self.history_limit]
