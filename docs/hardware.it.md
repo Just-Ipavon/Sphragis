@@ -3,10 +3,11 @@
 *[English](hardware.md) · Italiano*
 
 Come portare una NTAG 424 DNA nuova di fabbrica nel layout SUN che il motore
-verifica, e come controllare tap reali. Tutto gira con le **chiavi di fabbrica
-a zero**: è una procedura di banco per validare il motore, non un flusso di
-provisioning per la produzione (vedi [key-management.it.md](key-management.it.md)).
-Nessun comando in `tools/` esegue mai ChangeKey.
+verifica, e come controllare tap reali. La procedura gira con le **chiavi di
+fabbrica a zero** salvo dove indicato; sostituirle con chiavi per UID è
+descritto in [Chiavi reali](#chiavi-reali-sostituire-le-chiavi-di-fabbrica) e
+in [gestione chiavi](key-management.it.md). Solo `tools/rekey.py` esegue
+ChangeKey.
 
 ```bash
 pip install -e ".[hw]"         # pyserial (Chameleon Ultra), nfcpy (PN532)
@@ -211,6 +212,39 @@ Tutti questi tap sono conservati come test di regressione
 (`tests/test_sdmenc.py`, `test_physical_tag_*`). Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
 semplice e sblocca il file NDEF: Change resta sulla chiave 0 e le chiavi sono
 ancora a zero, quindi il blocco è reversibile.
+
+## Chiavi reali: sostituire le chiavi di fabbrica
+
+Non ancora validato su hardware. `tools/rekey.py` scrive chiavi per UID (vedi
+[gestione chiavi](key-management.it.md#scrivere-le-chiavi-sulle-tag));
+`--to-factory` annulla, così una tag di banco resta riutilizzabile.
+
+Segreti: un file esadecimale per chiave, leggibile solo da te, e **salvato in
+backup prima di cambiare le chiavi di qualunque tag** (perdere `master_admin`
+rende la tag non più riconfigurabile):
+
+```bash
+mkdir -p ~/.sphragis/keys && chmod 700 ~/.sphragis/keys
+for k in master_admin master_file meta_read; do
+  python -c "import secrets; print(secrets.token_hex(16))" > ~/.sphragis/keys/$k
+done
+chmod 600 ~/.sphragis/keys/*
+```
+
+Poi, su una tag già nel layout SUN:
+
+```bash
+python tools/rekey.py --reader chameleon --port /dev/ttyACM0 \
+    --secrets-dir ~/.sphragis/keys --context DEMO --dry-run       # piano, sola lettura
+python tools/rekey.py ... --yes                                  # cambia le chiavi
+python tools/tap_verify.py --reader chameleon --port /dev/ttyACM0 \
+    --secrets-dir ~/.sphragis/keys --context DEMO --taps 2         # chiavi lato server
+python tools/rekey.py ... --to-factory --yes                     # di nuovo chiavi zero
+```
+
+Dopo il cambio, `tools/provision.py` vuole gli stessi `--secrets-dir` e
+`--context`: modificare le impostazioni SDM o scrivere un file NDEF bloccato
+richiede allora l'autenticazione con il vero slot 0 della tag.
 
 ## Clone detection su hardware
 

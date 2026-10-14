@@ -28,7 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _reader import add_reader_args, reader_factory  # noqa: E402
 
+from sphragis.keyprov import DiversifiedTagKeys, current_tag_keys  # noqa: E402
 from sphragis.provision import provision_tag  # noqa: E402
+from sphragis.secrets import FileSecretsBackend  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,6 +46,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write-key", type=int, default=0, choices=range(5),
                         help="key that NDEF writes are locked to with --enc-data* "
                              "(default 0)")
+    parser.add_argument("--secrets-dir",
+                        help="tag keys already replaced with tools/rekey.py: directory "
+                             "with master_admin, master_file, meta_read (hex, 0600)")
+    parser.add_argument("--context", default="", help="diversification context")
+    parser.add_argument("--key-version", type=lambda v: int(v, 0), default=0x01,
+                        help="version of the diversified keys (default 01h)")
     parser.add_argument("--dry-run", action="store_true", help="read and plan, write nothing")
     parser.add_argument("--yes", action="store_true", help="confirm writing to the tag")
     args = parser.parse_args(argv)
@@ -73,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("refusing to write without --yes (or use --dry-run)")
 
     with reader_factory(args)() as transport:
+        if args.secrets_dir:
+            scheme = DiversifiedTagKeys.from_secrets(FileSecretsBackend(args.secrets_dir),
+                                                     context=args.context.encode(),
+                                                     version=args.key_version)
+            options["tag_keys"] = current_tag_keys(transport, [scheme], log=print)
         report = provision_tag(transport, args.base_url, dry_run=args.dry_run, log=print,
                                **options)
     if args.dry_run:

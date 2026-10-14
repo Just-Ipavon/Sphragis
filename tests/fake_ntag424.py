@@ -4,8 +4,9 @@ Test-only model of the NTAG 424 DNA PICC side, enough to exercise provisioning:
   ISOSelect (NDEF app / CC / NDEF file), ISOReadBinary with SDM mirroring
   (PICCData, SDMENCFileData, SDMMAC over the dynamic MAC input),
   ISOUpdateBinary and WriteData under the file's access rights,
-  GetFileSettings (plain), AuthenticateEV2First and ChangeFileSettings in
-  CommMode.Full.
+  GetFileSettings (plain), AuthenticateEV2First, ChangeFileSettings and
+  ChangeKey (both cases) in CommMode.Full, GetKeyVersion (MAC) and
+  GetCardUID (Full, encrypted response).
 
 It reuses Sphragis' own primitives for SDM (compute_sdmmac) and file settings
 parsing, but implements the PICC half of EV2 independently so that the
@@ -13,6 +14,7 @@ reader-side code in sphragis.ev2 is checked against a counterpart.
 """
 
 import os
+import zlib
 
 from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
@@ -34,7 +36,9 @@ def _cmac(key, msg):
 class FakeNtag424:
     def __init__(self, uid=None, keys=None, settings=None, content=b""):
         self.uid = uid or bytes.fromhex("04") + os.urandom(6)
-        self.keys = keys or [bytes(16)] * 5
+        self.keys = list(keys or [bytes(16)] * 5)
+        self.key_versions = [0x00] * 5
+        self.key_changes = 0
         self.settings = settings or FileSettings(0x00, FACTORY_ACCESS)
         self.file = bytearray(content.ljust(256, b"\x00"))
         self.counter = 0
@@ -120,6 +124,7 @@ class FakeNtag424:
         if ins == 0x71:
             key_no = data[0]
             rnd_b = os.urandom(16)
+            self.session = None          # a new authentication drops the old session
             self._auth = (key_no, rnd_b)
             return AES.new(self.keys[key_no], AES.MODE_CBC, ZERO_IV).encrypt(rnd_b) + b"\x91\xAF"
         if ins == 0xAF and self._auth:
@@ -143,7 +148,84 @@ class FakeNtag424:
             return self._change_file_settings(data)
         if ins == 0x8D:
             return self._write_data(data)
+        if ins == 0xC4:
+            return self._change_key(data)
+        if ins == 0x64:
+            return self._get_key_version(data)
+        if ins == 0x51:
+            return self._get_card_uid(data)
         return b"\x91\x1C"
+
+    # -- secure messaging helpers (PICC side) -------------------------------
+    def _verify_cmd(self, ins, header, payload, mac):
+        s = self.session
+        ctr = s["ctr"].to_bytes(2, "little")
+        expect = _cmac(s["k_mac"], bytes([ins]) + ctr + s["ti"] + header + payload)[1::2]
+        return mac == expect
+
+    def _decrypt_cmd(self, enc):
+        s = self.session
+        ctr = s["ctr"].to_bytes(2, "little")
+        iv = AES.new(s["k_enc"], AES.MODE_ECB).encrypt(b"\xA5\x5A" + s["ti"] + ctr + bytes(8))
+        plain = AES.new(s["k_enc"], AES.MODE_CBC, iv).decrypt(enc)
+        return plain[:plain.rindex(b"\x80")]
+
+    def _respond(self, body=b""):
+        """Advance CmdCtr and answer 9100 with body || MACt (CommMode.MAC/Full)."""
+        s = self.session
+        s["ctr"] += 1
+        ctr = s["ctr"].to_bytes(2, "little")
+        mac = _cmac(s["k_mac"], b"\x00" + ctr + s["ti"] + body)[1::2]
+        return body + mac + b"\x91\x00"
+
+    def _encrypt_resp(self, plain):
+        s = self.session
+        ctr = (s["ctr"] + 1).to_bytes(2, "little")
+        iv = AES.new(s["k_enc"], AES.MODE_ECB).encrypt(b"\x5A\xA5" + s["ti"] + ctr + bytes(8))
+        plain += b"\x80" + bytes(-(len(plain) + 1) % 16)
+        return AES.new(s["k_enc"], AES.MODE_CBC, iv).encrypt(plain)
+
+    def _change_key(self, data):
+        s = self.session
+        if s is None or s["key_no"] != 0:        # only the AppMasterKey changes keys
+            return b"\x91\xAE"
+        header, enc, mac = data[:1], data[1:-8], data[-8:]
+        key_no = header[0]
+        if not self._verify_cmd(0xC4, header, enc, mac) or key_no > 4:
+            self.session = None
+            return b"\x91\x1E"
+        plain = self._decrypt_cmd(enc)
+        if key_no == s["key_no"]:
+            new, version = plain[:16], plain[16]
+            self.keys[key_no], self.key_versions[key_no] = new, version
+            self.key_changes += 1
+            self.session = None                     # session key gone
+            return b"\x91\x00"
+        new = bytes(a ^ b for a, b in zip(plain[:16], self.keys[key_no]))
+        version, crc = plain[16], plain[17:21]
+        if crc != (zlib.crc32(new) ^ 0xFFFFFFFF).to_bytes(4, "little"):
+            self.session = None
+            return b"\x91\x1E"
+        self.keys[key_no], self.key_versions[key_no] = new, version
+        self.key_changes += 1
+        return self._respond()
+
+    def _get_key_version(self, data):
+        if self.session is None:
+            return bytes([self.key_versions[data[0]]]) + b"\x91\x00"
+        header, mac = data[:1], data[1:]
+        if not self._verify_cmd(0x64, header, b"", mac):
+            self.session = None
+            return b"\x91\x1E"
+        return self._respond(bytes([self.key_versions[header[0]]]))
+
+    def _get_card_uid(self, data):
+        if self.session is None:
+            return b"\x91\xAE"
+        if not self._verify_cmd(0x51, b"", b"", data):
+            self.session = None
+            return b"\x91\x1E"
+        return self._respond(self._encrypt_resp(self.uid))
 
     def _write_data(self, data):
         """WriteData, CommMode.Plain (the only mode the provisioning flow uses)."""

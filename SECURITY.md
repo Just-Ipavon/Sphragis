@@ -12,9 +12,10 @@ Sphragis is a **learning / portfolio project**. Its cryptography is validated
 against the official NXP test vectors and the code has been adversarially
 self-reviewed (see [THREAT_MODEL.md](THREAT_MODEL.md)), but it has **not** been
 independently audited. It has been validated end to end on physical NTAG 424 DNA
-tags with the factory all-zero keys; its provisioning tools never change keys,
-so tags provisioned with them are not protected until real key management is
-in place (see [THREAT_MODEL.md](THREAT_MODEL.md#known-limitations-honest-scope)).
+tags with the factory all-zero keys. Tags keep those keys, and are therefore
+not protected, until `tools/rekey.py` replaces them with per-UID keys; that
+step is not yet validated on hardware (see
+[THREAT_MODEL.md](THREAT_MODEL.md#known-limitations-honest-scope)).
 Treat it accordingly.
 
 ### Supported versions
@@ -52,10 +53,10 @@ Sphragis è un **progetto di studio / portfolio**. La sua crittografia è valida
 contro i test vector ufficiali NXP e il codice è stato sottoposto a un
 auto-audit avversariale (vedi [THREAT_MODEL.it.md](THREAT_MODEL.it.md)), ma
 **non** è stato verificato in modo indipendente. È stato validato end to end su
-tag NTAG 424 DNA fisici con le chiavi di fabbrica tutte a zero; i suoi strumenti
-di provisioning non cambiano mai le chiavi, quindi i tag configurati con essi
-non sono protetti finché non c'è una vera gestione delle chiavi (vedi
-[THREAT_MODEL.it.md](THREAT_MODEL.it.md#limiti-noti-ambito-onesto)).
+tag NTAG 424 DNA fisici con le chiavi di fabbrica tutte a zero. I tag tengono
+quelle chiavi, e quindi non sono protetti, finché `tools/rekey.py` non le
+sostituisce con chiavi per UID; questo passo non è ancora validato su hardware
+(vedi [THREAT_MODEL.it.md](THREAT_MODEL.it.md#limiti-noti-ambito-onesto)).
 Regolati di conseguenza.
 
 ### Versioni supportate

@@ -35,6 +35,46 @@ keys = DiversifiedKeys(master_file_key=..., meta_read_key=..., context=b"DEMO")
 file_key = keys.file_read_key(uid)   # unica per tag
 ```
 
+## Scrivere le chiavi sulle tag
+
+`keyprov.py` sostituisce le cinque chiavi applicative di una tag con chiavi
+per UID (`tools/rekey.py` sull'host con il lettore). Assegnazione:
+
+| Slot | Ruolo | Chiave |
+|------|-------|--------|
+| 0 | AppMasterKey (riconfigura la tag) | AN10922 da `master_admin`, M = UID ‖ 00h ‖ contesto |
+| 1 | SDMFileRead (MAC, dati di file cifrati) | `DiversifiedKeys.file_read_key(uid)`, da `master_file` |
+| 2 | SDMMetaRead (PICCData) | `meta_read`, condivisa: l'UID si conosce solo dopo aver decifrato il PICCData |
+| 3, 4 | non usate dal layout SUN | AN10922 da `master_admin`, M = UID ‖ slot ‖ contesto |
+
+`master_admin` è un **segreto separato**: i server di verifica hanno bisogno
+solo di `master_file` e `meta_read`, quindi la chiave che può riconfigurare le
+tag resta sulla postazione di provisioning.
+
+Il flusso (`rekey_tag`):
+
+1. Autenticazione sullo slot 0 con uno schema noto (fabbrica o destinazione),
+   lettura dell'UID con GetCardUID e della versione di ogni slot con
+   GetKeyVersion. Le chiavi di fabbrica hanno versione 00h, quelle Sphragis
+   01h (o la `--key-version` scelta), quindi la chiave attuale di ogni slot è
+   nota; una versione che non corrisponde a nessuno schema noto ferma tutto
+   prima di qualunque scrittura.
+2. ChangeKey degli slot 1-4, poi lo slot 0 per ultimo (cambiare la chiave di
+   sessione chiude la sessione). AN12196 §5.16 copre entrambi i casi; entrambi
+   sono vincolati ai suoi vettori.
+3. Autenticazione con ogni nuova chiave e rilettura di tutte le versioni.
+
+Un'esecuzione interrotta riprende dalle versioni; `--to-factory` rimette le
+chiavi tutte a zero. Le chiavi non compaiono mai nei log, solo i key check
+value (KCV). L'UID viene da GetCardUID, oppure da un tap SUN che deve
+verificare per intero con le chiavi candidate (decifrare il PICCData da solo
+non autentica nulla).
+
+**Non perdere `master_admin`.** Senza, una tag non si può più riconfigurare né
+riportare alle chiavi di fabbrica; i tap continuano a verificare finché
+esistono `master_file` e `meta_read`. Fai un backup dei segreti prima di
+cambiare le chiavi di qualunque tag.
+
 ## Backend dei segreti
 
 `secrets.py` astrae *da dove* arriva il materiale chiave dietro una piccola

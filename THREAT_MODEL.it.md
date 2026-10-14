@@ -56,12 +56,13 @@ freschezza.
   velocità/posizione o dall'eventuale collisione col flusso dell'originale.
 - **Attacchi relay / NFC-forwarding** al momento della lettura sono fuori
   ambito — attaccano il canale lettore-tag, non il messaggio SDM.
-- **Chiavi di fabbrica sui tag configurati.** Gli strumenti di provisioning
-  lasciano le chiavi di fabbrica tutte a zero e non inviano mai ChangeKey. Con
-  chiavi note chiunque può calcolare PICCData e SDMMAC validi, quindi un tag
-  così non prova nulla finché le sue chiavi non vengono sostituite con chiavi
-  segrete diversificate per UID (il lato verificatore, `DiversifiedKeys`, è
-  pronto; la scrittura delle chiavi sul tag non è implementata).
+- **Chiavi di fabbrica sui tag configurati.** `tools/provision.py` da solo
+  lascia le chiavi di fabbrica tutte a zero. Con chiavi note chiunque può
+  calcolare PICCData e SDMMAC validi, quindi un tag così non prova nulla finché
+  `tools/rekey.py` non ha sostituito le sue chiavi con chiavi segrete per UID
+  (vedi [gestione chiavi](docs/key-management.it.md#scrivere-le-chiavi-sulle-tag);
+  non ancora validato su hardware). Chi possiede `master_admin` può
+  riconfigurare tutti i tag: deve stare solo sulla postazione di provisioning.
 - **Esaurimento del contatore**: `SDMReadCtr` è a 24 bit. La gestione del
   rollover è una questione di deployment e non è modellata qui.
 - `TagAnalyzer` mantiene un floor anti-replay persistente (`CounterBackend`)
