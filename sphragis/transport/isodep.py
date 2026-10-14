@@ -47,7 +47,13 @@ class IsoDepTransport(ApduTransport):
 
     def activate(self) -> bytes:
         """Send RATS on an already-selected tag; returns the ATS."""
-        ats = self._raw(_RATS)
+        return self.use_ats(self._raw(_RATS))
+
+    def use_ats(self, ats: bytes) -> bytes:
+        """
+        Adopt an ATS obtained elsewhere (e.g. a reader that sends RATS itself
+        during selection): take the FSC from it and reset the block number.
+        """
         if not ats or ats[0] != len(ats):
             raise TransportError(f"invalid ATS {ats.hex().upper()}")
         self.ats = ats

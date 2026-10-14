@@ -189,6 +189,7 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durevole, atomic
 | Gestione chiavi | [key-management.md](docs/key-management.md) | [key-management.it.md](docs/key-management.it.md) |
 | API REST | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |
 | Produzione e deployment | [production.md](docs/production.md) | [production.it.md](docs/production.it.md) |
+| Tag fisici (banco) | [hardware.md](docs/hardware.md) | [hardware.it.md](docs/hardware.it.md) |
 | Threat model | [THREAT_MODEL.md](THREAT_MODEL.md) | [THREAT_MODEL.it.md](THREAT_MODEL.it.md) |
 | Politica di sicurezza | [SECURITY.md](SECURITY.md) | [SECURITY.md](SECURITY.md) |
 
@@ -215,7 +216,7 @@ sphragis/
   diagnostics.py   ispezione del tap (layout byte del PICCData, offset NDEF)
   ndef.py          codifica file NDEF URI + calcolo offset SDM
   apdu.py          helper APDU ISO 7816-4
-  transport/       ApduTransport: scriptato / emulato / ISO-DEP + stub hardware
+  transport/       ApduTransport: scriptato / emulato / ISO-DEP / Chameleon Ultra / PN532
   ev2.py           AuthenticateEV2First + secure messaging (vettori AN12196)
   sdmconfig.py     impostazioni file SDM: build / parse di ChangeFileSettings
   provision.py     provisioning SUN idempotente a chiavi zero

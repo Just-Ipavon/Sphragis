@@ -14,11 +14,11 @@ for raw ISO 7816-4 APDUs. That keeps all protocol logic testable in software:
     EmulatorTransport   in-memory, a Type 4 NDEF tag backed by EmulatedTag
     IsoDepTransport     ISO 14443-4 block framing over a raw 14443-A link (pure)
 
-Hardware backends (run ONLY on a host with the reader attached; not exercised
-by the test suite):
+Hardware backends (need `sphragis[hw]` and the reader attached):
 
     ChameleonTransport  Chameleon Ultra used as a raw 14443-A frame pipe
-    Pn532Transport      PN532 via nfcpy
+                        (serial protocol covered by tests with a fake device)
+    Pn532Transport      PN532 via nfcpy (not exercised by the test suite)
 """
 
 from __future__ import annotations
