@@ -118,6 +118,11 @@ python -m sphragis.cli verify \
   --meta-key 00000000000000000000000000000000 \
   --file-key 00000000000000000000000000000000 \
   "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
+
+# Decodifica cosa emette un tag: PICCDataTag, UID, SDMReadCtr (LE), offset NDEF.
+# Solo diagnostica, nessun verdetto; chiavi di default a zero (fabbrica).
+python -m sphragis.cli inspect \
+  "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
 ```
 
 ## API REST
@@ -142,7 +147,7 @@ attaccante. I lettori autenticati ricevono la valutazione completa, e il loro
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 71 test
+python -m pytest -q      # 144 test
 ```
 
 - **Known-answer**: riproduce il vettore SDM ufficiale NXP.
@@ -184,6 +189,7 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durevole, atomic
 | Gestione chiavi | [key-management.md](docs/key-management.md) | [key-management.it.md](docs/key-management.it.md) |
 | API REST | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |
 | Produzione e deployment | [production.md](docs/production.md) | [production.it.md](docs/production.it.md) |
+| Tag fisici (banco) | [hardware.md](docs/hardware.md) | [hardware.it.md](docs/hardware.it.md) |
 | Threat model | [THREAT_MODEL.md](THREAT_MODEL.md) | [THREAT_MODEL.it.md](THREAT_MODEL.it.md) |
 | Politica di sicurezza | [SECURITY.md](SECURITY.md) | [SECURITY.md](SECURITY.md) |
 
@@ -207,7 +213,15 @@ sphragis/
   api/             app FastAPI (extra opzionale `sphragis[api]`)
   adversary.py     toolkit dell'attaccante (replay, forge, rollback, key-clone)
   emulator.py      tag NTAG 424 DNA software (genera URL SUN validi)
-  cli.py           verify / emulate da riga di comando
+  diagnostics.py   ispezione del tap (layout byte del PICCData, offset NDEF)
+  ndef.py          codifica file NDEF URI + calcolo offset SDM
+  apdu.py          helper APDU ISO 7816-4
+  transport/       ApduTransport: scriptato / emulato / ISO-DEP / Chameleon Ultra / PN532
+  ev2.py           AuthenticateEV2First + secure messaging (vettori AN12196)
+  sdmconfig.py     impostazioni file SDM: build / parse di ChangeFileSettings
+  provision.py     provisioning SUN idempotente a chiavi zero
+  cli.py           verify / inspect / emulate da riga di comando
+tools/             sdm_probe / provision / tap_verify (da eseguire sull'host con hardware)
 tests/             suite known-answer + avversariale + produzione + servizio/API
 examples/          demo.py, clone_demo.py
 docs/              documentazione tecnica bilingue

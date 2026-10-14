@@ -115,6 +115,11 @@ python -m sphragis.cli verify \
   --meta-key 00000000000000000000000000000000 \
   --file-key 00000000000000000000000000000000 \
   "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
+
+# Decode what a tag emits: PICCDataTag, UID, SDMReadCtr (LE), NDEF offsets.
+# Diagnostic only, no verdict; keys default to the all-zero factory keys.
+python -m sphragis.cli inspect \
+  "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
 ```
 
 ## REST API
@@ -138,7 +143,7 @@ their token only. See [docs/api.md](docs/api.md).
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 71 tests
+python -m pytest -q      # 144 tests
 ```
 
 - **Known-answer**: reproduces the official NXP SDM vector.
@@ -179,6 +184,7 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durable, atomic
 | Key management | [key-management.md](docs/key-management.md) | [key-management.it.md](docs/key-management.it.md) |
 | REST API | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |
 | Production & deployment | [production.md](docs/production.md) | [production.it.md](docs/production.it.md) |
+| Physical tags (bench) | [hardware.md](docs/hardware.md) | [hardware.it.md](docs/hardware.it.md) |
 | Threat model | [THREAT_MODEL.md](THREAT_MODEL.md) | [THREAT_MODEL.it.md](THREAT_MODEL.it.md) |
 | Security policy | [SECURITY.md](SECURITY.md) | [SECURITY.md](SECURITY.md) |
 
@@ -202,7 +208,15 @@ sphragis/
   api/             FastAPI app (optional extra `sphragis[api]`)
   adversary.py     attacker toolkit (replay, forge, rollback, key-clone)
   emulator.py      software NTAG 424 DNA tag (generates valid SUN URLs)
-  cli.py           command-line verify / emulate
+  diagnostics.py   tap inspection (PICCData byte layout, NDEF offsets)
+  ndef.py          NDEF URI file encoding + SDM offset arithmetic
+  apdu.py          ISO 7816-4 APDU helpers
+  transport/       ApduTransport: scripted / emulated / ISO-DEP / Chameleon Ultra / PN532
+  ev2.py           AuthenticateEV2First + secure messaging (AN12196 vectors)
+  sdmconfig.py     SDM file settings: build / parse ChangeFileSettings
+  provision.py     idempotent zero-key SUN provisioning flow
+  cli.py           command-line verify / inspect / emulate
+tools/             sdm_probe / provision / tap_verify (run on the hardware host)
 tests/             known-answer + adversarial + production + service/API suites
 examples/          demo.py, clone_demo.py
 docs/              bilingual technical documentation

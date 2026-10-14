@@ -24,10 +24,13 @@ dependencies = ["pycryptodome>=3.20"]
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
+# Reader transports for tools/ on a hardware host (PN532 via nfcpy, Chameleon
+# serial link). The core engine never imports these.
+hw = ["nfcpy>=1.0.4", "pyserial>=3.5"]
 test = ["pytest>=7", "httpx>=0.27"]
 
 [project.scripts]
 sphragis = "sphragis.cli:main"
 
 [tool.setuptools]
-packages = ["sphragis", "sphragis.api"]
+packages = ["sphragis", "sphragis.api", "sphragis.transport"]
