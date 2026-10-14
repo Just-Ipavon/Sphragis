@@ -182,9 +182,33 @@ dei permessi, mentre con la scrittura libera la stessa forma è accettata (è
 così che è stato scritto il modello). Per provare un blocco va usata la forma
 del datasheet senza Le; un `6700` non dimostra nulla sui permessi.
 
-Questi tap sono conservati come test di regressione
-(`tests/test_sdmenc.py::test_physical_tag_taps_verify_and_replay_is_caught`).
-Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
+**5. Riscrittura autenticata.** Portare a 32 byte il testo in chiaro della tag
+bloccata cambia anche lo spazio riservato, quindi un'unica sessione EV2 porta
+sia i WriteData in chiaro (modello da 154 byte, a blocchi di un frame) sia il
+ChangeFileSettings cifrato. Il MAC di quest'ultimo copre il contatore
+comandi, quindi il fatto che sia accettato conferma anche la gestione del
+CmdCtr durante le scritture in chiaro:
+
+```
+$ python tools/provision.py … --enc-data 0123456789ABCDEFFEDCBA9876543210 --dry-run
+NDEF file     : 154 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x40, SDMMACOffset=0x8A
+current       : settings differ, NDEF differs
+would write  : NDEF template via WriteData (auth with key 0)
+would change : file settings (auth with key 0, CommMode.Full)
+
+$ python tools/provision.py … --enc-data 0123456789ABCDEFFEDCBA9876543210 --yes
+wrote        : NDEF template (WriteData, authenticated with key 0)
+changed      : file settings (authenticated with key 0)
+check        : AUTHENTIC, UID 04801A82161690, SDMReadCtr 8, file data match
+RESULT       : provisioned and verified
+```
+
+Rilanciando lo stesso dry run, lo strumento decifra il tap corrente, trova il
+testo in chiaro già a posto e non scrive nulla (`already provisioned: nothing
+to write`); i tap successivi si verificano con il testo da 32 byte.
+
+Tutti questi tap sono conservati come test di regressione
+(`tests/test_sdmenc.py`, `test_physical_tag_*`). Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
 semplice e sblocca il file NDEF: Change resta sulla chiave 0 e le chiavi sono
 ancora a zero, quindi il blocco è reversibile.
 

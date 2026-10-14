@@ -179,9 +179,32 @@ free write access the same form is accepted (it is how the template was
 written). To test a lock, use the datasheet form without Le; a `6700` proves
 nothing about access rights.
 
-These taps are kept as a regression test
-(`tests/test_sdmenc.py::test_physical_tag_taps_verify_and_replay_is_caught`).
-Running plain provisioning again (without `--enc-data`) returns the tag to
+**5. Authenticated rewrite.** Changing the plaintext of the locked tag to 32
+bytes changes the placeholder too, so one EV2 session carries both plain
+WriteData commands (154-byte template, single-frame chunks) and the encrypted
+ChangeFileSettings. The latter's MAC covers the command counter, so its
+acceptance also confirms the CmdCtr bookkeeping across the plain writes:
+
+```
+$ python tools/provision.py … --enc-data 0123456789ABCDEFFEDCBA9876543210 --dry-run
+NDEF file     : 154 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x40, SDMMACOffset=0x8A
+current       : settings differ, NDEF differs
+would write  : NDEF template via WriteData (auth with key 0)
+would change : file settings (auth with key 0, CommMode.Full)
+
+$ python tools/provision.py … --enc-data 0123456789ABCDEFFEDCBA9876543210 --yes
+wrote        : NDEF template (WriteData, authenticated with key 0)
+changed      : file settings (authenticated with key 0)
+check        : AUTHENTIC, UID 04801A82161690, SDMReadCtr 8, file data match
+RESULT       : provisioned and verified
+```
+
+Running the same dry run again decrypts the current tap, finds the plaintext
+already in place and writes nothing (`already provisioned: nothing to
+write`); further taps verify with the 32-byte plaintext.
+
+All these taps are kept as regression tests (`tests/test_sdmenc.py`,
+`test_physical_tag_*`). Running plain provisioning again (without `--enc-data`) returns the tag to
 plain SUN and unlocks the NDEF file: Change stays on key 0 and the keys are
 still all-zero, so the lock is reversible.
 

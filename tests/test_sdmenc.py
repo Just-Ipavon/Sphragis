@@ -298,3 +298,24 @@ def test_physical_tag_taps_verify_and_replay_is_caught():
         assert r.file_data == b"0123456789ABCDEF"
     replay = verifier.verify(FIELD_TAPS[0][0])
     assert replay.verdict is Verdict.REPLAY and replay.file_data is None
+
+
+# Same tag after the authenticated rewrite (WriteData + ChangeFileSettings in
+# one EV2 session) to a 32-byte plaintext, SDMENCLength 0x40.
+FIELD_TAPS_32 = [
+    ("https://example.com/t?picc_data=39DDB81313481DCEE9A9B66B8442A811"
+     "&enc=4FD2EA682D09ABCEFEC96CA46825F55F2DC6C6E06A32DBFDDBBA81E21B1B4760"
+     "&cmac=F209BE0EF0C4369E", 11),
+    ("https://example.com/t?picc_data=7E2BC9996020D84C420CA6C09AD6BF33"
+     "&enc=3EE1FCDC357C9B828C8FDCDC8E9BFF510CE07C557E5EC902804CF032C273F37D"
+     "&cmac=4ABFA889AAFEE2FF", 12),
+]
+
+
+def test_physical_tag_after_authenticated_rewrite():
+    verifier = _zero_key_verifier()
+    for url, counter in FIELD_TAPS_32:
+        r = verifier.verify(url)
+        assert r.verdict is Verdict.AUTHENTIC, r.detail
+        assert (r.uid, r.read_counter) == ("04801A82161690", counter)
+        assert r.file_data == b"0123456789ABCDEFFEDCBA9876543210"
