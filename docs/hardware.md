@@ -230,12 +230,19 @@ Then, on a tag already in the SUN layout:
 
 ```bash
 python tools/rekey.py --reader chameleon --port /dev/ttyACM0 \
-    --secrets-dir ~/.sphragis/keys --context DEMO --dry-run       # read-only plan
+    --secrets-dir ~/.sphragis/keys --inventory ~/.sphragis/inventory.db \
+    --context DEMO --dry-run                                       # read-only plan
 python tools/rekey.py ... --yes                                  # change the keys
 python tools/tap_verify.py --reader chameleon --port /dev/ttyACM0 \
     --secrets-dir ~/.sphragis/keys --context DEMO --taps 2         # server-side keys
 python tools/rekey.py ... --to-factory --yes                     # back to zero keys
 ```
+
+The dry run already reads the originality signature (Read_Sig, read-only) and
+prints `originality  : NXP signature verifies for this UID`; that line on a
+genuine tag is the hardware check of the signature code. `--yes` without
+`--uid` asks you to type the UID shown. Keep the inventory file next to the
+secrets and back it up with them.
 
 Once keyed, `tools/provision.py` needs the same `--secrets-dir` and
 `--context`: changing the SDM settings or writing a locked NDEF file then

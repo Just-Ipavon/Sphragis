@@ -53,12 +53,14 @@ tag resta sulla postazione di provisioning.
 
 Il flusso (`rekey_tag`):
 
-1. Autenticazione sullo slot 0 con uno schema noto (fabbrica o destinazione),
+1. Lettura della firma di originalità NXP (Read_Sig) prima dell'autenticazione.
+   Autenticazione sullo slot 0 con uno schema noto (fabbrica o destinazione),
    lettura dell'UID con GetCardUID e della versione di ogni slot con
    GetKeyVersion. Le chiavi di fabbrica hanno versione 00h, quelle Sphragis
    01h (o la `--key-version` scelta), quindi la chiave attuale di ogni slot è
    nota; una versione che non corrisponde a nessuno schema noto ferma tutto
-   prima di qualunque scrittura.
+   prima di qualunque scrittura. Qui girano i controlli d'identità descritti
+   sotto, poi l'operatore conferma l'UID.
 2. ChangeKey degli slot 1-4, poi lo slot 0 per ultimo (cambiare la chiave di
    sessione chiude la sessione). AN12196 §5.16 copre entrambi i casi; entrambi
    sono vincolati ai suoi vettori.
@@ -69,6 +71,42 @@ chiavi tutte a zero. Le chiavi non compaiono mai nei log, solo i key check
 value (KCV). L'UID viene da GetCardUID, oppure da un tap SUN che deve
 verificare per intero con le chiavi candidate (decifrare il PICCData da solo
 non autentica nulla).
+
+### Cambiare le chiavi in sicurezza
+
+Il primo cambio chiavi di qualunque NTAG 424 DNA avviene con la chiave pubblica
+tutta a zero. Qualunque cosa risponda come una tag di fabbrica (un Chameleon,
+un chip contraffatto) riceverebbe le chiavi dell'UID che dichiara, quindi
+`rekey_tag` controlla, prima che una chiave lasci la postazione:
+
+- **Firma di originalità.** La firma ECDSA (secp224r1) che NXP mette sull'UID
+  di ogni chip deve verificare con la chiave pubblica NXP, e l'UID
+  dell'anticollisione deve coincidere con quello di GetCardUID dove il
+  lettore lo espone. Un UID inventato non passa. La firma è statica, quindi un
+  emulatore che copia una tag autentica può riproporla: alza il costo, non
+  prova il chip.
+- **Inventario degli UID** (`SqliteKeyInventory`, `--inventory`). L'UID viene
+  registrato come `keying` prima di inviare la prima chiave e `keyed` dopo la
+  verifica (`factory` dopo un ripristino verificato). Un UID presente
+  nell'inventario che risponde con chiavi di fabbrica viene rifiutato: una tag
+  autentica già cambiata non può trovarsi in quello stato, quindi è una copia,
+  o una tag ripristinata fuori dal tool (`--allow-known-uid` per una che hai
+  in mano).
+- **Prova di possesso.** Una tag i cui slot dichiarano chiavi non di fabbrica
+  deve autenticarsi con esse, e conta solo uno slot specifico dell'UID (0, 1,
+  3, 4): lo slot 2 contiene `meta_read`, condivisa, che non prova nulla
+  sull'UID. È ciò che permette di riprendere in sicurezza un'esecuzione
+  interrotta (lo slot 1 cambia per primo).
+- **Conferma.** UID e piano vengono mostrati; senza `--uid` l'operatore digita
+  l'UID prima di qualunque scrittura.
+
+Cosa resta, per costruzione: una cattura radio passiva di un cambio chiavi da
+fabbrica rivela le chiavi inviate, perché le chiavi di sessione derivano dalla
+chiave zero e dai numeri casuali scambiati. Cambia le chiavi in un luogo
+schermato, vicino al lettore, con tag da una fornitura che controlli. E
+`meta_read` è condivisa da tutte le tag: se trapela si perde la privacy
+dell'UID di tutte (non l'autenticità, che si basa sulla chiave FileRead per
+UID).
 
 **Non perdere `master_admin`.** Senza, una tag non si può più riconfigurare né
 riportare alle chiavi di fabbrica; i tap continuano a verificare finché

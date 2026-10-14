@@ -62,6 +62,14 @@ first-class, scored detector rather than a simple freshness flag.
   [key management](docs/key-management.md#writing-keys-to-tags); not yet
   validated on hardware). Whoever holds `master_admin` can reconfigure every
   tag; it belongs on the provisioning station only.
+- **Impersonation at keying time.** A tag is first keyed under the public
+  factory key, so a device posing as a factory tag would receive the keys of
+  the UID it claims. `rekey_tag` verifies the NXP originality signature,
+  refuses a UID already in its inventory that shows factory keys, and requires
+  claimed keys to authenticate (see
+  [keying safely](docs/key-management.md#keying-safely)). A passive radio
+  capture of a factory keying session still yields its keys: key tags in a
+  shielded place, from a controlled supply.
 - **Counter exhaustion**: `SDMReadCtr` is 24-bit. Rollover handling is a
   deployment concern and not modelled here.
 - `TagAnalyzer` keeps a persistent monotonic anti-replay floor (`CounterBackend`)

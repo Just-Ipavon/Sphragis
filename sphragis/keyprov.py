@@ -32,18 +32,44 @@ Slots 1-4 change first and slot 0 last, because changing the session key ends
 the session. The result is verified by authenticating with every new key and
 reading the version of every slot.
 
+Identity checks before any key leaves the station (`rekey_tag`). The first
+keying of a tag necessarily happens under the public factory key, so a device
+that answers like a factory tag with a chosen UID would receive that UID's
+keys. The flow therefore:
+
+  - verifies the NXP originality signature (Read_Sig, ECDSA over the UID on
+    secp224r1) and, where the transport exposes it, that the anticollision UID
+    equals the GetCardUID one. A static signature can be replayed by an
+    emulator copying a genuine tag, so this raises the cost but is not enough
+    on its own;
+  - keeps an inventory of UIDs it has keyed: a known UID that answers with
+    factory keys and proves no key of its own (a UID-specific slot holding a
+    non-factory key it can authenticate with) is refused, because a genuine
+    keyed tag cannot be in that state;
+  - records the UID in the inventory before the first key is sent, so an
+    interrupted run is remembered too;
+  - asks the caller to confirm the UID and the plan before writing.
+
+What none of this removes: a passive RF capture of a factory keying session
+yields the keys sent in it (the session keys follow from the zero key and the
+exchanged randoms). Key tags in a shielded place, from a controlled supply.
+
 Keys never appear in logs or reprs: only key check values (KCV, the first
 three bytes of AES-ECB(key, 0^16)).
 """
 
 from __future__ import annotations
 
+import sqlite3
+import threading
+import time
 import zlib
 from dataclasses import dataclass, field
 from typing import Callable, Protocol, Sequence
 from urllib.parse import parse_qs, urlparse
 
 from Crypto.Cipher import AES
+from Crypto.PublicKey import ECC
 
 from .apdu import ApduError, parse_response, select_ndef_app
 from .counterstore import CounterStore
@@ -57,6 +83,8 @@ from .verifier import StaticKeys, Verifier
 INS_CHANGE_KEY = 0xC4
 INS_GET_KEY_VERSION = 0x64
 INS_GET_CARD_UID = 0x51
+INS_READ_SIG = 0x3C
+INS_ADDITIONAL_FRAME = 0xAF
 
 KEY_SLOTS = 5
 FACTORY_VERSION = 0x00
@@ -123,6 +151,128 @@ def get_card_uid(session: Session) -> bytes:
     if not plain.endswith(b"\x80"):
         raise KeyProvisionError("GetCardUID response padding is invalid")
     return plain[:-1]
+
+
+# --- Originality signature -------------------------------------------------------
+
+# NXP originality public key for NTAG 424 DNA (secp224r1, uncompressed point).
+NXP_NTAG424_ORIGINALITY_KEY = bytes.fromhex(
+    "04B304DC4C615F5326FE9383DDEC9AA892DF3A57FA7FFB3276192BC0EAA252ED45"
+    "A865E3B093A3D0DCE5BE29E92F1392CE7DE321E3E5C52B3A")
+
+_P224_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF16A2E0B8F03E13DD29455C5C2A3D
+_P224_G = (0xB70E0CBD6BB4BF7F321390B94A03C1D356C21122343280D6115C1D21,
+           0xBD376388B5F723FB4C22DFE6CD4375A05A07476444D5819985007E34)
+SIGNATURE_LEN = 56
+
+
+def read_signature(transport) -> bytes:
+    """Read_Sig (3Ch) without authentication: the 56-byte signature r || s."""
+    apdu = bytes([0x90, INS_READ_SIG, 0x00, 0x00, 0x01, 0x00, 0x00])
+    resp = parse_response(transport.transceive(apdu))
+    data = resp.data
+    for _ in range(4):
+        if resp.sw != 0x91AF:
+            break
+        resp = parse_response(transport.transceive(
+            bytes([0x90, INS_ADDITIONAL_FRAME, 0x00, 0x00, 0x00])))
+        data += resp.data
+    if resp.sw != SW_OK:
+        raise ApduError(resp.sw, "Read_Sig failed")
+    if len(data) != SIGNATURE_LEN:
+        raise KeyProvisionError(f"Read_Sig returned {len(data)} bytes, expected 56")
+    return data
+
+
+def verify_originality(uid: bytes, signature: bytes,
+                       public_key: bytes = NXP_NTAG424_ORIGINALITY_KEY) -> bool:
+    """
+    ECDSA verification on secp224r1 of `signature` (r || s) over the raw UID:
+    the UID itself is the message representative, without hashing.
+    """
+    if len(signature) != SIGNATURE_LEN or len(public_key) != 57 or public_key[0] != 0x04:
+        return False
+    r = int.from_bytes(signature[:28], "big")
+    s = int.from_bytes(signature[28:], "big")
+    n = _P224_ORDER
+    if not (0 < r < n and 0 < s < n):
+        return False
+    try:
+        q = ECC.EccPoint(int.from_bytes(public_key[1:29], "big"),
+                         int.from_bytes(public_key[29:], "big"), curve="P-224")
+    except ValueError:              # not a point on the curve
+        return False
+    g = ECC.EccPoint(*_P224_G, curve="P-224")
+    e = int.from_bytes(uid, "big")
+    w = pow(s, -1, n)
+    point = g * (e * w % n) + q * (r * w % n)
+    if point.is_point_at_infinity():
+        return False
+    return int(point.x) % n == r
+
+
+# --- Inventory of keyed UIDs ------------------------------------------------------
+
+INVENTORY_KEYING = "keying"     # a key may have been sent; the run did not finish
+INVENTORY_KEYED = "keyed"       # verified on non-factory keys
+INVENTORY_FACTORY = "factory"   # verified back on the factory keys
+
+
+class KeyInventory(Protocol):
+    def state(self, uid: bytes) -> str | None: ...
+    def record(self, uid: bytes, state: str, version: int) -> None: ...
+
+
+class MemoryKeyInventory:
+    """In-process inventory (tests, one-off runs)."""
+
+    def __init__(self) -> None:
+        self._rows: dict[bytes, tuple[str, int]] = {}
+
+    def state(self, uid: bytes) -> str | None:
+        row = self._rows.get(bytes(uid))
+        return row[0] if row else None
+
+    def record(self, uid: bytes, state: str, version: int) -> None:
+        self._rows[bytes(uid)] = (state, version)
+
+
+class SqliteKeyInventory:
+    """
+    Durable inventory of the UIDs a provisioning station has keyed. Share it
+    between stations (or keep one station) so a UID cannot be keyed twice.
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        with self._connect() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS keyed_uids ("
+                " uid TEXT PRIMARY KEY, state TEXT NOT NULL,"
+                " version INTEGER NOT NULL, updated_at REAL NOT NULL)")
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._path, timeout=30)
+        conn.execute("PRAGMA synchronous=FULL")
+        return conn
+
+    def state(self, uid: bytes) -> str | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT state FROM keyed_uids WHERE uid = ?",
+                               (uid.hex().upper(),)).fetchone()
+        return row[0] if row else None
+
+    def record(self, uid: bytes, state: str, version: int) -> None:
+        if state not in (INVENTORY_KEYING, INVENTORY_KEYED, INVENTORY_FACTORY):
+            raise ValueError(f"unknown inventory state {state!r}")
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT INTO keyed_uids (uid, state, version, updated_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT (uid) DO UPDATE SET "
+                "state = excluded.state, version = excluded.version, "
+                "updated_at = excluded.updated_at",
+                (uid.hex().upper(), state, version, time.time()))
 
 
 # --- Key schemes ----------------------------------------------------------------
@@ -219,6 +369,10 @@ class RekeyReport:
     planned: list[int] = field(default_factory=list)
     changed: list[int] = field(default_factory=list)
     verified: bool = False
+    signature_ok: bool | None = None
+    proven: list[int] = field(default_factory=list)
+    inventory: str | None = None
+    aborted: bool = False
     log: list[str] = field(default_factory=list)
 
     @property
@@ -309,13 +463,29 @@ def _open_session(transport, uid: bytes | None, schemes: Sequence[KeyScheme],
         + ("" if uid else " (and no UID could be read from a SUN tap; pass it)"))
 
 
+def _is_factory(scheme: KeyScheme) -> bool:
+    return scheme.version == FACTORY_VERSION
+
+
 def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
               uid: bytes | None = None, dry_run: bool = False,
-              log: Callable[[str], None] | None = None) -> RekeyReport:
+              log: Callable[[str], None] | None = None,
+              inventory: KeyInventory | None = None,
+              originality_key: bytes | None = NXP_NTAG424_ORIGINALITY_KEY,
+              confirm: Callable[[RekeyReport], bool] | None = None,
+              allow_known_uid: bool = False) -> RekeyReport:
     """
     Bring the five application keys of the tag behind `transport` to `target`.
     `known` lists the schemes the tag may currently hold besides the factory
     one and the target itself; each needs a distinct key version.
+
+    `inventory` records the UIDs keyed so far and is required to key a tag to
+    non-factory keys. `originality_key` is the public key the Read_Sig
+    signature must verify under (None skips the check). `confirm` sees the
+    report (UID, current schemes, plan) before anything is written and returns
+    whether to go ahead. `allow_known_uid` lets a UID the inventory already
+    holds be keyed again from factory keys: only for a tag you reset outside
+    this tool and have in hand.
     """
     schemes: list[KeyScheme] = [FactoryKeys()]
     for s in (target, *known):
@@ -326,6 +496,8 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
         if s.version in by_version:
             raise ValueError(f"two key schemes share version {s.version:02X}")
         by_version[s.version] = s
+    if inventory is None and not dry_run and not _is_factory(target):
+        raise ValueError("keying a tag needs an inventory of keyed UIDs")
 
     report = RekeyReport(target=target.label, dry_run=dry_run)
 
@@ -334,9 +506,29 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
         if log:
             log(msg)
 
-    # 1. Authenticate with slot 0, read the UID and every slot's version.
+    # 1. Originality signature (plain, before any authentication).
+    signature = None
+    if originality_key is not None:
+        _select(transport)
+        signature = read_signature(transport)
+
+    # 2. Authenticate with slot 0, read the UID and every slot's version.
     session, slot0, report.uid = _open_session(transport, uid, schemes, say)
     say(f"UID          : {report.uid.hex().upper()} (GetCardUID)")
+    anticollision = getattr(transport, "anticollision_uid", None)
+    if anticollision is not None and bytes(anticollision) != report.uid:
+        raise KeyProvisionError(
+            f"anticollision UID {bytes(anticollision).hex().upper()} differs from "
+            f"GetCardUID {report.uid.hex().upper()}: refusing to touch this tag")
+    if signature is not None:
+        report.signature_ok = verify_originality(report.uid, signature, originality_key)
+        if not report.signature_ok:
+            raise KeyProvisionError("the originality signature does not verify for "
+                                    "this UID: not a genuine NXP tag, refusing")
+        say("originality  : NXP signature verifies for this UID")
+    else:
+        say("originality  : NOT CHECKED")
+
     report.versions = [get_key_version(session, n) for n in range(KEY_SLOTS)]
     current = []
     for n, v in enumerate(report.versions):
@@ -355,14 +547,58 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
     say(f"target       : {target.label}, version {target.version:02X}, KCV "
         + " ".join(key_check_value(k) for k in new.keys))
 
-    # 2. Plan: slots 1-4 first, slot 0 (the session key) last.
+    # 3. Proof of possession: a UID-specific slot (not the shared MetaRead
+    #    slot 2) on non-factory keys that authenticates with them. Only a tag
+    #    keyed by us can do that; anything can claim factory keys.
+    if not _is_factory(slot0):
+        report.proven.append(0)
+    else:
+        for n in (1, 3, 4):
+            if _is_factory(current[n]):
+                continue
+            _select(transport)
+            if _authenticate(transport, n, current[n].keys_for(report.uid)[n]) is None:
+                raise KeyProvisionError(
+                    f"slot {n} claims {current[n].label} keys but does not "
+                    f"authenticate with them: refusing")
+            report.proven.append(n)
+        if report.proven:
+            _select(transport)
+            session = _authenticate(transport, 0, slot0.keys_for(report.uid)[0])
+            if session is None or get_card_uid(session) != report.uid:
+                raise KeyProvisionError("slot 0 no longer authenticates: refusing")
+    if report.proven:
+        say("possession   : tag authenticates with its own keys in slots "
+            + ", ".join(map(str, report.proven)))
+
+    # 4. Plan: slots 1-4 first, slot 0 (the session key) last.
     report.planned = [n for n in (1, 2, 3, 4, 0) if current[n] is not target]
+    sends_secrets = bool(report.planned) and not _is_factory(target)
+    if inventory is not None:
+        report.inventory = inventory.state(report.uid)
+        say(f"inventory    : {report.inventory or 'unknown UID'}")
+    if (sends_secrets and not report.proven
+            and report.inventory in (INVENTORY_KEYING, INVENTORY_KEYED)):
+        if not allow_known_uid:
+            raise KeyProvisionError(
+                f"UID {report.uid.hex().upper()} is already in the inventory "
+                f"({report.inventory}) but this tag shows factory keys and proves "
+                "no key of its own: a clone or emulator, or a tag reset outside "
+                "this tool. Refusing to send keys")
+        say("WARNING      : known UID keyed again from factory keys (allowed)")
+
     if not report.planned:
         say("already on the target keys: nothing to change")
     elif dry_run:
         say("would change : slots " + ", ".join(map(str, report.planned)))
         return report
     else:
+        if confirm is not None and not confirm(report):
+            report.aborted = True
+            say("aborted      : not confirmed, nothing written")
+            return report
+        if sends_secrets and inventory is not None:
+            inventory.record(report.uid, INVENTORY_KEYING, target.version)
         for n in report.planned:
             old = current[n].keys_for(report.uid)[n]
             alive = change_key(session, n, new[n], target.version,
@@ -372,7 +608,7 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
             if not alive:
                 break
 
-    # 3. Verify: every new key authenticates, every slot carries the version.
+    # 5. Verify: every new key authenticates, every slot carries the version.
     _select(transport)
     check = _authenticate(transport, 0, new[0])
     if check is None or get_card_uid(check) != report.uid:
@@ -386,6 +622,9 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
     report.verified = ok
     say("check        : " + ("all five keys authenticate, versions "
                              f"{target.version:02X}" if ok else "MISMATCH"))
+    if ok and inventory is not None:
+        inventory.record(report.uid, INVENTORY_FACTORY if _is_factory(target)
+                         else INVENTORY_KEYED, target.version)
     return report
 
 

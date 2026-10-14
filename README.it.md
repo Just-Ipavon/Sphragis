@@ -231,7 +231,7 @@ sphragis/
   ev2.py           AuthenticateEV2First + secure messaging (vettori AN12196)
   sdmconfig.py     impostazioni file SDM: build / parse di ChangeFileSettings
   provision.py     provisioning SUN idempotente (chiavi di fabbrica o reali)
-  keyprov.py       ChangeKey / GetKeyVersion / GetCardUID + cambio chiavi per UID riprendibile
+  keyprov.py       ChangeKey / GetKeyVersion / GetCardUID / Read_Sig + cambio chiavi per UID riprendibile con controlli d'identità
   cli.py           verify / inspect / emulate da riga di comando
 tools/             sdm_probe / provision / rekey / tap_verify (da eseguire sull'host con hardware)
 tests/             suite known-answer + avversariale + produzione + servizio/API

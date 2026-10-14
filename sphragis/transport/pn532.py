@@ -38,6 +38,12 @@ class Pn532Transport(ApduTransport):
             raise TransportError("no ISO-DEP (Type 4) tag found")
         return cls(tag, clf)
 
+    @property
+    def anticollision_uid(self) -> bytes | None:
+        """UID the tag gave during anticollision (nfcpy `identifier`)."""
+        uid = getattr(self._tag, "identifier", None)
+        return None if uid is None else bytes(uid)
+
     def transceive(self, apdu: bytes) -> bytes:
         try:
             return bytes(self._tag.transceive(bytes(apdu)))
