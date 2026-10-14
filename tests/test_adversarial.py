@@ -108,7 +108,7 @@ def test_key_clone_caught_by_impossible_velocity():
 
 def test_diversified_keys_end_to_end():
     master, meta = os.urandom(16), os.urandom(16)
-    prov = DiversifiedKeys(master, meta, context=b"ART")
+    prov = DiversifiedKeys(master, meta, context=b"DEMO")
     uid = os.urandom(7)
     tag = tag_from_provider(prov, uid)
     analyzer = TagAnalyzer(prov)

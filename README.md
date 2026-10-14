@@ -93,7 +93,7 @@ from sphragis.emulator import tag_from_provider
 
 # Per-UID diversified keys (AN10922) — the production key-management pattern.
 master, meta = os.urandom(16), os.urandom(16)
-keys = DiversifiedKeys(master_file_key=master, meta_read_key=meta, context=b"ART")
+keys = DiversifiedKeys(master_file_key=master, meta_read_key=meta, context=b"DEMO")
 
 tag = tag_from_provider(keys, uid=bytes.fromhex("04DE5F1EACC040"))
 analyzer = TagAnalyzer(keys)
