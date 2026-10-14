@@ -236,11 +236,11 @@ def test_create_app_from_env_end_to_end(tmp_path, monkeypatch):
     db = tmp_path / "sphragis.db"
     env = {
         "SPHRAGIS_DB_PATH": str(db),
-        "SPHRAGIS_KEY_CONTEXT": "ART",
+        "SPHRAGIS_KEY_CONTEXT": "DEMO",
         "SPHRAGIS_READER_TOKENS": ",".join(f"{r}={d}" for d, r in READERS.items()),
     }
     client = TestClient(create_app_from_env(env))
-    tag = tag_from_provider(DiversifiedKeys(master, meta, context=b"ART"),
+    tag = tag_from_provider(DiversifiedKeys(master, meta, context=b"DEMO"),
                             uid=os.urandom(7), read_counter=9)
     for _ in range(2):
         assert client.get(_path(tag.tap())).json()["verdict"] == "GENUINE"

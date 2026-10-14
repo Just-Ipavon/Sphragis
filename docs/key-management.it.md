@@ -13,8 +13,15 @@ codice**.
 da dati unici del tag, secondo NXP AN10922:
 
 ```
-DivKey = AES-CMAC(MasterKey, 0x01 || DivInput)
+D      = 0x01 || DivInput || padding   (sempre 32 byte: 80h 00h ...)
+DivKey = AES-CMAC(MasterKey, D)        (ultimo blocco XOR K2 se imbottito, altrimenti K1)
 ```
+
+L'imbottitura a due blocchi conta: con un `DivInput` di 15 byte o meno (per
+esempio un UID da 7 byte) un CMAC standard su `0x01 || DivInput` darebbe una
+chiave diversa, che nessun'altra implementazione AN10922 riprodurrebbe. Il
+codice segue la nota applicativa ed è vincolato al suo esempio §2.2.1
+(`tests/test_diversify.py`).
 
 `DiversifiedKeys` la collega al verificatore: la meta-read key resta fissa
 (serve a decifrare il PICCData prima di conoscere lo UID), mentre la file-read
@@ -24,7 +31,7 @@ master key produce chiavi diverse tra deployment non collegati.
 
 ```python
 from sphragis import DiversifiedKeys
-keys = DiversifiedKeys(master_file_key=..., meta_read_key=..., context=b"ART")
+keys = DiversifiedKeys(master_file_key=..., meta_read_key=..., context=b"DEMO")
 file_key = keys.file_read_key(uid)   # unica per tag
 ```
 

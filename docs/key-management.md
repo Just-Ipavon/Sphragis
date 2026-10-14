@@ -13,8 +13,15 @@ code**.
 tag-unique data, per NXP AN10922:
 
 ```
-DivKey = AES-CMAC(MasterKey, 0x01 || DivInput)
+D      = 0x01 || DivInput || padding   (always 32 bytes: 80h 00h ...)
+DivKey = AES-CMAC(MasterKey, D)        (last block XOR K2 if padded, else K1)
 ```
+
+The two-block padding matters: for a `DivInput` of 15 bytes or less (a bare
+7-byte UID, say) a standard CMAC over `0x01 || DivInput` gives a different
+key, which no other AN10922 implementation would reproduce. The code follows
+the application note and is pinned to its §2.2.1 example
+(`tests/test_diversify.py`).
 
 `DiversifiedKeys` wires this into the verifier: the meta-read key stays fixed
 (needed to decrypt PICCData before the UID is known), while the file-read key —
@@ -24,7 +31,7 @@ different keys across unrelated deployments.
 
 ```python
 from sphragis import DiversifiedKeys
-keys = DiversifiedKeys(master_file_key=..., meta_read_key=..., context=b"ART")
+keys = DiversifiedKeys(master_file_key=..., meta_read_key=..., context=b"DEMO")
 file_key = keys.file_read_key(uid)   # unique per tag
 ```
 
