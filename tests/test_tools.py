@@ -100,3 +100,21 @@ def test_provision_enc_with_fake_picc(capsys):
     out = capsys.readouterr().out
     assert "provisioned and verified" in out and "file data match" in out
     assert tag.settings.enc_enabled
+
+
+def test_tap_verify_enc_with_fake_picc(capsys):
+    from sphragis.provision import provision_tag
+
+    tag = FakeNtag424()
+    provision_tag(tag, "https://example.com/t", file_data=b"0123456789ABCDEF")
+    tool = _load("tap_verify")
+    tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
+    assert tool.main(["--reader", "pn532", "--taps", "2", "--enc"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("AUTHENTIC") == 2
+    assert out.count(b"0123456789ABCDEF".hex().upper()) == 2
+
+
+def test_tap_verify_enc_refuses_emulator():
+    with pytest.raises(SystemExit):
+        _load("tap_verify").main(["--reader", "emulator", "--enc"])

@@ -93,7 +93,7 @@ result.verdict, result.file_data
 Da riga di comando: `sphragis verify --enc --meta-key … --file-key … URL`.
 `provision_tag(..., file_data=...)` / `tools/provision.py --enc-data`
 configurano il mirror su un tag e bloccano su una chiave la scrittura del file
-NDEF; vedi [hardware.it.md](hardware.it.md) (non ancora validato su tag fisici).
+NDEF; vedi [hardware.it.md](hardware.it.md) (validato su un tag fisico).
 
 ## Validazione known-answer
 
@@ -121,8 +121,6 @@ Tabella 5: picc_data = FD91EC264309878BE6345CBE53BADF40
 
 ## Non ancora supportato
 
-- La validazione del provisioning `SDMENCFileData` su tag fisici (il flusso è
-  provato solo contro un PICC finto).
 - Layout `SDMENCFileData` in cui `SDMMACInputOffset` non coincide con l'inizio
   del valore di `enc`.
 - Il canale sicuro EV2 (`AuthenticateEV2First/NonFirst`) — fuori ambito: questo

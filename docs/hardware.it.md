@@ -107,12 +107,11 @@ CMAC alterato dà `FORGED`. Con `--store` la soglia anti-replay persiste tra
 un'esecuzione e l'altra; con `--wait` si possono scambiare i tag tra un tap e
 l'altro.
 
-## Dati di file cifrati (SDMENCFileData) — non ancora validato su hardware
+## Dati di file cifrati (SDMENCFileData)
 
 `--enc-data TESTO` (o `--enc-data-hex HEX`, un multiplo di 16 byte) configura
-la variante che riflette anche dati di file cifrati. Per ora il flusso è
-provato solo contro il PICC finto della suite di test; su un tag va lanciato
-prima in sola lettura.
+la variante che riflette anche dati di file cifrati. Validato su una NTAG 424
+DNA di fabbrica tramite il Chameleon Ultra (risultati sotto).
 
 Cosa cambia rispetto al SUN semplice:
 
@@ -129,22 +128,43 @@ Cosa cambia rispetto al SUN semplice:
 - il controllo finale decifra un tap con `EncFileVerifier` a chiavi zero e
   confronta il testo in chiaro.
 
-Piano offline (senza lettore):
+**1. Piano** (sola lettura), su una tag di fabbrica:
 
 ```
-$ python tools/provision.py --dry-run --base-url https://example.com/t \
-      --enc-data 0123456789ABCDEF
-template      : https://example.com/t?picc_data=0000…&enc=0000…&cmac=0000…
+$ python tools/provision.py --reader chameleon --port /dev/ttyACM0 \
+      --base-url https://example.com/t --enc-data 0123456789ABCDEF --dry-run
 NDEF file     : 122 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x20, SDMMACOffset=0x6A
 file data     : 16 B plaintext, NDEF writes locked to key 0
 file settings : 4000E0D1F1211F00004400004400002000006A0000 (SDM on, encrypted PICCData key 2, MAC key 1)
-dry run, no reader: plan only
+current       : settings differ, NDEF differs
+would write  : NDEF template via ISOUpdateBinary
+would change : file settings (auth with key 0, CommMode.Full)
 ```
 
-Su un tag: lo stesso comando con `--reader chameleon --port /dev/ttyACM0`
-prima (sola lettura), poi con `--yes` al posto di `--dry-run`. Il modello da
-122 byte passa con il chaining ISO-DEP del Chameleon Ultra. I tap successivi
-si verificano con `sphragis verify --enc --meta-key 00… --file-key 00… URL`.
+**2. Provisioning** (scrive; `--yes` al posto di `--dry-run`). Il modello da
+122 byte è passato con una sola ISOUpdateBinary, cioè con il chaining ISO-DEP
+del Chameleon Ultra (i cui frame sono limitati a 62 byte):
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : AUTHENTIC, UID 04801A82161690, SDMReadCtr 1, file data match
+RESULT       : provisioned and verified
+```
+
+**3. Verifica dei tap** con `tools/tap_verify.py --enc`. Tre tap consecutivi:
+cifrato diverso ogni volta, stesso testo in chiaro, contatore che sale;
+riproporre poi il primo URL dà `REPLAY`:
+
+```
+picc_data=159F61C9…&enc=15A911F3450D9A146B7C64559FBA32E6&cmac=71F7103244547328  AUTHENTIC ctr 2  0123456789ABCDEF
+picc_data=6157652C…&enc=2DBF9D0E72475941F917DB5732DB9320&cmac=6D80A272901AC2F0  AUTHENTIC ctr 3  0123456789ABCDEF
+picc_data=51AF150B…&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA  AUTHENTIC ctr 4  0123456789ABCDEF
+replay del tap 1: REPLAY (contatore 2 <= ultimo visto 4)
+```
+
+Questi tap sono conservati come test di regressione
+(`tests/test_sdmenc.py::test_physical_tag_taps_verify_and_replay_is_caught`).
 Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
 semplice e sblocca il file NDEF.
 

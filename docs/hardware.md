@@ -106,12 +106,11 @@ tap 1 after tap 3 gives `CLONE_LIKELY` (`counter_regression`), a tampered
 CMAC gives `FORGED`. Use `--store` to keep the anti-replay floor across runs
 and `--wait` to swap tags between taps.
 
-## Encrypted file data (SDMENCFileData) — not yet validated on hardware
+## Encrypted file data (SDMENCFileData)
 
 `--enc-data TEXT` (or `--enc-data-hex HEX`, a multiple of 16 bytes) provisions
-the variant that also mirrors encrypted file data. The flow is exercised only
-against the fake PICC in the test suite so far; run it on a tag read-only
-first.
+the variant that also mirrors encrypted file data. Validated on a factory
+NTAG 424 DNA through the Chameleon Ultra (results below).
 
 What changes compared with plain SUN:
 
@@ -127,24 +126,45 @@ What changes compared with plain SUN:
 - the check at the end decrypts one tap with `EncFileVerifier` under the zero
   keys and compares the plaintext.
 
-Offline plan (no reader):
+**1. Plan** (read-only), on a factory tag:
 
 ```
-$ python tools/provision.py --dry-run --base-url https://example.com/t \
-      --enc-data 0123456789ABCDEF
-template      : https://example.com/t?picc_data=0000…&enc=0000…&cmac=0000…
+$ python tools/provision.py --reader chameleon --port /dev/ttyACM0 \
+      --base-url https://example.com/t --enc-data 0123456789ABCDEF --dry-run
 NDEF file     : 122 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x20, SDMMACOffset=0x6A
 file data     : 16 B plaintext, NDEF writes locked to key 0
 file settings : 4000E0D1F1211F00004400004400002000006A0000 (SDM on, encrypted PICCData key 2, MAC key 1)
-dry run, no reader: plan only
+current       : settings differ, NDEF differs
+would write  : NDEF template via ISOUpdateBinary
+would change : file settings (auth with key 0, CommMode.Full)
 ```
 
-On a tag: the same command with `--reader chameleon --port /dev/ttyACM0`
-first (read-only), then with `--yes` instead of `--dry-run`. The 122-byte
-template goes out with ISO-DEP chaining on the Chameleon Ultra. Verify further
-taps with `sphragis verify --enc --meta-key 00… --file-key 00… URL`. Running
-plain provisioning again (without `--enc-data`) returns the tag to plain SUN
-and unlocks the NDEF file.
+**2. Provision** (writes; `--yes` instead of `--dry-run`). The 122-byte
+template went out as a single ISOUpdateBinary, i.e. with ISO-DEP chaining on
+the Chameleon Ultra (whose frames are limited to 62 bytes):
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : AUTHENTIC, UID 04801A82161690, SDMReadCtr 1, file data match
+RESULT       : provisioned and verified
+```
+
+**3. Verify taps** with `tools/tap_verify.py --enc`. Three consecutive taps:
+fresh ciphertext each time, the same plaintext, a rising counter; replaying
+the first URL afterwards gives `REPLAY`:
+
+```
+picc_data=159F61C9…&enc=15A911F3450D9A146B7C64559FBA32E6&cmac=71F7103244547328  AUTHENTIC ctr 2  0123456789ABCDEF
+picc_data=6157652C…&enc=2DBF9D0E72475941F917DB5732DB9320&cmac=6D80A272901AC2F0  AUTHENTIC ctr 3  0123456789ABCDEF
+picc_data=51AF150B…&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA  AUTHENTIC ctr 4  0123456789ABCDEF
+replay of tap 1: REPLAY (counter 2 <= last seen 4)
+```
+
+These taps are kept as a regression test
+(`tests/test_sdmenc.py::test_physical_tag_taps_verify_and_replay_is_caught`).
+Running plain provisioning again (without `--enc-data`) returns the tag to
+plain SUN and unlocks the NDEF file.
 
 ## Physical clone detection
 
