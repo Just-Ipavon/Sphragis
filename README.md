@@ -17,8 +17,10 @@ NFC tap came from a **genuine, unique** NXP **NTAG 424 DNA** tag — or from a
 > ⚠️ **Status: learning / portfolio project.** The cryptography is validated
 > against the official NXP test vectors and the code was adversarially
 > self-reviewed (see the [threat model](THREAT_MODEL.md)), but it has **not**
-> been independently audited, nor yet validated against physical tags. Do not
-> use it as the sole line of defense in production without that work.
+> been independently audited. It has been validated end to end against physical
+> NTAG 424 DNA tags with factory keys (see [docs/hardware.md](docs/hardware.md)),
+> but not with production key management. Do not use it as the sole line of
+> defense in production without that work.
 
 Anyone can check an AES-CMAC. The hard, interesting part of anti-counterfeiting
 is what happens *after* the MAC is valid: proving there is only **one** physical
@@ -221,19 +223,6 @@ tests/             known-answer + adversarial + production + service/API suites
 examples/          demo.py, clone_demo.py
 docs/              bilingual technical documentation
 ```
-
-## Roadmap
-
-- [x] Validated SDM/SUN verification (NXP vector)
-- [x] AN10922 per-UID key diversification
-- [x] Scored clone-detection engine
-- [x] Threat model + adversarial harness
-- [x] Atomic DB-backed anti-replay floor (SQLite)
-- [x] Key-material abstraction (env / file / KMS extension point)
-- [x] REST verification API (structured logs, alerting, rate limiting)
-- [ ] Postgres backend + horizontal scale
-- [ ] Encrypted-file-data (SDMENCFileData) support
-- [ ] Verification against physical tags
 
 ## References
 

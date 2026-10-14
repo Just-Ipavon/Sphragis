@@ -17,8 +17,11 @@ stabilire se una lettura NFC proviene da un tag NXP **NTAG 424 DNA**
 > ⚠️ **Stato: progetto di studio / portfolio.** La crittografia è validata
 > contro i test vector ufficiali NXP e il codice è stato sottoposto a un
 > auto-audit avversariale (vedi il [threat model](THREAT_MODEL.it.md)), ma
-> **non** è stato verificato in modo indipendente, né ancora validato su tag
-> fisici. Non usarlo come unica linea di difesa in produzione senza quel lavoro.
+> **non** è stato verificato in modo indipendente. È stato validato end-to-end
+> su tag fisici NTAG 424 DNA con chiavi di fabbrica (vedi
+> [docs/hardware.it.md](docs/hardware.it.md)), ma non con una gestione delle
+> chiavi di produzione. Non usarlo come unica linea di difesa in produzione
+> senza quel lavoro.
 
 Chiunque sa verificare un AES-CMAC. La parte difficile e interessante
 dell'anti-contraffazione è ciò che succede *dopo* che il MAC è valido: provare
@@ -226,19 +229,6 @@ tests/             suite known-answer + avversariale + produzione + servizio/API
 examples/          demo.py, clone_demo.py
 docs/              documentazione tecnica bilingue
 ```
-
-## Roadmap
-
-- [x] Verifica SDM/SUN validata (vettore NXP)
-- [x] Diversificazione chiavi per UID AN10922
-- [x] Motore di clone-detection con punteggio
-- [x] Threat model + harness avversariale
-- [x] Floor anti-replay atomico su DB (SQLite)
-- [x] Astrazione del materiale chiave (env / file / estensione KMS)
-- [x] API REST di verifica (log strutturati, alert, rate limiting)
-- [ ] Backend Postgres + scalabilità orizzontale
-- [ ] Supporto dati file cifrati (SDMENCFileData)
-- [ ] Verifica su tag fisici
 
 ## Riferimenti
 
