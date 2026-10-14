@@ -48,17 +48,30 @@ Load keys from a managed KMS/HSM via a `SecretsBackend` (see
 ## Observability
 
 A production anti-counterfeiting backend should not return a silent boolean.
-Recommended:
+The [REST API](api.md) ships with:
 
-- structured logs per verification (uid, classification, score, signals);
-- metrics and **alerting on `CLONE_LIKELY`**;
-- an audit trail of flagged events for investigation.
+- one structured JSON log event per verification (classification, score,
+  signals, pseudonymized UID, event id), and never `picc_data` or `cmac`;
+- **alerting on `CLONE_LIKELY`** through pluggable `AlertSink`s (CRITICAL log,
+  HMAC-signed webhook);
+- a durable audit trail of flagged events (`SqliteAlertSink`) for investigation.
+
+Metrics can be derived from the log stream (count by `classification`).
+
+## Shared detector history
+
+The clone detector's per-UID history goes through an `ObservationStore`.
+`SqliteObservationStore` makes it durable and shared by every process on the
+host, with an atomic `observe()`, so several workers score one consistent
+stream. See [the API docs](api.md#horizontal-scale-shared-detector-history).
 
 ## Hardening checklist
 
 - [ ] Keys in KMS/HSM, not in env on long-lived hosts
 - [ ] Postgres (or equivalent) floor with atomic conditional update
-- [ ] Rate limiting on the verification endpoint
+- [x] Rate limiting on the verification endpoint (per IP + per authentic UID; in-process, see [API](api.md#rate-limiting))
+- [x] Structured logging + alerting on `CLONE_LIKELY`
+- [ ] Shared (e.g. Redis) rate limiter for multi-replica deployments
 - [ ] Handling for 24-bit `SDMReadCtr` rollover
 - [ ] Decide `SDMENCFileData` support from the real tag configuration
 - [ ] End-to-end validation against physical tags

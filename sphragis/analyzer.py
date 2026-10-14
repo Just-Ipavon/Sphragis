@@ -13,11 +13,14 @@ Classification:
     SUSPICIOUS   authentic but weak anomaly signals
     REPLAY       authentic MAC, but a captured tap resent
     CLONE_LIKELY authentic MAC, but strong evidence of a duplicated tag
+    THROTTLED    authentic MAC, but refused by the caller's `admit` policy
+                 before any state was touched (e.g. a per-UID rate limit)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from .counterstore import CounterBackend, CounterStore
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
@@ -64,7 +67,15 @@ class TagAnalyzer:
         url_or_query: str,
         timestamp: float | None = None,
         reader_id: str | None = None,
+        admit: Callable[[str], bool] | None = None,
     ) -> AnalysisResult:
+        """
+        `admit`, if given, is called with the UID once the SDMMAC has been
+        verified and before the counter floor or the detector are touched.
+        Returning False yields THROTTLED and leaves all state unchanged, so a
+        throttled genuine tap does not burn its counter value. Gating only
+        authentic taps means forged junk cannot drain a specific tag's budget.
+        """
         # 1 + 2: parse and decrypt
         try:
             enc_picc, cmac = _extract_params(url_or_query)
@@ -83,6 +94,12 @@ class TagAnalyzer:
             return AnalysisResult(
                 "FORGED", False, uid_hex, picc.read_counter, 100, (),
                 "SDMMAC mismatch: payload is not from a genuine tag",
+            )
+
+        if admit is not None and not admit(uid_hex):
+            return AnalysisResult(
+                "THROTTLED", True, uid_hex, picc.read_counter, 0, (),
+                "verification refused by admission policy (rate limit)",
             )
 
         # 4: persistent anti-replay floor (survives restarts) + scored analysis.
