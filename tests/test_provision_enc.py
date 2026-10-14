@@ -130,7 +130,11 @@ def test_locked_tag_rejects_unauthenticated_writes():
     provision_tag(tag, BASE, file_data=DATA)
     tag.transceive(build_apdu(0x00, 0xA4, 0x04, 0x00, bytes.fromhex("D2760000850101"), le=0))
     tag.transceive(build_apdu(0x00, 0xA4, 0x00, 0x0C, bytes.fromhex("E104")))
-    assert tag.transceive(update_binary(0x44, b"EVIL")) == b"\x69\x82"
+    # Datasheet form (no Le): reaches the access check -> security status.
+    assert tag.transceive(build_apdu(0x00, 0xD6, 0x00, 0x44, b"EVIL")) == b"\x69\x82"
+    # AN12196 form (trailing Le): rejected on length first, as on silicon.
+    assert tag.transceive(update_binary(0x44, b"EVIL")) == b"\x67\x00"
+    assert _verifier().verify(read_uri(tag)).file_data == DATA
 
 
 def test_encrypted_provisioning_is_idempotent():

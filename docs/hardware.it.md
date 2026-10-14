@@ -163,10 +163,30 @@ picc_data=51AF150B…&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA
 replay del tap 1: REPLAY (contatore 2 <= ultimo visto 4)
 ```
 
+**4. Blocco della scrittura.** Una ISOUpdateBinary non autenticata degli
+stessi byte già presenti all'offset del testo in chiaro (quindi in nessun caso
+poteva cambiare qualcosa):
+
+```
+select app   : 00A4040C07D276000085010100  ->  SW 9000
+select file  : 00A4000C02E10400  ->  SW 9000
+write, no Le : 00D600441030313233343536373839414243444546  ->  SW 6982
+write, Le=00 : 00D60044103031323334353637383941424344454600  ->  SW 6700
+tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414243444546
+```
+
+`6982` (security status not satisfied) conferma il blocco. Attenzione alla
+seconda riga: con la scrittura bloccata, la forma di AN12196 Tabella 16 con Le
+in coda è rifiutata come errore di lunghezza (`6700`) **prima** del controllo
+dei permessi, mentre con la scrittura libera la stessa forma è accettata (è
+così che è stato scritto il modello). Per provare un blocco va usata la forma
+del datasheet senza Le; un `6700` non dimostra nulla sui permessi.
+
 Questi tap sono conservati come test di regressione
 (`tests/test_sdmenc.py::test_physical_tag_taps_verify_and_replay_is_caught`).
 Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
-semplice e sblocca il file NDEF.
+semplice e sblocca il file NDEF: Change resta sulla chiave 0 e le chiavi sono
+ancora a zero, quindi il blocco è reversibile.
 
 ## Clone detection su hardware
 

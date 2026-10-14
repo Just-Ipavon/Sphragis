@@ -77,7 +77,12 @@ class FakeNtag424:
         if ins == 0xD6:
             access = self.settings.access
             if KEY_FREE not in (access.write, access.read_write):
-                return b"\x69\x82"
+                # Observed on silicon (UID 04801A82161690): with writes locked,
+                # a trailing Le (the AN12196 Table 16 form) is rejected as a
+                # length error before the access check; the datasheet form
+                # without Le reaches it and gets 6982.
+                has_le = len(apdu) == 5 + apdu[4] + 1
+                return b"\x67\x00" if has_le else b"\x69\x82"
             data = apdu[5:5 + apdu[4]]
             self.file[offset:offset + len(data)] = data
             self.writes += 1

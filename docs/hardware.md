@@ -161,10 +161,29 @@ picc_data=51AF150B…&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA
 replay of tap 1: REPLAY (counter 2 <= last seen 4)
 ```
 
+**4. Write lock.** An unauthenticated ISOUpdateBinary of the bytes already
+stored at the plaintext offset (so it could not change anything either way):
+
+```
+select app   : 00A4040C07D276000085010100  ->  SW 9000
+select file  : 00A4000C02E10400  ->  SW 9000
+write, no Le : 00D600441030313233343536373839414243444546  ->  SW 6982
+write, Le=00 : 00D60044103031323334353637383941424344454600  ->  SW 6700
+tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414243444546
+```
+
+`6982` (security status not satisfied) confirms the lock. Note the second
+line: with writes locked, the AN12196 Table 16 form with a trailing Le is
+rejected as a length error (`6700`) **before** the access check, while with
+free write access the same form is accepted (it is how the template was
+written). To test a lock, use the datasheet form without Le; a `6700` proves
+nothing about access rights.
+
 These taps are kept as a regression test
 (`tests/test_sdmenc.py::test_physical_tag_taps_verify_and_replay_is_caught`).
 Running plain provisioning again (without `--enc-data`) returns the tag to
-plain SUN and unlocks the NDEF file.
+plain SUN and unlocks the NDEF file: Change stays on key 0 and the keys are
+still all-zero, so the lock is reversible.
 
 ## Physical clone detection
 

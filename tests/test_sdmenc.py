@@ -283,6 +283,9 @@ FIELD_TAPS = [
      "&enc=2DBF9D0E72475941F917DB5732DB9320&cmac=6D80A272901AC2F0", 3),
     ("https://example.com/t?picc_data=51AF150B5728DF460A774206B9FA1C98"
      "&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA", 4),
+    # After the unauthenticated write attempts (6982 / 6700): content intact.
+    ("https://example.com/t?picc_data=49240A8B0B0DBE89BADD23A43682B59C"
+     "&enc=8D3636022199EBA7040AF2EFDF40B33B&cmac=02197F8EE72E99D1", 5),
 ]
 
 
