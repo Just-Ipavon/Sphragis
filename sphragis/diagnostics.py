@@ -219,8 +219,9 @@ def inspect_tap(url_or_query: str, meta_key: bytes = ZERO_KEY,
 
     if {k.lower() for k in params} & _ENC_FILE_PARAMS:
         report.warnings.append(
-            "encrypted file data (SDMENCFileData) present: not supported, the "
-            "verifier refuses such taps (fail-closed)"
+            "encrypted file data (SDMENCFileData) present: not decoded here; the "
+            "plain verifier refuses such taps (fail-closed), verify them with "
+            "EncFileVerifier / `sphragis verify --enc`"
         )
 
     uid_param = _find(params, _PLAIN_UID_PARAMS)

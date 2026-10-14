@@ -1,9 +1,11 @@
 """
 Test-only model of the NTAG 424 DNA PICC side, enough to exercise provisioning:
 
-  ISOSelect (NDEF app / CC / NDEF file), ISOReadBinary with SDM mirroring,
-  ISOUpdateBinary, GetFileSettings (plain), AuthenticateEV2First and
-  ChangeFileSettings in CommMode.Full.
+  ISOSelect (NDEF app / CC / NDEF file), ISOReadBinary with SDM mirroring
+  (PICCData, SDMENCFileData, SDMMAC over the dynamic MAC input),
+  ISOUpdateBinary and WriteData under the file's access rights,
+  GetFileSettings (plain), AuthenticateEV2First and ChangeFileSettings in
+  CommMode.Full.
 
 It reuses Sphragis' own primitives for SDM (compute_sdmmac) and file settings
 parsing, but implements the PICC half of EV2 independently so that the
@@ -17,6 +19,7 @@ from Crypto.Hash import CMAC
 
 from sphragis.apdu import CC_FILE_ID, NDEF_APP_AID, NDEF_FILE_ID
 from sphragis.sdm import compute_sdmmac
+from sphragis.sdmenc import encrypt_file_data
 from sphragis.sdmconfig import FACTORY_ACCESS, KEY_FREE, FileSettings, parse_file_settings
 
 ZERO_IV = bytes(16)
@@ -72,7 +75,8 @@ class FakeNtag424:
             le = apdu[4] or 256
             return self._content()[offset:offset + le] + b"\x90\x00"
         if ins == 0xD6:
-            if self.settings.access.write != KEY_FREE:
+            access = self.settings.access
+            if KEY_FREE not in (access.write, access.read_write):
                 return b"\x69\x82"
             data = apdu[5:5 + apdu[4]]
             self.file[offset:offset + len(data)] = data
@@ -89,8 +93,16 @@ class FakeNtag424:
                 plain = bytes([0xC7]) + self.uid + self.counter.to_bytes(3, "little")
                 plain += os.urandom(16 - len(plain))
                 picc = AES.new(self.keys[s.meta_read], AES.MODE_CBC, ZERO_IV).encrypt(plain)
-                mac = compute_sdmmac(self.keys[s.file_read], self.uid, self.counter)
                 data[s.picc_offset:s.picc_offset + 32] = picc.hex().upper().encode()
+                file_key = self.keys[s.file_read]
+                if s.enc_enabled:
+                    # Only the first half of the placeholder is plaintext.
+                    start, n = s.enc_offset, s.enc_length
+                    enc = encrypt_file_data(file_key, self.uid, self.counter,
+                                            bytes(self.file[start:start + n // 2]))
+                    data[start:start + n] = enc.hex().upper().encode()
+                mac_input = bytes(data[s.mac_input_offset:s.mac_offset])
+                mac = compute_sdmmac(file_key, self.uid, self.counter, mac_input)
                 data[s.mac_offset:s.mac_offset + 16] = mac.hex().upper().encode()
             self.snapshot = bytes(data)
         return self.snapshot
@@ -124,7 +136,42 @@ class FakeNtag424:
             return AES.new(key, AES.MODE_CBC, ZERO_IV).encrypt(resp) + b"\x91\x00"
         if ins == 0x5F:
             return self._change_file_settings(data)
+        if ins == 0x8D:
+            return self._write_data(data)
         return b"\x91\x1C"
+
+    def _write_data(self, data):
+        """WriteData, CommMode.Plain (the only mode the provisioning flow uses)."""
+        access, s = self.settings.access, self.session
+        free = KEY_FREE in (access.write, access.read_write)
+        if not free and (s is None or s["key_no"] not in (access.write, access.read_write)):
+            return b"\x91\x9D"
+        if self.settings.file_option & 0x03:
+            return b"\x91\x9E"            # model covers CommMode.Plain files only
+        file_no, offset = data[0], int.from_bytes(data[1:4], "little")
+        length, payload = int.from_bytes(data[4:7], "little"), data[7:]
+        if file_no != 0x02 or length != len(payload) or offset + length > 256:
+            return b"\x91\x7E"
+        self.file[offset:offset + length] = payload
+        self.writes += 1
+        if s is not None:
+            s["ctr"] += 1                    # CmdCtr advances in plain mode too
+        return b"\x91\x00"
+
+    @staticmethod
+    def _enc_rules_ok(st):
+        """The SDMENCFileData checks of NT4H2421Gx Table 69 / Table 71."""
+        if not st.enc_enabled:
+            return True
+        o = st.sdm_options
+        return bool(
+            o & 0x80 and o & 0x40 and st.file_read != 0xF
+            and st.enc_length >= 32 and st.enc_length % 32 == 0
+            and st.mac_input_offset <= st.enc_offset <= st.mac_offset - 32
+            and st.mac_offset >= st.enc_offset + st.enc_length
+            and (st.enc_offset >= st.picc_offset + 32
+                 or st.picc_offset >= st.enc_offset + st.enc_length)
+            and st.mac_offset + 16 <= 256)
 
     def _change_file_settings(self, data):
         s = self.session
@@ -140,7 +187,11 @@ class FakeNtag424:
         plain = AES.new(s["k_enc"], AES.MODE_CBC, iv).decrypt(enc)
         plain = plain[:plain.rindex(b"\x80")]
         body = plain[:3] + (256).to_bytes(3, "little") + plain[3:]
-        self.settings = parse_file_settings(b"\x00" + body)
+        new_settings = parse_file_settings(b"\x00" + body)
+        if not self._enc_rules_ok(new_settings):
+            self.session = None
+            return b"\x91\x9E"
+        self.settings = new_settings
         s["ctr"] += 1
         rmac = _cmac(s["k_mac"], b"\x00" + s["ctr"].to_bytes(2, "little") + s["ti"])[1::2]
         return rmac + b"\x91\x00"

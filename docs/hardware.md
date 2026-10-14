@@ -106,6 +106,46 @@ tap 1 after tap 3 gives `CLONE_LIKELY` (`counter_regression`), a tampered
 CMAC gives `FORGED`. Use `--store` to keep the anti-replay floor across runs
 and `--wait` to swap tags between taps.
 
+## Encrypted file data (SDMENCFileData) — not yet validated on hardware
+
+`--enc-data TEXT` (or `--enc-data-hex HEX`, a multiple of 16 bytes) provisions
+the variant that also mirrors encrypted file data. The flow is exercised only
+against the fake PICC in the test suite so far; run it on a tag read-only
+first.
+
+What changes compared with plain SUN:
+
+- the template gains `&enc=` with a placeholder twice the plaintext size; the
+  plaintext sits in its first half (NT4H2421Gx §9.3.6) and never appears in a
+  tap, which carries fresh ciphertext every time;
+- SDMMACInputOffset moves to the start of `enc`, so the MAC covers the
+  ciphertext (`<enc>&cmac=`);
+- the NDEF file's Write and ReadWrite rights are **locked to an application
+  key** (`--write-key`, default 0). Otherwise anyone with a phone could rewrite
+  the plaintext and the tag would MAC it as genuine. Later writes go through
+  AuthenticateEV2First + WriteData (CommMode.Plain, in single-frame chunks);
+- the check at the end decrypts one tap with `EncFileVerifier` under the zero
+  keys and compares the plaintext.
+
+Offline plan (no reader):
+
+```
+$ python tools/provision.py --dry-run --base-url https://example.com/t \
+      --enc-data 0123456789ABCDEF
+template      : https://example.com/t?picc_data=0000…&enc=0000…&cmac=0000…
+NDEF file     : 122 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x20, SDMMACOffset=0x6A
+file data     : 16 B plaintext, NDEF writes locked to key 0
+file settings : 4000E0D1F1211F00004400004400002000006A0000 (SDM on, encrypted PICCData key 2, MAC key 1)
+dry run, no reader: plan only
+```
+
+On a tag: the same command with `--reader chameleon --port /dev/ttyACM0`
+first (read-only), then with `--yes` instead of `--dry-run`. The 122-byte
+template goes out with ISO-DEP chaining on the Chameleon Ultra. Verify further
+taps with `sphragis verify --enc --meta-key 00… --file-key 00… URL`. Running
+plain provisioning again (without `--enc-data`) returns the tag to plain SUN
+and unlocks the NDEF file.
+
 ## Physical clone detection
 
 A clone is a second physical device that answers for the same tag. Here the

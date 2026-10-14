@@ -67,3 +67,36 @@ def test_provision_with_fake_picc(capsys):
     assert "provisioned and verified" in capsys.readouterr().out
     assert tool.main(argv) == 0
     assert "already provisioned" in capsys.readouterr().out
+
+
+def test_provision_enc_offline_dry_run(capsys):
+    tool = _load("provision")
+    argv = ["--dry-run", "--base-url", "https://example.com/t",
+            "--enc-data", "0123456789ABCDEF"]
+    assert tool.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "4000E0D1F121" in out and "locked to key 0" in out
+
+
+@pytest.mark.parametrize("extra", [
+    ["--enc-data", "short"],                                   # not 16 bytes
+    ["--enc-data-hex", "zz" * 16],                             # not hex
+    ["--enc-data", "0123456789ABCDEF", "--enc-data-hex", "00" * 16],
+    ["--enc-data", "0123456789ABCDEF", "--write-key", "14"],   # not a key
+])
+def test_provision_enc_rejects_bad_arguments(extra):
+    with pytest.raises(SystemExit):
+        _load("provision").main(["--dry-run", "--base-url", "https://example.com/t",
+                                 *extra])
+
+
+def test_provision_enc_with_fake_picc(capsys):
+    tool = _load("provision")
+    tag = FakeNtag424()
+    tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
+    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
+            "--enc-data-hex", "00112233445566778899AABBCCDDEEFF"]
+    assert tool.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "provisioned and verified" in out and "file data match" in out
+    assert tag.settings.enc_enabled

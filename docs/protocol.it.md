@@ -91,8 +91,9 @@ result.verdict, result.file_data
 ```
 
 Da riga di comando: `sphragis verify --enc --meta-key … --file-key … URL`.
-Il provisioning (`sdmconfig.py` / `provision.py`) configura ancora solo il SUN
-semplice; l'attivazione del mirror cifrato su un tag non è ancora automatizzata.
+`provision_tag(..., file_data=...)` / `tools/provision.py --enc-data`
+configurano il mirror su un tag e bloccano su una chiave la scrittura del file
+NDEF; vedi [hardware.it.md](hardware.it.md) (non ancora validato su tag fisici).
 
 ## Validazione known-answer
 
@@ -120,8 +121,8 @@ Tabella 5: picc_data = FD91EC264309878BE6345CBE53BADF40
 
 ## Non ancora supportato
 
-- Il provisioning del mirror `SDMENCFileData` su un tag (la verifica è
-  supportata, vedi sopra; il `Verifier` semplice rifiuta ancora questi URL).
+- La validazione del provisioning `SDMENCFileData` su tag fisici (il flusso è
+  provato solo contro un PICC finto).
 - Layout `SDMENCFileData` in cui `SDMMACInputOffset` non coincide con l'inizio
   del valore di `enc`.
 - Il canale sicuro EV2 (`AuthenticateEV2First/NonFirst`) — fuori ambito: questo
