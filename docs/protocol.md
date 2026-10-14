@@ -49,6 +49,49 @@ SDMMAC = truncate( AES-CMAC(Kses, <mirrored file data, empty for plain SUN>) )
 value is compared against the URL's `cmac` in **constant time**
 (`hmac.compare_digest`).
 
+## Encrypted file data (SDMENCFileData)
+
+A tag can also encrypt a slice of the NDEF file's static data on every read
+and mirror it as ASCII hex, typically as an `enc` parameter. The plain
+`Verifier` keeps refusing such URLs (fail-closed); they are handled by the
+opt-in `EncFileVerifier` (`sphragis/encverifier.py`, primitives in
+`sphragis/sdmenc.py`). The SUN path in `sdm.py` is reused unchanged.
+
+```
+SV1      = C3h 3Ch 00h 01h 00h 80h || UID || SDMReadCtr
+KsesENC  = AES-CMAC(K_SDMFileReadKey, SV1)
+IVe      = AES-ECB(KsesENC, SDMReadCtr || 00h * 13)
+FileData = AES-CBC-Decrypt(KsesENC, IVe, SDMENCFileData)
+```
+
+With an encrypted mirror the SDMMAC is **not** over an empty message: it
+covers the mirrored ASCII bytes from `SDMMACInputOffset` to `SDMMACOffset - 1`,
+which must include the whole `SDMENCFileData`. The supported layout is the one
+in AN12196 §3.4.4.2.2:
+
+```
+...?picc_data=<32 hex>&enc=<n*32 hex>&cmac=<16 hex>
+MAC input = "<enc hex>&cmac="   (anything between enc and cmac is covered too)
+```
+
+Verification order: parse (strict hex, no duplicated, re-cased or
+percent-encoded parameter names, `cmac` after `enc`) → decrypt PICCData →
+check the SDMMAC over the **raw** input in constant time → atomic counter
+check → only then decrypt the file data. The decrypted bytes are returned only
+on `AUTHENTIC`. Because the MAC is over raw bytes, the URL must reach the
+verifier exactly as the tag emitted it: re-encoding it or changing the hex
+case makes a genuine tap `FORGED`.
+
+```python
+from sphragis import EncFileVerifier, StaticKeys
+result = EncFileVerifier(StaticKeys(meta_key, file_key)).verify(url)
+result.verdict, result.file_data
+```
+
+From the command line: `sphragis verify --enc --meta-key … --file-key … URL`.
+Provisioning (`sdmconfig.py` / `provision.py`) still configures plain SUN
+only; enabling the encrypted mirror on a tag is not automated yet.
+
 ## Known-answer validation
 
 The implementation reproduces the official NXP zero-key vector:
@@ -61,9 +104,24 @@ cmac      = 94EED9EE65337086
 See `tests/test_sdm.py::test_nxp_known_answer_vector`. If the crypto ever
 drifts, that test fails immediately.
 
+The encrypted mirror is pinned to the two AN12196 Rev. 2.0 zero-key vectors,
+including the intermediate session keys and IV
+(`tests/test_sdmenc.py`):
+
+```
+Table 3: picc_data = FDE4AFA99B5C820A2C1BB0F1C792D0EB
+         enc       = 94592FDE69FA06E8E3B6CA686A22842B
+         cmac      = C48B89C17A233B2C   -> file data "xxxxxxxxxxxxxxxx"
+Table 5: picc_data = FD91EC264309878BE6345CBE53BADF40
+         enc       = CEE9A53E3E463EF1F459635736738962
+         cmac      = ECC1E7F6C6C73BF6   -> file data "xxxxxxxxxxxxxxxx"
+```
+
 ## Not yet supported
 
-- `SDMENCFileData` (encrypted mirrored file data). URLs carrying it are
-  **refused** (fail-closed) rather than partially verified.
+- Provisioning the `SDMENCFileData` mirror on a tag (verification is
+  supported, see above; the plain `Verifier` still refuses these URLs).
+- `SDMENCFileData` layouts where `SDMMACInputOffset` is not the start of the
+  `enc` value.
 - The EV2 secure channel (`AuthenticateEV2First/NonFirst`) — out of scope: this
   is a backend verifier for SUN messages, not a reader/APDU stack.

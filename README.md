@@ -196,6 +196,8 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durable, atomic
 sphragis/
   sdm.py           SDM crypto primitives (PICCData decrypt, session key, SDMMAC)
   verifier.py      simple URL -> verdict pipeline
+  sdmenc.py        SDMENCFileData primitives (ENC session key, IV, decrypt)
+  encverifier.py   URL -> verdict + decrypted file data (encrypted mirror)
   counterstore.py  JSON read-counter store + CounterBackend protocol
   sqlstore.py      SQLite anti-replay floor with atomic check-and-advance
   secrets.py       key-material backends (env / file / KMS extension point)

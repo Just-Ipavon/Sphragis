@@ -4,6 +4,9 @@ sphragis — NTAG 424 DNA clone-detection engine (SUN/SDM).
 Cryptographic layer:
     from sphragis import Verifier, StaticKeys, Verdict, CounterStore
 
+Encrypted file-data mirror (SDMENCFileData):
+    from sphragis import EncFileVerifier, decrypt_file_data
+
 Intelligence layer (scored clone detection):
     from sphragis import TagAnalyzer, CloneDetector, RiskLevel
 
@@ -26,6 +29,7 @@ from .analyzer import AnalysisResult, TagAnalyzer
 from .counterstore import CounterBackend, CounterStore
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .diversify import DiversifiedKeys, diversify_key
+from .encverifier import EncFileVerifier, EncVerificationResult
 from .logs import JsonFormatter, UidPseudonymizer, configure_logging
 from .observations import (
     MemoryObservationStore,
@@ -35,6 +39,7 @@ from .observations import (
 )
 from .ratelimit import RateDecision, RateLimiter, TokenBucketLimiter
 from .sdm import PiccData, SdmError, compute_sdmmac, decrypt_picc_data
+from .sdmenc import decrypt_file_data, encrypt_file_data
 from .secrets import (
     EnvSecretsBackend,
     FileSecretsBackend,
@@ -58,6 +63,10 @@ __all__ = [
     "SdmError",
     "compute_sdmmac",
     "decrypt_picc_data",
+    "EncFileVerifier",
+    "EncVerificationResult",
+    "decrypt_file_data",
+    "encrypt_file_data",
     # intelligence
     "TagAnalyzer",
     "AnalysisResult",
