@@ -34,14 +34,20 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     configure_logging(getattr(logging, settings.log_level, logging.INFO))
 
     keys = build_diversified_keys(secrets, context=settings.key_context)
-    detector = CloneDetector(
-        min_travel_seconds=settings.min_travel_seconds,
-        store=SqliteObservationStore(settings.db_path),
-    )
-    analyzer = TagAnalyzer(keys, detector=detector,
-                           store=SqliteCounterStore(settings.db_path))
+    if settings.db_url:
+        # One shared database for every replica, on any number of hosts.
+        from ..pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore
+        history, floor = (PostgresObservationStore(settings.db_url),
+                          PostgresCounterStore(settings.db_url))
+        audit: AlertSink = PostgresAlertSink(settings.db_url)
+    else:
+        history, floor = (SqliteObservationStore(settings.db_path),
+                          SqliteCounterStore(settings.db_path))
+        audit = SqliteAlertSink(settings.db_path)
+    detector = CloneDetector(min_travel_seconds=settings.min_travel_seconds, store=history)
+    analyzer = TagAnalyzer(keys, detector=detector, store=floor)
 
-    sinks: list[AlertSink] = [LogAlertSink(), SqliteAlertSink(settings.db_path)]
+    sinks: list[AlertSink] = [LogAlertSink(), audit]
     if settings.webhook_url:
         sinks.append(WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook")))
 

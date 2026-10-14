@@ -7,6 +7,7 @@ Key material (SDM keys, pseudonymization key, webhook secret) is read through a
 | Variable                      | Default         | Meaning                                    |
 |-------------------------------|-----------------|--------------------------------------------|
 | SPHRAGIS_DB_PATH              | sphragis.db     | SQLite file: counter floor, history, alerts|
+| SPHRAGIS_DB_URL               | (none)          | postgresql:// URL; replaces SQLite (multi-host)|
 | SPHRAGIS_KEY_CONTEXT          | (empty)         | AN10922 diversification context            |
 | SPHRAGIS_READER_TOKENS        | (none)          | `reader=sha256hex,...` authenticated readers|
 | SPHRAGIS_TRUSTED_PROXIES      | (none)          | proxy IPs allowed to set X-Forwarded-For   |
@@ -56,6 +57,7 @@ def parse_reader_tokens(raw: str) -> dict[str, str]:
 @dataclass(frozen=True)
 class ApiSettings:
     db_path: str = "sphragis.db"
+    db_url: str | None = None
     key_context: bytes = b""
     reader_tokens: Mapping[str, str] = field(default_factory=dict)
     trusted_proxies: frozenset[str] = frozenset()
@@ -79,11 +81,15 @@ class ApiSettings:
         def csv(name: str, default: str = "") -> list[str]:
             return [p.strip() for p in get(name, default).split(",") if p.strip()]
 
+        db_url = get("DB_URL", "") or None
+        if db_url and not db_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("SPHRAGIS_DB_URL must be a postgresql:// URL")
         log_uid = get("LOG_UID", "hmac").lower()
         if log_uid not in ("hmac", "plain"):
             raise ValueError("SPHRAGIS_LOG_UID must be 'hmac' or 'plain'")
         return cls(
             db_path=get("DB_PATH", "sphragis.db"),
+            db_url=db_url,
             key_context=get("KEY_CONTEXT", "").encode(),
             reader_tokens=parse_reader_tokens(get("READER_TOKENS", "")),
             trusted_proxies=frozenset(csv("TRUSTED_PROXIES")),

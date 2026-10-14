@@ -30,16 +30,48 @@ Qualsiasi oggetto che implementa il protocollo `CounterBackend` (`last_counter`,
 
 ## Scalare a Postgres
 
-La stessa logica è un singolo statement atomico:
+Più host hanno bisogno di un unico database condiviso. `sphragis.pgstore`
+(extra opzionale: `pip install "sphragis[pg]"`, psycopg 3) implementa gli
+stessi contratti su Postgres:
 
-```sql
-INSERT INTO counters (uid, counter) VALUES ($1, $2)
-ON CONFLICT (uid) DO UPDATE SET counter = excluded.counter
-WHERE excluded.counter > counters.counter;
+- **`PostgresCounterStore`**: `check_and_advance` è un'unica istruzione
+  atomica; l'upsert blocca la riga in conflitto, quindi due host in gara sullo
+  stesso UID non possono accettare entrambi un contatore. Nessuna riga
+  restituita significa replay o rollback:
+
+  ```sql
+  INSERT INTO sphragis_counters AS c (uid, counter, updated_at) VALUES ($1, $2, $3)
+  ON CONFLICT (uid) DO UPDATE SET counter = EXCLUDED.counter, updated_at = EXCLUDED.updated_at
+  WHERE c.counter < EXCLUDED.counter
+  RETURNING c.counter;
+  ```
+
+- **`PostgresObservationStore`**: `observe` legge la cronologia precedente,
+  aggiunge il tap e la accorcia in un'unica transazione, serializzata per UID
+  con un advisory lock a livello di transazione.
+- **`PostgresAlertSink`**: l'audit trail degli alert, condiviso da tutte le
+  repliche.
+
+Le tabelle (`sphragis_counters`, `sphragis_observations`, `sphragis_alerts`)
+sono create al primo uso. Ogni thread ha la sua connessione; una connessione
+interrotta viene sostituita alla chiamata successiva e gli errori si
+propagano, quindi una verifica fallisce in modo chiuso invece di saltare il
+floor.
+
+```python
+from sphragis import PostgresCounterStore, Verifier, build_diversified_keys, EnvSecretsBackend
+verifier = Verifier(build_diversified_keys(EnvSecretsBackend()),
+                    PostgresCounterStore("postgresql://sphragis@db.internal/sphragis"))
 ```
 
-Tratta "0 righe modificate" come un replay. Questo dà scalabilità orizzontale
-con la stessa garanzia anti-rollback.
+L'API REST passa a questi backend quando è impostata `SPHRAGIS_DB_URL` (vedi
+[API](api.it.md#configurazione)). Tieni la password fuori dall'URL: libpq legge
+`PGPASSWORD` o `~/.pgpass`.
+
+La suite di test esegue un'unica suite di conformità su SQLite e Postgres,
+compresi molti thread e più processi in gara sullo stesso UID
+(`tests/test_backends.py`; imposta `SPHRAGIS_TEST_PG_DSN`, la CI avvia un
+servizio Postgres).
 
 ## Chiavi
 
@@ -72,10 +104,10 @@ coerente. Vedi [la documentazione API](api.it.md#scalabilità-orizzontale-cronol
 ## Checklist di indurimento
 
 - [ ] Chiavi in KMS/HSM, non in env su host a lunga vita
-- [ ] Floor Postgres (o equivalente) con update condizionale atomico
+- [x] Floor Postgres con update condizionale atomico, cronologia e audit trail condivisi
 - [x] Rate limiting sull'endpoint di verifica (per IP + per UID autentico; in-process, vedi [API](api.it.md#rate-limiting))
 - [x] Log strutturati + alert su `CLONE_LIKELY`
 - [ ] Rate limiter condiviso (es. Redis) per deployment multi-replica
 - [ ] Gestione del rollover del `SDMReadCtr` a 24 bit
-- [ ] Decidere il supporto a `SDMENCFileData` dalla configurazione reale del tag
-- [ ] Validazione end-to-end su tag fisici
+- [x] Verifica e provisioning `SDMENCFileData` (validati su un tag fisico)
+- [x] Validazione end-to-end su tag fisici

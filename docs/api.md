@@ -24,7 +24,7 @@ pulled in by the `api` extra alone.
                     │  per-UID admission (rate limit, after the MAC)
                     │  server clock, never client time
                     ├─▶ JSON log event (pseudonymized UID)
-                    └─▶ AlertSinks on CLONE_LIKELY (log · SQLite · webhook)
+                    └─▶ AlertSinks on CLONE_LIKELY (log · SQLite/Postgres · webhook)
 ```
 
 `VerificationService` (`sphragis/service.py`) does not depend on any framework,
@@ -141,13 +141,16 @@ therefore stores the history in `SqliteObservationStore`, in the same database
 as the counter floor and the alerts. Its `observe()` call is atomic (it reads
 the prior history and appends the new tap in one step), so concurrent taps
 are scored against each other. Several uvicorn workers on one host share the
-same view. Multi-host deployments need the Postgres backend (roadmap).
+same view. For several hosts set `SPHRAGIS_DB_URL`: the floor, the history
+and the alert audit trail then live in one Postgres database shared by every
+replica (see [production](production.md#scaling-to-postgres)).
 
 ## Configuration
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `SPHRAGIS_DB_PATH` | `sphragis.db` | SQLite file: counter floor, history, alerts |
+| `SPHRAGIS_DB_URL` | none | `postgresql://` URL; replaces SQLite for multi-host (needs `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | empty | AN10922 diversification context |
 | `SPHRAGIS_READER_TOKENS` | none | `reader=sha256hex,…` |
 | `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs allowed to set `X-Forwarded-For` |
