@@ -238,7 +238,33 @@ def test_provision_fails_closed_with_non_zero_key():
     assert not tag.settings.sdm_enabled
 
 
-def test_provision_refuses_locked_ndef_file():
+def test_free_read_write_right_allows_iso_update():
+    # Write locked but ReadWrite free: ISOUpdateBinary is still granted
+    # (NT4H2421Gx Table 9), so no authentication is needed.
     tag = FakeNtag424(settings=FileSettings(0x00, AccessRights(0xE, 0x0, 0xE, 0x0)))
+    report = provision_tag(tag, BASE)
+    assert report.wrote_ndef and report.verified
+    assert "ISOUpdateBinary" in "".join(report.log)
+
+
+def test_locked_ndef_file_is_written_with_authenticated_write_data():
+    tag = FakeNtag424(settings=FileSettings(0x00, AccessRights(0x0, 0x0, 0xE, 0x0)))
+    report = provision_tag(tag, BASE)
+    assert report.wrote_ndef and report.changed_settings and report.verified
+    assert "WriteData" in "".join(report.log)
+
+
+def test_locked_ndef_file_with_non_zero_key_fails_closed():
+    keys = [ZERO, ZERO, ZERO, os.urandom(16), ZERO]
+    tag = FakeNtag424(keys=keys,
+                      settings=FileSettings(0x00, AccessRights(0x3, 0x0, 0xE, 0x3)))
+    with pytest.raises(ApduError) as exc:
+        provision_tag(tag, BASE)
+    assert exc.value.sw == 0x91AE
+    assert tag.writes == 0 and not tag.settings.sdm_enabled
+
+
+def test_unwritable_ndef_file_is_refused():
+    tag = FakeNtag424(settings=FileSettings(0x00, AccessRights(0xF, 0x0, 0xE, 0xF)))
     with pytest.raises(ProvisionError):
         provision_tag(tag, BASE)

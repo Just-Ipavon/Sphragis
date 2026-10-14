@@ -10,6 +10,12 @@ provisioning run can tell whether a tag is already configured:
   - SDMMAC over an empty message (SDMMACInputOffset == SDMMACOffset),
   - no SDMENCFileData, no read-counter limit.
 
+`sun_enc_layout` / `sun_enc_settings` build the variant with an SDMENCFileData
+mirror (NT4H2421Gx §9.3.5-9.3.7): the template gains an `enc` placeholder whose
+first half holds the plaintext, the MAC input starts at the encrypted data,
+and the NDEF file's Write/ReadWrite rights are locked to an application key so
+the mirrored plaintext cannot be rewritten by anyone with a phone.
+
 Byte layout follows NT4H2421Gx / AN12196 §5.4 and §5.9: access-right nibbles
 are packed (RW|Change)(Read|Write) and (RFU|CtrRet)(MetaRead|FileRead);
 offsets are 3 bytes little-endian.
@@ -36,6 +42,7 @@ KEY_FREE = 0xE
 KEY_NONE = 0xF
 
 PICC_PLACEHOLDER = "0" * 32   # 16-byte encrypted PICCData as ASCII hex
+ENC_PARAM = "enc"
 MAC_PLACEHOLDER = "0" * 16    # 8-byte SDMMAC as ASCII hex
 NDEF_FILE_SIZE = 256
 
@@ -63,6 +70,17 @@ class AccessRights:
 FACTORY_ACCESS = AccessRights(KEY_FREE, 0x0, KEY_FREE, KEY_FREE)
 
 
+def locked_access(write_key: int = 0) -> AccessRights:
+    """
+    NDEF access rights with writes locked to `write_key` (Write and ReadWrite),
+    reads left free (needed for SDM) and Change on key 0, as NT4H2421Gx
+    Table 8 recommends after personalization.
+    """
+    if not 0 <= write_key <= 4:
+        raise SdmConfigError("write_key must be an application key 0..4")
+    return AccessRights(write_key, 0x0, KEY_FREE, write_key)
+
+
 @dataclass(frozen=True)
 class FileSettings:
     file_option: int
@@ -84,6 +102,11 @@ class FileSettings:
     @property
     def sdm_enabled(self) -> bool:
         return bool(self.file_option & _FILE_OPT_SDM)
+
+    @property
+    def enc_enabled(self) -> bool:
+        """SDMENCFileData mirroring is on."""
+        return self.sdm_enabled and bool((self.sdm_options or 0) & _SDM_ENC_FILE)
 
     def encode_change(self) -> bytes:
         """CmdData of ChangeFileSettings (everything after the file number)."""
@@ -212,14 +235,23 @@ class SunLayout:
     url: str
     ndef_file: bytes
     offsets: SdmOffsets
+    file_data: bytes | None = None    # plaintext of the SDMENCFileData mirror
 
-    def mask_mirrors(self, data: bytes) -> bytes:
-        """Replace mirrored regions with the template's placeholders, for comparison."""
+    def mask_mirrors(self, data: bytes, *, enc_mirrored: bool = True) -> bytes:
+        """
+        Replace mirrored regions with the template's placeholders, for
+        comparison. With `enc_mirrored` the whole SDMENCFileData placeholder is
+        masked too (its plaintext is not readable in that case); otherwise it
+        is compared as static data.
+        """
         if len(data) < len(self.ndef_file):
             return bytes(data)
         out = bytearray(data[: len(self.ndef_file)])
-        for start, n in ((self.offsets.picc_data, len(PICC_PLACEHOLDER)),
-                         (self.offsets.mac, len(MAC_PLACEHOLDER))):
+        regions = [(self.offsets.picc_data, len(PICC_PLACEHOLDER)),
+                   (self.offsets.mac, len(MAC_PLACEHOLDER))]
+        if enc_mirrored and self.offsets.enc_data is not None:
+            regions.append((self.offsets.enc_data, self.offsets.enc_length))
+        for start, n in regions:
             out[start : start + n] = self.ndef_file[start : start + n]
         return bytes(out)
 
@@ -230,3 +262,76 @@ def sun_layout(base_url: str) -> SunLayout:
     if len(data) > NDEF_FILE_SIZE:
         raise SdmConfigError(f"NDEF template is {len(data)} B, file holds {NDEF_FILE_SIZE}")
     return SunLayout(url=url, ndef_file=data, offsets=sdm_offsets(url))
+
+
+def enc_template_url(base_url: str, data_length: int) -> str:
+    """SUN template with an SDMENCFileData placeholder for `data_length` bytes."""
+    if data_length <= 0 or data_length % 16:
+        raise SdmConfigError("file data must be a non-empty multiple of 16 bytes")
+    if "?" in base_url or "#" in base_url:
+        raise SdmConfigError("base URL must not carry a query string or fragment")
+    return (f"{base_url}?picc_data={PICC_PLACEHOLDER}"
+            f"&{ENC_PARAM}={'0' * (2 * data_length)}&cmac={MAC_PLACEHOLDER}")
+
+
+def check_enc_offsets(o: SdmOffsets, file_size: int = NDEF_FILE_SIZE) -> None:
+    """
+    The SDMENCFileData placement rules of NT4H2421Gx §9.3.5, §9.3.7 and
+    Table 69, checked before anything is sent to a tag.
+    """
+    if o.enc_data is None or o.enc_length is None:
+        raise SdmConfigError("no SDMENCFileData placeholder in the layout")
+    enc, n = o.enc_data, o.enc_length
+    if n < 32 or n % 32:
+        raise SdmConfigError(f"SDMENCLength must be a multiple of 32, got {n}")
+    if not o.mac_input <= enc <= o.mac - 32:
+        raise SdmConfigError("SDMENCOffset must lie in SDMMACInputOffset .. "
+                             "SDMMACOffset - 32")
+    if o.mac < enc + n:
+        raise SdmConfigError("SDMMACOffset must follow the SDMENCFileData placeholder")
+    if not (enc >= o.picc_data + len(PICC_PLACEHOLDER)
+            or o.picc_data >= enc + n):
+        raise SdmConfigError("SDMENCFileData overlaps the PICCData mirror")
+    if o.mac + len(MAC_PLACEHOLDER) > file_size:
+        raise SdmConfigError("SDMMAC mirror runs past the end of the file")
+
+
+def sun_enc_settings(offsets: SdmOffsets, write_key: int = 0, meta_read_key: int = 2,
+                     file_read_key: int = 1, ctr_ret_key: int = 1) -> FileSettings:
+    """
+    `sun_settings` plus the SDMENCFileData mirror (encrypted with the session
+    key derived from `file_read_key`) and NDEF writes locked to `write_key`.
+    """
+    check_enc_offsets(offsets)
+    base = sun_settings(offsets, meta_read_key, file_read_key, ctr_ret_key,
+                        access=locked_access(write_key))
+    return FileSettings(
+        file_option=base.file_option,
+        access=base.access,
+        sdm_options=base.sdm_options | _SDM_ENC_FILE,
+        ctr_ret=base.ctr_ret,
+        meta_read=base.meta_read,
+        file_read=base.file_read,
+        picc_offset=offsets.picc_data,
+        mac_input_offset=offsets.mac_input,
+        enc_offset=offsets.enc_data,
+        enc_length=offsets.enc_length,
+        mac_offset=offsets.mac,
+    )
+
+
+def sun_enc_layout(base_url: str, file_data: bytes) -> SunLayout:
+    """
+    NDEF file for the SDMENCFileData layout: the template with `file_data`
+    written in the first half of the `enc` placeholder (NT4H2421Gx §9.3.6:
+    the second half is ignored when the tag builds the mirror).
+    """
+    url = enc_template_url(base_url, len(file_data))
+    data = bytearray(encode_uri_file(url))
+    if len(data) > NDEF_FILE_SIZE:
+        raise SdmConfigError(f"NDEF template is {len(data)} B, file holds {NDEF_FILE_SIZE}")
+    offsets = sdm_offsets(url, enc_param=ENC_PARAM)
+    check_enc_offsets(offsets)
+    data[offsets.enc_data : offsets.enc_data + len(file_data)] = file_data
+    return SunLayout(url=url, ndef_file=bytes(data), offsets=offsets,
+                     file_data=bytes(file_data))

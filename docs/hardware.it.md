@@ -107,6 +107,111 @@ CMAC alterato dà `FORGED`. Con `--store` la soglia anti-replay persiste tra
 un'esecuzione e l'altra; con `--wait` si possono scambiare i tag tra un tap e
 l'altro.
 
+## Dati di file cifrati (SDMENCFileData)
+
+`--enc-data TESTO` (o `--enc-data-hex HEX`, un multiplo di 16 byte) configura
+la variante che riflette anche dati di file cifrati. Validato su una NTAG 424
+DNA di fabbrica tramite il Chameleon Ultra (risultati sotto).
+
+Cosa cambia rispetto al SUN semplice:
+
+- il modello acquisisce `&enc=` con uno spazio riservato grande il doppio del
+  testo in chiaro; il testo in chiaro sta nella prima metà (NT4H2421Gx §9.3.6)
+  e non compare mai in un tap, che porta ogni volta un cifrato diverso;
+- SDMMACInputOffset si sposta all'inizio di `enc`, quindi il MAC copre il
+  cifrato (`<enc>&cmac=`);
+- i diritti Write e ReadWrite del file NDEF sono **bloccati su una chiave
+  applicativa** (`--write-key`, default 0). Altrimenti chiunque con un
+  telefono potrebbe riscrivere il testo in chiaro e il tag lo firmerebbe come
+  genuino. Le scritture successive passano da AuthenticateEV2First + WriteData
+  (CommMode.Plain, a blocchi di un solo frame);
+- il controllo finale decifra un tap con `EncFileVerifier` a chiavi zero e
+  confronta il testo in chiaro.
+
+**1. Piano** (sola lettura), su una tag di fabbrica:
+
+```
+$ python tools/provision.py --reader chameleon --port /dev/ttyACM0 \
+      --base-url https://example.com/t --enc-data 0123456789ABCDEF --dry-run
+NDEF file     : 122 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x20, SDMMACOffset=0x6A
+file data     : 16 B plaintext, NDEF writes locked to key 0
+file settings : 4000E0D1F1211F00004400004400002000006A0000 (SDM on, encrypted PICCData key 2, MAC key 1)
+current       : settings differ, NDEF differs
+would write  : NDEF template via ISOUpdateBinary
+would change : file settings (auth with key 0, CommMode.Full)
+```
+
+**2. Provisioning** (scrive; `--yes` al posto di `--dry-run`). Il modello da
+122 byte è passato con una sola ISOUpdateBinary, cioè con il chaining ISO-DEP
+del Chameleon Ultra (i cui frame sono limitati a 62 byte):
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : AUTHENTIC, UID 04801A82161690, SDMReadCtr 1, file data match
+RESULT       : provisioned and verified
+```
+
+**3. Verifica dei tap** con `tools/tap_verify.py --enc`. Tre tap consecutivi:
+cifrato diverso ogni volta, stesso testo in chiaro, contatore che sale;
+riproporre poi il primo URL dà `REPLAY`:
+
+```
+picc_data=159F61C9…&enc=15A911F3450D9A146B7C64559FBA32E6&cmac=71F7103244547328  AUTHENTIC ctr 2  0123456789ABCDEF
+picc_data=6157652C…&enc=2DBF9D0E72475941F917DB5732DB9320&cmac=6D80A272901AC2F0  AUTHENTIC ctr 3  0123456789ABCDEF
+picc_data=51AF150B…&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA  AUTHENTIC ctr 4  0123456789ABCDEF
+replay del tap 1: REPLAY (contatore 2 <= ultimo visto 4)
+```
+
+**4. Blocco della scrittura.** Una ISOUpdateBinary non autenticata degli
+stessi byte già presenti all'offset del testo in chiaro (quindi in nessun caso
+poteva cambiare qualcosa):
+
+```
+select app   : 00A4040C07D276000085010100  ->  SW 9000
+select file  : 00A4000C02E10400  ->  SW 9000
+write, no Le : 00D600441030313233343536373839414243444546  ->  SW 6982
+write, Le=00 : 00D60044103031323334353637383941424344454600  ->  SW 6700
+tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414243444546
+```
+
+`6982` (security status not satisfied) conferma il blocco. Attenzione alla
+seconda riga: con la scrittura bloccata, la forma di AN12196 Tabella 16 con Le
+in coda è rifiutata come errore di lunghezza (`6700`) **prima** del controllo
+dei permessi, mentre con la scrittura libera la stessa forma è accettata (è
+così che è stato scritto il modello). Per provare un blocco va usata la forma
+del datasheet senza Le; un `6700` non dimostra nulla sui permessi.
+
+**5. Riscrittura autenticata.** Portare a 32 byte il testo in chiaro della tag
+bloccata cambia anche lo spazio riservato, quindi un'unica sessione EV2 porta
+sia i WriteData in chiaro (modello da 154 byte, a blocchi di un frame) sia il
+ChangeFileSettings cifrato. Il MAC di quest'ultimo copre il contatore
+comandi, quindi il fatto che sia accettato conferma anche la gestione del
+CmdCtr durante le scritture in chiaro:
+
+```
+$ python tools/provision.py … --enc-data 0123456789ABCDEFFEDCBA9876543210 --dry-run
+NDEF file     : 154 B, PICCDataOffset=0x1F, SDMMACInputOffset=SDMENCOffset=0x44, SDMENCLength=0x40, SDMMACOffset=0x8A
+current       : settings differ, NDEF differs
+would write  : NDEF template via WriteData (auth with key 0)
+would change : file settings (auth with key 0, CommMode.Full)
+
+$ python tools/provision.py … --enc-data 0123456789ABCDEFFEDCBA9876543210 --yes
+wrote        : NDEF template (WriteData, authenticated with key 0)
+changed      : file settings (authenticated with key 0)
+check        : AUTHENTIC, UID 04801A82161690, SDMReadCtr 8, file data match
+RESULT       : provisioned and verified
+```
+
+Rilanciando lo stesso dry run, lo strumento decifra il tap corrente, trova il
+testo in chiaro già a posto e non scrive nulla (`already provisioned: nothing
+to write`); i tap successivi si verificano con il testo da 32 byte.
+
+Tutti questi tap sono conservati come test di regressione
+(`tests/test_sdmenc.py`, `test_physical_tag_*`). Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
+semplice e sblocca il file NDEF: Change resta sulla chiave 0 e le chiavi sono
+ancora a zero, quindi il blocco è reversibile.
+
 ## Clone detection su hardware
 
 Un clone è un secondo dispositivo fisico che risponde per lo stesso tag. Qui il

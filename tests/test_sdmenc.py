@@ -268,3 +268,54 @@ def test_cli_verify_enc(capsys):
     assert "AUTHENTIC" in out and "FileData   : " + "78" * 16 in out
     # Without --enc the plain verifier keeps refusing the URL.
     assert main(["verify", *keys, T3_URL]) == 1
+
+
+# --- Physical tag, all-zero keys ---------------------------------------------
+# Three consecutive taps of an NTAG 424 DNA (UID 04801A82161690) provisioned
+# with tools/provision.py --enc-data 0123456789ABCDEF and read through a
+# Chameleon Ultra. Pins the whole path to real silicon, not only to the NXP
+# application-note vectors.
+
+FIELD_TAPS = [
+    ("https://example.com/t?picc_data=159F61C951ADA159456E05ABEBCC81FC"
+     "&enc=15A911F3450D9A146B7C64559FBA32E6&cmac=71F7103244547328", 2),
+    ("https://example.com/t?picc_data=6157652C70F056333C42E032DC4C5257"
+     "&enc=2DBF9D0E72475941F917DB5732DB9320&cmac=6D80A272901AC2F0", 3),
+    ("https://example.com/t?picc_data=51AF150B5728DF460A774206B9FA1C98"
+     "&enc=93A8CAAAABB76A640D53A33190813914&cmac=DC4FB26DE23603FA", 4),
+    # After the unauthenticated write attempts (6982 / 6700): content intact.
+    ("https://example.com/t?picc_data=49240A8B0B0DBE89BADD23A43682B59C"
+     "&enc=8D3636022199EBA7040AF2EFDF40B33B&cmac=02197F8EE72E99D1", 5),
+]
+
+
+def test_physical_tag_taps_verify_and_replay_is_caught():
+    verifier = _zero_key_verifier()
+    for url, counter in FIELD_TAPS:
+        r = verifier.verify(url)
+        assert r.verdict is Verdict.AUTHENTIC, r.detail
+        assert (r.uid, r.read_counter) == ("04801A82161690", counter)
+        assert r.file_data == b"0123456789ABCDEF"
+    replay = verifier.verify(FIELD_TAPS[0][0])
+    assert replay.verdict is Verdict.REPLAY and replay.file_data is None
+
+
+# Same tag after the authenticated rewrite (WriteData + ChangeFileSettings in
+# one EV2 session) to a 32-byte plaintext, SDMENCLength 0x40.
+FIELD_TAPS_32 = [
+    ("https://example.com/t?picc_data=39DDB81313481DCEE9A9B66B8442A811"
+     "&enc=4FD2EA682D09ABCEFEC96CA46825F55F2DC6C6E06A32DBFDDBBA81E21B1B4760"
+     "&cmac=F209BE0EF0C4369E", 11),
+    ("https://example.com/t?picc_data=7E2BC9996020D84C420CA6C09AD6BF33"
+     "&enc=3EE1FCDC357C9B828C8FDCDC8E9BFF510CE07C557E5EC902804CF032C273F37D"
+     "&cmac=4ABFA889AAFEE2FF", 12),
+]
+
+
+def test_physical_tag_after_authenticated_rewrite():
+    verifier = _zero_key_verifier()
+    for url, counter in FIELD_TAPS_32:
+        r = verifier.verify(url)
+        assert r.verdict is Verdict.AUTHENTIC, r.detail
+        assert (r.uid, r.read_counter) == ("04801A82161690", counter)
+        assert r.file_data == b"0123456789ABCDEFFEDCBA9876543210"

@@ -124,15 +124,18 @@ class SdmOffsets:
     SDM offsets (bytes into the NDEF file) as they must be written with
     ChangeFileSettings for this URL layout.
 
-    `mac_input` equals `mac` because the engine verifies the SUN MAC over an
-    empty message (no mirrored file data), i.e. SDMMACInputOffset ==
-    SDMMACOffset.
+    For plain SUN `mac_input` equals `mac`: the MAC is over an empty message,
+    i.e. SDMMACInputOffset == SDMMACOffset. With an SDMENCFileData mirror the
+    MAC input starts at the encrypted data (SDMMACInputOffset ==
+    SDMENCOffset) and `enc_data` / `enc_length` describe its placeholder.
     """
 
     picc_data: int
     mac_input: int
     mac: int
     file_length: int
+    enc_data: int | None = None
+    enc_length: int | None = None
 
 
 def _value_index(url: str, param: str) -> int:
@@ -146,11 +149,13 @@ def _value_index(url: str, param: str) -> int:
 
 
 def sdm_offsets(url: str, picc_param: str = "picc_data",
-                mac_param: str = "cmac") -> SdmOffsets:
+                mac_param: str = "cmac", enc_param: str | None = None) -> SdmOffsets:
     """
     Compute PICCDataOffset / SDMMACInputOffset / SDMMACOffset for `url`
     encoded with `encode_uri_file`. Works on a template or on a real tap
-    (mirrors have the same length as their placeholders).
+    (mirrors have the same length as their placeholders). With `enc_param`
+    also SDMENCOffset / SDMENCLength, the length being that of the parameter
+    value (up to the next '&' or the end of the URL).
     """
     data = encode_uri_file(url)
     code = _prefix_code(url)
@@ -166,7 +171,15 @@ def sdm_offsets(url: str, picc_param: str = "picc_data",
 
     picc = to_file(_value_index(url, picc_param))
     mac = to_file(_value_index(url, mac_param))
-    return SdmOffsets(picc_data=picc, mac_input=mac, mac=mac, file_length=len(data))
+    if enc_param is None:
+        return SdmOffsets(picc_data=picc, mac_input=mac, mac=mac, file_length=len(data))
+
+    enc_index = _value_index(url, enc_param)
+    end = url.find("&", enc_index)
+    value = url[enc_index:] if end < 0 else url[enc_index:end]
+    enc = to_file(enc_index)
+    return SdmOffsets(picc_data=picc, mac_input=enc, mac=mac, file_length=len(data),
+                      enc_data=enc, enc_length=len(value.encode("utf-8")))
 
 
 def read_uri(transport) -> str:
