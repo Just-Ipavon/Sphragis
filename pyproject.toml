@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sphragis"
+version = "0.3.0"
+description = "Cryptographic clone-detection engine for NXP NTAG 424 DNA (SUN/SDM)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Pasquale Ruotolo" }]
+keywords = ["nfc", "ntag424", "sdm", "sun", "aes-cmac", "anti-counterfeiting",
+            "clone-detection", "cryptography", "security"]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = ["pycryptodome>=3.20"]
+
+[project.scripts]
+sphragis = "sphragis.cli:main"
+
+[tool.setuptools]
+packages = ["sphragis"]
