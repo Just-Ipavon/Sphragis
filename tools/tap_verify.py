@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _reader import add_reader_args, reader_factory  # noqa: E402
 
 from sphragis import EncFileVerifier, StaticKeys, TagAnalyzer  # noqa: E402
+from sphragis.secrets import FileSecretsBackend, build_diversified_keys  # noqa: E402
 from sphragis.counterstore import CounterStore  # noqa: E402
 from sphragis.ndef import read_uri  # noqa: E402
 
@@ -36,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     add_reader_args(parser)
     parser.add_argument("--taps", type=int, default=1, help="number of taps to read")
+    parser.add_argument("--secrets-dir",
+                        help="verify with per-UID keys (master_file, meta_read) instead "
+                             "of the all-zero factory keys")
+    parser.add_argument("--context", default="", help="diversification context")
     parser.add_argument("--wait", action="store_true", help="press Enter before each tap")
     parser.add_argument("--store", default=None,
                         help="JSON counter store, to keep the anti-replay floor across runs")
@@ -49,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
                          "tag provisioned with --enc-data")
         return _enc_taps(args)
 
-    analyzer = TagAnalyzer(StaticKeys(ZERO, ZERO), store=CounterStore(args.store))
+    analyzer = TagAnalyzer(_keys(args), store=CounterStore(args.store))
     open_reader = reader_factory(args)
     genuine = True
     for n in range(1, args.taps + 1):
@@ -68,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _enc_taps(args: argparse.Namespace) -> int:
-    verifier = EncFileVerifier(StaticKeys(ZERO, ZERO), CounterStore(args.store))
+    verifier = EncFileVerifier(_keys(args), CounterStore(args.store))
     open_reader = reader_factory(args)
     ok = True
     for n in range(1, args.taps + 1):
@@ -85,6 +90,13 @@ def _enc_taps(args: argparse.Namespace) -> int:
             print(f"        {r.detail}")
         ok = ok and r.ok
     return 0 if ok else 1
+
+
+def _keys(args: argparse.Namespace):
+    if not args.secrets_dir:
+        return StaticKeys(ZERO, ZERO)
+    return build_diversified_keys(FileSecretsBackend(args.secrets_dir),
+                                  context=args.context.encode())
 
 
 if __name__ == "__main__":

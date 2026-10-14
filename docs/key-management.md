@@ -35,6 +35,42 @@ keys = DiversifiedKeys(master_file_key=..., meta_read_key=..., context=b"DEMO")
 file_key = keys.file_read_key(uid)   # unique per tag
 ```
 
+## Writing keys to tags
+
+`keyprov.py` replaces the five application keys of a tag with per-UID keys
+(`tools/rekey.py` on a hardware host). Key layout:
+
+| Slot | Role | Key |
+|------|------|-----|
+| 0 | AppMasterKey (reconfigures the tag) | AN10922 from `master_admin`, M = UID ‖ 00h ‖ context |
+| 1 | SDMFileRead (MAC, encrypted file data) | `DiversifiedKeys.file_read_key(uid)`, from `master_file` |
+| 2 | SDMMetaRead (PICCData) | `meta_read`, shared: the UID is only known after decrypting PICCData |
+| 3, 4 | unused by the SUN layout | AN10922 from `master_admin`, M = UID ‖ slot ‖ context |
+
+`master_admin` is a **separate secret**: verification servers need only
+`master_file` and `meta_read`, so the key that can reconfigure tags stays on
+the provisioning station.
+
+The flow (`rekey_tag`):
+
+1. Authenticate with slot 0 under a known scheme (factory, or the target),
+   read the UID with GetCardUID and the version of every slot with
+   GetKeyVersion. Factory keys carry version 00h, Sphragis keys 01h (or the
+   `--key-version` you choose), so each slot's current key is known; a
+   version that matches no known scheme stops the run before any write.
+2. ChangeKey slots 1-4, then slot 0 last (changing the session key ends the
+   session). AN12196 §5.16 covers both cases; both are pinned to its vectors.
+3. Authenticate with every new key and read every version back.
+
+An interrupted run resumes from the versions; `--to-factory` puts the
+all-zero keys back. Keys never appear in logs, only key check values (KCV).
+The UID comes from GetCardUID, or from a SUN tap that must verify completely
+under the candidate keys (decrypting PICCData alone authenticates nothing).
+
+**Do not lose `master_admin`.** Without it a tag can no longer be
+reconfigured or reset; taps still verify as long as `master_file` and
+`meta_read` exist. Back up the secrets before keying any tag.
+
 ## Secrets backends
 
 `secrets.py` abstracts *where* key material comes from behind a tiny

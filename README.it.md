@@ -230,9 +230,10 @@ sphragis/
   transport/       ApduTransport: scriptato / emulato / ISO-DEP / Chameleon Ultra / PN532
   ev2.py           AuthenticateEV2First + secure messaging (vettori AN12196)
   sdmconfig.py     impostazioni file SDM: build / parse di ChangeFileSettings
-  provision.py     provisioning SUN idempotente a chiavi zero
+  provision.py     provisioning SUN idempotente (chiavi di fabbrica o reali)
+  keyprov.py       ChangeKey / GetKeyVersion / GetCardUID + cambio chiavi per UID riprendibile
   cli.py           verify / inspect / emulate da riga di comando
-tools/             sdm_probe / provision / tap_verify (da eseguire sull'host con hardware)
+tools/             sdm_probe / provision / rekey / tap_verify (da eseguire sull'host con hardware)
 tests/             suite known-answer + avversariale + produzione + servizio/API
 examples/          demo.py, clone_demo.py
 docs/              documentazione tecnica bilingue

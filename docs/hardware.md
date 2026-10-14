@@ -3,10 +3,10 @@
 *English · [Italiano](hardware.it.md)*
 
 How to put a factory-fresh NTAG 424 DNA into the SUN layout the engine
-verifies, and how to check real taps against it. Everything here runs with the
-**factory all-zero keys**: it is a bench procedure for validating the engine,
-not a production provisioning flow (see [key-management.md](key-management.md)).
-No command in `tools/` ever issues ChangeKey.
+verifies, and how to check real taps against it. The procedure runs with the
+**factory all-zero keys** unless stated otherwise; replacing them with per-UID
+keys is covered in [Real keys](#real-keys-replacing-the-factory-keys) and
+[key management](key-management.md). Only `tools/rekey.py` issues ChangeKey.
 
 ```bash
 pip install -e ".[hw]"         # pyserial (Chameleon Ultra), nfcpy (PN532)
@@ -207,6 +207,39 @@ All these taps are kept as regression tests (`tests/test_sdmenc.py`,
 `test_physical_tag_*`). Running plain provisioning again (without `--enc-data`) returns the tag to
 plain SUN and unlocks the NDEF file: Change stays on key 0 and the keys are
 still all-zero, so the lock is reversible.
+
+## Real keys: replacing the factory keys
+
+Not yet validated on hardware. `tools/rekey.py` writes per-UID keys (see
+[key management](key-management.md#writing-keys-to-tags)); `--to-factory`
+undoes it, so a bench tag stays reusable.
+
+Secrets: one hex file per key, readable by you only, and **backed up before
+keying any tag** (losing `master_admin` makes the tag impossible to
+reconfigure):
+
+```bash
+mkdir -p ~/.sphragis/keys && chmod 700 ~/.sphragis/keys
+for k in master_admin master_file meta_read; do
+  python -c "import secrets; print(secrets.token_hex(16))" > ~/.sphragis/keys/$k
+done
+chmod 600 ~/.sphragis/keys/*
+```
+
+Then, on a tag already in the SUN layout:
+
+```bash
+python tools/rekey.py --reader chameleon --port /dev/ttyACM0 \
+    --secrets-dir ~/.sphragis/keys --context DEMO --dry-run       # read-only plan
+python tools/rekey.py ... --yes                                  # change the keys
+python tools/tap_verify.py --reader chameleon --port /dev/ttyACM0 \
+    --secrets-dir ~/.sphragis/keys --context DEMO --taps 2         # server-side keys
+python tools/rekey.py ... --to-factory --yes                     # back to zero keys
+```
+
+Once keyed, `tools/provision.py` needs the same `--secrets-dir` and
+`--context`: changing the SDM settings or writing a locked NDEF file then
+authenticates with the tag's real slot 0.
 
 ## Physical clone detection
 

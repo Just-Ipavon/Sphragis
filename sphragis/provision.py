@@ -18,8 +18,11 @@ an application key. Writing a file whose write access is locked uses
 AuthenticateEV2First + WriteData (the file stays in CommMode.Plain, so the
 frames are plain but the session command counter still advances).
 
-Validation scope: keys stay at the all-zero factory value. This module never
-issues ChangeKey and accepts no other key material.
+Keys: by default the tag is assumed to hold the all-zero factory keys. Pass
+`tag_keys` (a `keyprov.TagKeys`) once its keys have been replaced with
+`keyprov.rekey_tag`: authentication then uses the real key of each slot and
+the final check verifies the tap with the real MetaRead / FileRead keys. This
+module never changes keys itself.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from .apdu import (
     select_ndef_app,
 )
 from .counterstore import CounterStore
-from .diagnostics import ZERO_KEY, TapInspection, inspect_tap
+from .diagnostics import TapInspection, inspect_tap
 from .encverifier import EncFileVerifier, EncVerificationResult
 from .ev2 import (
     INS_CHANGE_FILE_SETTINGS,
@@ -45,6 +48,7 @@ from .ev2 import (
     authenticate_ev2_first,
     native_exchange,
 )
+from .keyprov import FactoryKeys, TagKeys
 from .ndef import NdefError, decode_uri_file, read_uri
 from .sdmconfig import (
     KEY_FREE,
@@ -130,9 +134,9 @@ def _write_key(access) -> int | None:
     raise ProvisionError("NDEF file is not writable (Write and ReadWrite disabled)")
 
 
-def _enc_tap(url: str) -> EncVerificationResult:
-    """Verify one SDMENCFileData tap under the zero keys, with no history."""
-    return EncFileVerifier(StaticKeys(ZERO_KEY, ZERO_KEY), CounterStore()).verify(url)
+def _enc_tap(url: str, meta_key: bytes, file_key: bytes) -> EncVerificationResult:
+    """Verify one SDMENCFileData tap with the given keys, with no history."""
+    return EncFileVerifier(StaticKeys(meta_key, file_key), CounterStore()).verify(url)
 
 
 def _read_file(transport, length: int) -> bytes:
@@ -149,7 +153,8 @@ def _read_file(transport, length: int) -> bytes:
 
 
 def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
-                  write_key: int = 0, dry_run: bool = False,
+                  write_key: int = 0, tag_keys: TagKeys | None = None,
+                  dry_run: bool = False,
                   log: Callable[[str], None] | None = None) -> ProvisionReport:
     """
     Bring the tag behind `transport` to the SUN layout for `base_url`, or,
@@ -164,6 +169,8 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
         layout = sun_enc_layout(base_url, file_data)
         desired = sun_enc_settings(layout.offsets, write_key=write_key)
     report = ProvisionReport(layout=layout, desired=desired, dry_run=dry_run)
+    keys = tag_keys or FactoryKeys().keys_for(b"")
+    meta_key, file_key = keys[desired.meta_read], keys[desired.file_read]
 
     def say(msg: str) -> None:
         report.log.append(msg)
@@ -203,7 +210,7 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
     elif report.settings_match:
         # The tag already encrypts the mirror: decrypt this read to compare.
         report.ndef_matches = layout.mask_mirrors(content) == layout.ndef_file \
-            and _current_plaintext(content) == file_data
+            and _current_plaintext(content, meta_key, file_key) == file_data
     else:
         # Encrypted under other settings: the plaintext cannot be checked.
         report.ndef_matches = False
@@ -237,7 +244,7 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
                 say("wrote        : NDEF template (ISOUpdateBinary)")
             else:
                 _iso(transport, select_ndef_app(), "select NDEF application")
-                session, session_key = authenticate_ev2_first(transport, key, ZERO_KEY), key
+                session, session_key = authenticate_ev2_first(transport, key, keys[key]), key
                 _write_data(transport, session, layout.ndef_file)
                 say(f"wrote        : NDEF template (WriteData, authenticated with key {key})")
             report.wrote_ndef = True
@@ -248,7 +255,7 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
                 raise ProvisionError(f"unsupported Change access right 0x{change_key:X}")
             if session is None or session_key != change_key:
                 _iso(transport, select_ndef_app(), "select NDEF application")
-                session = authenticate_ev2_first(transport, change_key, ZERO_KEY)
+                session = authenticate_ev2_first(transport, change_key, keys[change_key])
             session.send_full(INS_CHANGE_FILE_SETTINGS, bytes([NDEF_FILE_NO]),
                               desired.encode_change())
             report.changed_settings = True
@@ -257,12 +264,12 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
     # 4. Confirm with a fresh tap (re-selecting drops the authenticated state).
     tap = read_uri(transport)
     if file_data is None:
-        report.check = inspect_tap(tap, ZERO_KEY, ZERO_KEY)
+        report.check = inspect_tap(tap, meta_key, file_key)
         say(f"check        : UID {report.check.uid}, SDMReadCtr {report.check.read_counter}, "
             f"CMAC {'match' if report.check.cmac_match else 'MISMATCH'}"
             + ("" if report.verified else " -> NOT VERIFIED"))
     else:
-        e = report.enc_check = _enc_tap(tap)
+        e = report.enc_check = _enc_tap(tap, meta_key, file_key)
         say(f"check        : {e.verdict.value}, UID {e.uid}, SDMReadCtr {e.read_counter}, "
             f"file data {'match' if e.file_data == file_data else 'MISMATCH'}"
             + ("" if report.verified else f" -> NOT VERIFIED ({e.detail})"))
@@ -282,10 +289,10 @@ def _write_data(transport, session: Session, data: bytes) -> None:
         session.cmd_ctr += 1
 
 
-def _current_plaintext(content: bytes) -> bytes | None:
+def _current_plaintext(content: bytes, meta_key: bytes, file_key: bytes) -> bytes | None:
     """Plaintext mirrored in an SDMENCFileData read, or None if it does not verify."""
     try:
-        result = _enc_tap(decode_uri_file(content))
+        result = _enc_tap(decode_uri_file(content), meta_key, file_key)
     except NdefError:
         return None
     return result.file_data if result.ok else None

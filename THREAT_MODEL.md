@@ -55,11 +55,13 @@ first-class, scored detector rather than a simple freshness flag.
   by eventually colliding with the original's stream.
 - **Relay/NFC-forwarding attacks** at scan time are out of scope — they attack
   the reader-to-tag channel, not the SDM message.
-- **Factory keys on provisioned tags.** The provisioning tools keep the
-  all-zero factory keys and never issue ChangeKey. With known keys anyone can
-  compute valid PICCData and SDMMAC values, so such a tag proves nothing until
-  its keys are changed to secret, per-UID diversified ones (the verifier side,
-  `DiversifiedKeys`, is ready; writing the keys to the tag is not implemented).
+- **Factory keys on provisioned tags.** `tools/provision.py` alone leaves the
+  all-zero factory keys in place. With known keys anyone can compute valid
+  PICCData and SDMMAC values, so such a tag proves nothing until
+  `tools/rekey.py` has replaced its keys with secret per-UID ones (see
+  [key management](docs/key-management.md#writing-keys-to-tags); not yet
+  validated on hardware). Whoever holds `master_admin` can reconfigure every
+  tag; it belongs on the provisioning station only.
 - **Counter exhaustion**: `SDMReadCtr` is 24-bit. Rollover handling is a
   deployment concern and not modelled here.
 - `TagAnalyzer` keeps a persistent monotonic anti-replay floor (`CounterBackend`)
