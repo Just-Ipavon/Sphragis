@@ -150,13 +150,17 @@ attaccante. I lettori autenticati ricevono la valutazione completa, e il loro
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 144 test
+python -m pytest -q      # con ".[pg]" e SPHRAGIS_TEST_PG_DSN gira anche la parte Postgres
 ```
 
-- **Known-answer**: riproduce il vettore SDM ufficiale NXP.
+- **Known-answer**: riproduce i vettori ufficiali NXP AN12196 (SUN semplice,
+  SDMENCFileData, secure messaging EV2) e tap registrati da un tag fisico.
 - **Avversariali**: replay, MAC forgiato, MAC troncato, rollback del contatore,
   divergenza da clone, velocità impossibile, confronto MAC a tempo costante.
-- **Produzione**: floor atomico su DB sotto concorrenza, secrets backend.
+- **Produzione**: un'unica suite di conformità su SQLite e Postgres, con thread
+  e processi in gara sullo stesso UID; secrets backend.
+- **Provisioning**: flussi completi contro un PICC finto (SUN semplice e mirror
+  cifrato, blocco della scrittura, riscrittura autenticata).
 - **Servizio e API**: cronologia del rilevatore condivisa tra worker, livello
   pubblico senza oracolo, `reader_id` falsificato, alert su un vero key-clone,
   rate limiting.
@@ -170,7 +174,8 @@ in un codebase separato; il motore pubblico resta riusabile e pulito.
 
 - **Floor anti-replay atomico** — `SqliteCounterStore` impone la monotonìa del
   contatore dentro una transazione serializzata (niente TOCTOU tra thread o
-  processi).
+  processi); `PostgresCounterStore` lo fa con un'unica istruzione atomica per
+  più host (`pip install "sphragis[pg]"`).
 - **Nessuna chiave nel codice** — `secrets.py` astrae il materiale chiave dietro
   un `SecretsBackend` (env / file / punto di estensione KMS).
 - **Confronto MAC a tempo costante**, validazione input fail-closed, threat

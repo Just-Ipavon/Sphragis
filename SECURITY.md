@@ -11,7 +11,10 @@
 Sphragis is a **learning / portfolio project**. Its cryptography is validated
 against the official NXP test vectors and the code has been adversarially
 self-reviewed (see [THREAT_MODEL.md](THREAT_MODEL.md)), but it has **not** been
-independently audited and has not yet been validated against physical tags.
+independently audited. It has been validated end to end on physical NTAG 424 DNA
+tags with the factory all-zero keys; its provisioning tools never change keys,
+so tags provisioned with them are not protected until real key management is
+in place (see [THREAT_MODEL.md](THREAT_MODEL.md#known-limitations-honest-scope)).
 Treat it accordingly.
 
 ### Supported versions
@@ -30,11 +33,13 @@ personal project, not a staffed product.
 
 ### Scope
 
-In scope: cryptographic verification (SDM/SUN), the clone-detection logic, the
-anti-replay store, input validation, and key handling in this repository.
+In scope: cryptographic verification (SDM/SUN and SDMENCFileData), the
+clone-detection logic, the anti-replay stores (SQLite and Postgres), input
+validation, key handling, and the provisioning tools (EV2 secure messaging,
+APDU transports) in this repository.
 
-Out of scope: the EV2 secure channel and APDU layer (not implemented), physical
-attacks on the tag silicon, and anything in a downstream product built on top of
+Out of scope: physical attacks on the tag silicon, relay attacks on the
+reader-to-tag channel, and anything in a downstream product built on top of
 this engine.
 
 ---
@@ -46,8 +51,12 @@ this engine.
 Sphragis è un **progetto di studio / portfolio**. La sua crittografia è validata
 contro i test vector ufficiali NXP e il codice è stato sottoposto a un
 auto-audit avversariale (vedi [THREAT_MODEL.it.md](THREAT_MODEL.it.md)), ma
-**non** è stato verificato in modo indipendente e non è ancora stato validato su
-tag fisici. Regolati di conseguenza.
+**non** è stato verificato in modo indipendente. È stato validato end to end su
+tag NTAG 424 DNA fisici con le chiavi di fabbrica tutte a zero; i suoi strumenti
+di provisioning non cambiano mai le chiavi, quindi i tag configurati con essi
+non sono protetti finché non c'è una vera gestione delle chiavi (vedi
+[THREAT_MODEL.it.md](THREAT_MODEL.it.md#limiti-noti-ambito-onesto)).
+Regolati di conseguenza.
 
 ### Versioni supportate
 
@@ -66,9 +75,11 @@ progetto personale, non un prodotto con un team dedicato.
 
 ### Ambito
 
-Nell'ambito: verifica crittografica (SDM/SUN), logica di clone-detection, store
-anti-replay, validazione input e gestione chiavi in questo repository.
+Nell'ambito: verifica crittografica (SDM/SUN e SDMENCFileData), logica di
+clone-detection, store anti-replay (SQLite e Postgres), validazione input,
+gestione chiavi e strumenti di provisioning (secure messaging EV2, transport
+APDU) in questo repository.
 
-Fuori ambito: il canale sicuro EV2 e il livello APDU (non implementati), gli
-attacchi fisici al silicio del tag, e qualsiasi cosa in un prodotto a valle
-costruito su questo motore.
+Fuori ambito: gli attacchi fisici al silicio del tag, gli attacchi relay sul
+canale lettore-tag, e qualsiasi cosa in un prodotto a valle costruito su questo
+motore.

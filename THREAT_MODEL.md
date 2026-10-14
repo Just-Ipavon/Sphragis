@@ -55,14 +55,19 @@ first-class, scored detector rather than a simple freshness flag.
   by eventually colliding with the original's stream.
 - **Relay/NFC-forwarding attacks** at scan time are out of scope — they attack
   the reader-to-tag channel, not the SDM message.
+- **Factory keys on provisioned tags.** The provisioning tools keep the
+  all-zero factory keys and never issue ChangeKey. With known keys anyone can
+  compute valid PICCData and SDMMAC values, so such a tag proves nothing until
+  its keys are changed to secret, per-UID diversified ones (the verifier side,
+  `DiversifiedKeys`, is ready; writing the keys to the tag is not implemented).
 - **Counter exhaustion**: `SDMReadCtr` is 24-bit. Rollover handling is a
   deployment concern and not modelled here.
 - `TagAnalyzer` keeps a persistent monotonic anti-replay floor (`CounterBackend`)
   *and* a scoring detector whose history lives in an `ObservationStore`. With
   the default in-memory store the scoring is rebuilt from the live stream after
   a restart; `SqliteObservationStore` (used by the API) makes it durable and
-  shared across processes on one host. Multi-host deployments need a shared
-  database (Postgres backend, roadmap).
+  shared across processes on one host; with `SPHRAGIS_DB_URL` the Postgres
+  backends share floor, history and alerts across hosts.
 - **Per-UID budget exhaustion**: an attacker holding a captured, MAC-valid URL
   can replay it to drain that tag's per-UID rate-limit budget and delay genuine
   verifications (never accept a clone: throttled taps get `429`). Each replay is

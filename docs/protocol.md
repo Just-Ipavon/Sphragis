@@ -122,5 +122,9 @@ Table 5: picc_data = FD91EC264309878BE6345CBE53BADF40
 
 - `SDMENCFileData` layouts where `SDMMACInputOffset` is not the start of the
   `enc` value.
-- The EV2 secure channel (`AuthenticateEV2First/NonFirst`) — out of scope: this
-  is a backend verifier for SUN messages, not a reader/APDU stack.
+- Changing the tag keys (ChangeKey): provisioning keeps the factory all-zero
+  keys.
+- Parts of the EV2 secure channel beyond what provisioning needs: `ev2.py`
+  implements AuthenticateEV2First and CommMode.Full/MAC commands, validated
+  against the AN12196 vectors and on a physical tag; AuthenticateEV2NonFirst
+  and LRP mode are not implemented.

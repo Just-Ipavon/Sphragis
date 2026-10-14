@@ -56,14 +56,20 @@ freschezza.
   velocità/posizione o dall'eventuale collisione col flusso dell'originale.
 - **Attacchi relay / NFC-forwarding** al momento della lettura sono fuori
   ambito — attaccano il canale lettore-tag, non il messaggio SDM.
+- **Chiavi di fabbrica sui tag configurati.** Gli strumenti di provisioning
+  lasciano le chiavi di fabbrica tutte a zero e non inviano mai ChangeKey. Con
+  chiavi note chiunque può calcolare PICCData e SDMMAC validi, quindi un tag
+  così non prova nulla finché le sue chiavi non vengono sostituite con chiavi
+  segrete diversificate per UID (il lato verificatore, `DiversifiedKeys`, è
+  pronto; la scrittura delle chiavi sul tag non è implementata).
 - **Esaurimento del contatore**: `SDMReadCtr` è a 24 bit. La gestione del
   rollover è una questione di deployment e non è modellata qui.
 - `TagAnalyzer` mantiene un floor anti-replay persistente (`CounterBackend`)
   *e* un rilevatore a punteggio la cui cronologia vive in un `ObservationStore`.
   Con lo store in memoria di default lo scoring si ricostruisce dal flusso dal
   vivo dopo un riavvio; `SqliteObservationStore` (usato dall'API) lo rende
-  durevole e condiviso tra i processi di un host. I deployment multi-host
-  richiedono un database condiviso (backend Postgres, in roadmap).
+  durevole e condiviso tra i processi di un host; con `SPHRAGIS_DB_URL` i
+  backend Postgres condividono floor, cronologia e alert tra più host.
 - **Esaurimento del budget per UID**: un attaccante con un URL catturato e MAC
   valido può rinviarlo per esaurire il budget di rate limit di quel tag e
   ritardare le verifiche autentiche (mai accettare un clone: i tap limitati

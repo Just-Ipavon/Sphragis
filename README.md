@@ -145,13 +145,17 @@ their token only. See [docs/api.md](docs/api.md).
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 144 tests
+python -m pytest -q      # add ".[pg]" and SPHRAGIS_TEST_PG_DSN to run the Postgres half
 ```
 
-- **Known-answer**: reproduces the official NXP SDM vector.
+- **Known-answer**: reproduces the official NXP AN12196 vectors (plain SUN,
+  SDMENCFileData, EV2 secure messaging) and taps recorded from a physical tag.
 - **Adversarial**: replay, forged MAC, truncated MAC, counter rollback,
   key-clone divergence, impossible velocity, constant-time MAC comparison.
-- **Production**: atomic DB floor under concurrency, secrets backends.
+- **Production**: one conformance suite on SQLite and Postgres, with threads
+  and processes racing on one UID; secrets backends.
+- **Provisioning**: full flows against a fake PICC (plain SUN and encrypted
+  mirror, write lock, authenticated rewrite).
 - **Service & API**: shared detector history across workers, no-oracle public
   tier, `reader_id` spoofing, alerting on a real key-clone, rate limiting.
 
@@ -164,7 +168,8 @@ the public engine stays reusable and clean.
 
 - **Atomic anti-replay floor** — `SqliteCounterStore` enforces counter
   monotonicity inside a serialized transaction (no TOCTOU across threads or
-  processes).
+  processes); `PostgresCounterStore` does it in one atomic statement for
+  several hosts (`pip install "sphragis[pg]"`).
 - **No keys in code** — `secrets.py` abstracts key material behind a
   `SecretsBackend` (env / file / KMS extension point).
 - **Constant-time MAC comparison**, fail-closed input validation, documented
