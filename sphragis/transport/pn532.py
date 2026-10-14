@@ -25,7 +25,7 @@ class Pn532Transport(ApduTransport):
         try:
             import nfc  # type: ignore[import-not-found]
         except ImportError as exc:
-            raise TransportError("nfcpy is not installed") from exc
+            raise TransportError("nfcpy is not installed (pip install 'sphragis[hw]')") from exc
 
         clf = nfc.ContactlessFrontend(path)
         deadline = time.monotonic() + timeout_s

@@ -147,7 +147,7 @@ attaccante. I lettori autenticati ricevono la valutazione completa, e il loro
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 119 test
+python -m pytest -q      # 144 test
 ```
 
 - **Known-answer**: riproduce il vettore SDM ufficiale NXP.
@@ -216,7 +216,11 @@ sphragis/
   ndef.py          codifica file NDEF URI + calcolo offset SDM
   apdu.py          helper APDU ISO 7816-4
   transport/       ApduTransport: scriptato / emulato / ISO-DEP + stub hardware
+  ev2.py           AuthenticateEV2First + secure messaging (vettori AN12196)
+  sdmconfig.py     impostazioni file SDM: build / parse di ChangeFileSettings
+  provision.py     provisioning SUN idempotente a chiavi zero
   cli.py           verify / inspect / emulate da riga di comando
+tools/             sdm_probe / provision / tap_verify (da eseguire sull'host con hardware)
 tests/             suite known-answer + avversariale + produzione + servizio/API
 examples/          demo.py, clone_demo.py
 docs/              documentazione tecnica bilingue

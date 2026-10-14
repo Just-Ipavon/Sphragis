@@ -143,7 +143,7 @@ their token only. See [docs/api.md](docs/api.md).
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 119 tests
+python -m pytest -q      # 144 tests
 ```
 
 - **Known-answer**: reproduces the official NXP SDM vector.
@@ -211,7 +211,11 @@ sphragis/
   ndef.py          NDEF URI file encoding + SDM offset arithmetic
   apdu.py          ISO 7816-4 APDU helpers
   transport/       ApduTransport: scripted / emulated / ISO-DEP + hardware stubs
+  ev2.py           AuthenticateEV2First + secure messaging (AN12196 vectors)
+  sdmconfig.py     SDM file settings: build / parse ChangeFileSettings
+  provision.py     idempotent zero-key SUN provisioning flow
   cli.py           command-line verify / inspect / emulate
+tools/             sdm_probe / provision / tap_verify (run on the hardware host)
 tests/             known-answer + adversarial + production + service/API suites
 examples/          demo.py, clone_demo.py
 docs/              bilingual technical documentation
