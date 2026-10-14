@@ -206,6 +206,7 @@ sphragis/
   encverifier.py   URL -> verdetto + dati di file decifrati (mirror cifrato)
   counterstore.py  store contatore JSON + protocollo CounterBackend
   sqlstore.py      floor anti-replay SQLite con check-and-advance atomico
+  pgstore.py       floor / cronologia / audit alert su Postgres per più host (extra `sphragis[pg]`)
   secrets.py       backend per il materiale chiave (env / file / estensione KMS)
   diversify.py     diversificazione chiavi per UID AN10922
   detection.py     motore di clone-detection con punteggio (segnali + rischio)

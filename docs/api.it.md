@@ -24,7 +24,7 @@ vengono installati solo con l'extra `api`.
                      │  ammissione per UID (rate limit, dopo il MAC)
                      │  orologio del server, mai quello del client
                      ├─▶ evento di log JSON (UID pseudonimizzato)
-                     └─▶ AlertSink su CLONE_LIKELY (log · SQLite · webhook)
+                     └─▶ AlertSink su CLONE_LIKELY (log · SQLite/Postgres · webhook)
 ```
 
 `VerificationService` (`sphragis/service.py`) non dipende da alcun framework,
@@ -147,14 +147,17 @@ Per questo `create_app_from_env` la salva in `SqliteObservationStore`, nello
 stesso database del floor del contatore e degli alert. La chiamata `observe()`
 è atomica (legge la cronologia precedente e aggiunge il nuovo tap in un unico
 passo), quindi i tap concorrenti vengono valutati l'uno rispetto all'altro. Più
-worker uvicorn sullo stesso host condividono la stessa vista. I deployment su
-più host richiedono il backend Postgres (in roadmap).
+worker uvicorn sullo stesso host condividono la stessa vista. Per più host
+imposta `SPHRAGIS_DB_URL`: floor, cronologia e audit trail degli alert stanno
+allora in un unico database Postgres condiviso da tutte le repliche (vedi
+[produzione](production.it.md#scalare-a-postgres)).
 
 ## Configurazione
 
 | Variabile | Default | Significato |
 |-----------|---------|-------------|
 | `SPHRAGIS_DB_PATH` | `sphragis.db` | File SQLite: floor, cronologia, alert |
+| `SPHRAGIS_DB_URL` | nessuno | URL `postgresql://`; sostituisce SQLite per più host (richiede `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | vuoto | Contesto di diversificazione AN10922 |
 | `SPHRAGIS_READER_TOKENS` | nessuno | `lettore=sha256hex,…` |
 | `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP dei proxy autorizzati a impostare `X-Forwarded-For` |

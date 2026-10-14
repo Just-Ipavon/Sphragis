@@ -37,6 +37,7 @@ from .observations import (
     ObservationStore,
     SqliteObservationStore,
 )
+from .pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore
 from .ratelimit import RateDecision, RateLimiter, TokenBucketLimiter
 from .sdm import PiccData, SdmError, compute_sdmmac, decrypt_picc_data
 from .sdmenc import decrypt_file_data, encrypt_file_data
@@ -80,6 +81,9 @@ __all__ = [
     # production layer
     "CounterBackend",
     "SqliteCounterStore",
+    "PostgresCounterStore",
+    "PostgresObservationStore",
+    "PostgresAlertSink",
     "SecretsBackend",
     "EnvSecretsBackend",
     "FileSecretsBackend",
