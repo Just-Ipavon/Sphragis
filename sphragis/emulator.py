@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 from Crypto.Cipher import AES
 
 from .sdm import _ZERO_IV, compute_sdmmac
+from .sdmenc import encrypt_file_data
 
 # PICCDataTag for "UID mirrored (7 bytes) + read counter present".
 _PICC_TAG_UID7_CTR = 0xC7
@@ -62,6 +63,28 @@ class EmulatedTag:
             "cmac": mac.hex().upper(),
         })
         return f"{self.base_url}?{query}"
+
+
+@dataclass
+class EmulatedEncTag(EmulatedTag):
+    """
+    An EmulatedTag with SDMENCFileData mirroring: each tap also encrypts
+    `file_data` and emits `...&enc=<hex>&cmac=<hex>`, with the SDMMAC over the
+    ASCII text `<enc hex>&cmac=` (SDMMACInputOffset at the `enc` value).
+    """
+
+    file_data: bytes = b"\x00" * 16   # static plaintext, n * 16 bytes
+
+    def tap(self) -> str:
+        self.read_counter += 1
+        enc_picc = self._encrypt_picc_data()
+        enc_hex = encrypt_file_data(
+            self.file_read_key, self.uid, self.read_counter, self.file_data
+        ).hex().upper()
+        mac = compute_sdmmac(self.file_read_key, self.uid, self.read_counter,
+                             f"{enc_hex}&cmac=".encode("ascii"))
+        return (f"{self.base_url}?picc_data={enc_picc.hex().upper()}"
+                f"&enc={enc_hex}&cmac={mac.hex().upper()}")
 
 
 def random_tag(base_url: str = "https://example.com/t") -> EmulatedTag:

@@ -8,6 +8,10 @@ Examples:
         --file-key 00000000000000000000000000000000 \\
         "https://example.com/t?picc_data=...&cmac=..."
 
+    # Verify a tap that also mirrors encrypted file data (SDMENCFileData)
+    python -m sphragis.cli verify --enc --meta-key <hex> --file-key <hex> \\
+        "https://example.com/t?picc_data=...&enc=...&cmac=..."
+
     # Decode what a tag emits (diagnostic; keys default to all-zero)
     python -m sphragis.cli inspect "https://example.com/t?picc_data=...&cmac=..."
 
@@ -24,6 +28,7 @@ import sys
 from .counterstore import CounterStore
 from .diagnostics import ZERO_KEY, inspect_tap
 from .emulator import EmulatedTag
+from .encverifier import EncFileVerifier
 from .sdm import SdmError
 from .verifier import StaticKeys, Verdict, Verifier
 
@@ -44,13 +49,15 @@ def _hexkey(value: str) -> bytes:
 
 def _cmd_verify(args: argparse.Namespace) -> int:
     keys = StaticKeys(args.meta_key, args.file_key)
-    verifier = Verifier(keys, CounterStore(args.store))
-    result = verifier.verify(args.url)
+    verifier_cls = EncFileVerifier if args.enc else Verifier
+    result = verifier_cls(keys, CounterStore(args.store)).verify(args.url)
     print(_VERDICT_LABEL[result.verdict])
     if result.uid:
         print(f"UID        : {result.uid}")
     if result.read_counter is not None:
         print(f"ReadCounter: {result.read_counter}")
+    if getattr(result, "file_data", None) is not None:
+        print(f"FileData   : {result.file_data.hex().upper()}")
     print(f"Detail     : {result.detail}")
     return 0 if result.ok else 1
 
@@ -92,6 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--meta-key", type=_hexkey, required=True, help="K_SDMMetaReadKey (hex)")
     v.add_argument("--file-key", type=_hexkey, required=True, help="K_SDMFileReadKey (hex)")
     v.add_argument("--store", default=None, help="path to the JSON counter store")
+    v.add_argument("--enc", action="store_true",
+                   help="the URL mirrors SDMENCFileData (picc_data, enc, cmac); "
+                        "print the decrypted file data")
     v.set_defaults(func=_cmd_verify)
 
     i = sub.add_parser(
