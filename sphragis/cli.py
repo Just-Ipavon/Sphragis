@@ -8,6 +8,9 @@ Examples:
         --file-key 00000000000000000000000000000000 \\
         "https://example.com/t?picc_data=...&cmac=..."
 
+    # Decode what a tag emits (diagnostic; keys default to all-zero)
+    python -m sphragis.cli inspect "https://example.com/t?picc_data=...&cmac=..."
+
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
 """
@@ -15,10 +18,13 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from .counterstore import CounterStore
+from .diagnostics import ZERO_KEY, inspect_tap
 from .emulator import EmulatedTag
+from .sdm import SdmError
 from .verifier import StaticKeys, Verdict, Verifier
 
 _VERDICT_LABEL = {
@@ -49,6 +55,19 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    try:
+        report = inspect_tap(args.url, args.meta_key, args.file_key)
+    except SdmError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(report.render())
+    return 0
+
+
 def _cmd_emulate(args: argparse.Namespace) -> int:
     tag = EmulatedTag(
         uid=bytes.fromhex(args.uid),
@@ -74,6 +93,19 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--file-key", type=_hexkey, required=True, help="K_SDMFileReadKey (hex)")
     v.add_argument("--store", default=None, help="path to the JSON counter store")
     v.set_defaults(func=_cmd_verify)
+
+    i = sub.add_parser(
+        "inspect",
+        help="decode a tap's PICCData/offsets without judging it (diagnostic)",
+    )
+    i.add_argument("url", help="the full URL (or query string) emitted by the tag")
+    i.add_argument("--meta-key", type=_hexkey, default=ZERO_KEY,
+                   help="K_SDMMetaReadKey (hex, default all-zero factory key)")
+    i.add_argument("--file-key", type=_hexkey, default=ZERO_KEY,
+                   help="K_SDMFileReadKey for the informational CMAC check "
+                        "(hex, default all-zero)")
+    i.add_argument("--json", action="store_true", help="machine-readable output")
+    i.set_defaults(func=_cmd_inspect)
 
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     e.add_argument("--meta-key", type=_hexkey, required=True, help="K_SDMMetaReadKey (hex)")

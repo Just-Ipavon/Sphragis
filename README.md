@@ -115,6 +115,11 @@ python -m sphragis.cli verify \
   --meta-key 00000000000000000000000000000000 \
   --file-key 00000000000000000000000000000000 \
   "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
+
+# Decode what a tag emits: PICCDataTag, UID, SDMReadCtr (LE), NDEF offsets.
+# Diagnostic only, no verdict; keys default to the all-zero factory keys.
+python -m sphragis.cli inspect \
+  "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
 ```
 
 ## REST API
@@ -138,7 +143,7 @@ their token only. See [docs/api.md](docs/api.md).
 
 ```bash
 pip install -e ".[api,test]"
-python -m pytest -q      # 71 tests
+python -m pytest -q      # 119 tests
 ```
 
 - **Known-answer**: reproduces the official NXP SDM vector.
@@ -202,7 +207,11 @@ sphragis/
   api/             FastAPI app (optional extra `sphragis[api]`)
   adversary.py     attacker toolkit (replay, forge, rollback, key-clone)
   emulator.py      software NTAG 424 DNA tag (generates valid SUN URLs)
-  cli.py           command-line verify / emulate
+  diagnostics.py   tap inspection (PICCData byte layout, NDEF offsets)
+  ndef.py          NDEF URI file encoding + SDM offset arithmetic
+  apdu.py          ISO 7816-4 APDU helpers
+  transport/       ApduTransport: scripted / emulated / ISO-DEP + hardware stubs
+  cli.py           command-line verify / inspect / emulate
 tests/             known-answer + adversarial + production + service/API suites
 examples/          demo.py, clone_demo.py
 docs/              bilingual technical documentation
