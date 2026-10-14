@@ -123,5 +123,9 @@ Tabella 5: picc_data = FD91EC264309878BE6345CBE53BADF40
 
 - Layout `SDMENCFileData` in cui `SDMMACInputOffset` non coincide con l'inizio
   del valore di `enc`.
-- Il canale sicuro EV2 (`AuthenticateEV2First/NonFirst`) — fuori ambito: questo
-  è un verificatore backend di messaggi SUN, non uno stack reader/APDU.
+- Il cambio delle chiavi del tag (ChangeKey): il provisioning lascia le chiavi
+  di fabbrica tutte a zero.
+- Le parti del canale sicuro EV2 oltre quanto serve al provisioning: `ev2.py`
+  implementa AuthenticateEV2First e i comandi in CommMode.Full/MAC, validati
+  sui vettori AN12196 e su un tag fisico; AuthenticateEV2NonFirst e la modalità
+  LRP non sono implementati.
