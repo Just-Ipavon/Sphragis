@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sphragis"
-version = "0.3.0"
+version = "0.4.0"
 description = "Cryptographic clone-detection engine for NXP NTAG 424 DNA (SUN/SDM)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,8 +22,12 @@ classifiers = [
 ]
 dependencies = ["pycryptodome>=3.20"]
 
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+test = ["pytest>=7", "httpx>=0.27"]
+
 [project.scripts]
 sphragis = "sphragis.cli:main"
 
 [tool.setuptools]
-packages = ["sphragis"]
+packages = ["sphragis", "sphragis.api"]

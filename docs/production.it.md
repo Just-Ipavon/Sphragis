@@ -50,17 +50,32 @@ hardcodarlo.
 ## Osservabilità
 
 Un backend anti-contraffazione di produzione non dovrebbe restituire un booleano
-silenzioso. Consigliato:
+silenzioso. L'[API REST](api.it.md) include:
 
-- log strutturati per ogni verifica (uid, classe, punteggio, segnali);
-- metriche e **alert su `CLONE_LIKELY`**;
-- un audit trail degli eventi segnalati per investigazione.
+- un evento di log JSON strutturato per ogni verifica (classe, punteggio,
+  segnali, UID pseudonimizzato, event id), mai `picc_data` o `cmac`;
+- **alert su `CLONE_LIKELY`** tramite `AlertSink` intercambiabili (log CRITICAL,
+  webhook firmato HMAC);
+- un audit trail durevole degli eventi segnalati (`SqliteAlertSink`) per le
+  indagini.
+
+Le metriche si possono ricavare dal flusso di log (conteggio per
+`classification`).
+
+## Cronologia condivisa del rilevatore
+
+La cronologia per UID del rilevatore passa da un `ObservationStore`.
+`SqliteObservationStore` la rende durevole e condivisa da tutti i processi
+dell'host, con un `observe()` atomico, così più worker valutano un unico flusso
+coerente. Vedi [la documentazione API](api.it.md#scalabilità-orizzontale-cronologia-condivisa-del-rilevatore).
 
 ## Checklist di indurimento
 
 - [ ] Chiavi in KMS/HSM, non in env su host a lunga vita
 - [ ] Floor Postgres (o equivalente) con update condizionale atomico
-- [ ] Rate limiting sull'endpoint di verifica
+- [x] Rate limiting sull'endpoint di verifica (per IP + per UID autentico; in-process, vedi [API](api.it.md#rate-limiting))
+- [x] Log strutturati + alert su `CLONE_LIKELY`
+- [ ] Rate limiter condiviso (es. Redis) per deployment multi-replica
 - [ ] Gestione del rollover del `SDMReadCtr` a 24 bit
 - [ ] Decidere il supporto a `SDMENCFileData` dalla configurazione reale del tag
 - [ ] Validazione end-to-end su tag fisici

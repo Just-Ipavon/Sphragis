@@ -33,6 +33,10 @@ difende. Ogni affermazione qui è supportata da un attacco eseguibile in
 | 5 | **Estrarre le chiavi**, clone perfetto | Il clone usa il proprio flusso di contatore | **Divergenza** del contatore (valore sotto il massimo mai visto) → `CLONE_LIKELY` | `test_key_clone_caught_by_counter_divergence` |
 | 6 | **Estrarre le chiavi**, clone altrove | Clone letto lontano, pochi secondi dopo | **Velocità impossibile** tra lettori → `CLONE_LIKELY` | `test_key_clone_caught_by_impossible_velocity` |
 | 7 | Osservazione dei tempi locale | Side-channel sul confronto MAC | Confronto a tempo costante via `hmac.compare_digest` | `test_mac_comparison_correctness`, `test_mac_comparison_uses_non_short_circuiting_primitive` |
+| 8 | Interrogare l'API pubblica | Usare il verdetto come **oracolo** per affinare una contraffazione | Il livello pubblico mappa input malformati *e* forgiati su un'unica risposta `INVALID`; niente UID, contatore o dettagli dei segnali | `test_forged_and_malformed_are_indistinguishable_publicly` |
+| 9 | Inviare richieste arbitrarie | **Falsificare il `reader_id`** per simulare o eludere la velocità impossibile | `reader_id` ricavato solo dal token autenticato del lettore; campo nel body rifiutato, parametro in query ignorato; tempo dall'orologio del server | `test_query_reader_id_cannot_fake_velocity`, `test_post_rejects_client_supplied_reader_and_oversized_url`, `test_service_uses_server_clock_not_client_time` |
+| 10 | Inondare l'endpoint | **Esaurimento risorse** / flooding dei log | Token bucket per IP prima della crypto; bucket per UID dopo il MAC (i tap limitati non toccano lo stato); `X-Forwarded-For` solo da proxy fidati | `test_ip_rate_limit_returns_429_with_retry_after`, `test_uid_rate_limit_throttles_authentic_taps`, `test_forwarded_for_ignored_unless_peer_is_trusted_proxy` |
+| 11 | Usare cloni su worker diversi | Spezzare il flusso di osservazioni così che nessun worker veda la divergenza | `ObservationStore` condiviso e atomico (SQLite) tra processi | `test_clone_caught_across_workers_sharing_history`, `test_sqlite_observe_is_atomic_under_concurrency` |
 
 L'intuizione chiave per #5–#7: una volta che l'attaccante ha le chiavi, il MAC
 non distingue più un clone dall'originale — **solo il comportamento del
@@ -54,12 +58,21 @@ freschezza.
   ambito — attaccano il canale lettore-tag, non il messaggio SDM.
 - **Esaurimento del contatore**: `SDMReadCtr` è a 24 bit. La gestione del
   rollover è una questione di deployment e non è modellata qui.
-- `TagAnalyzer` mantiene un floor anti-replay persistente (`CounterStore`) *e*
-  un rilevatore a punteggio in memoria: replay/rollback sopravvivono a un
-  riavvio, mentre lo scoring di divergenza/velocità si ricostruisce dal flusso
-  dal vivo. Lo store di riferimento è JSON con un lock in-process; un deployment
-  multi-processo richiede un database con update condizionale atomico
-  (anti-rollback).
+- `TagAnalyzer` mantiene un floor anti-replay persistente (`CounterBackend`)
+  *e* un rilevatore a punteggio la cui cronologia vive in un `ObservationStore`.
+  Con lo store in memoria di default lo scoring si ricostruisce dal flusso dal
+  vivo dopo un riavvio; `SqliteObservationStore` (usato dall'API) lo rende
+  durevole e condiviso tra i processi di un host. I deployment multi-host
+  richiedono un database condiviso (backend Postgres, in roadmap).
+- **Esaurimento del budget per UID**: un attaccante con un URL catturato e MAC
+  valido può rinviarlo per esaurire il budget di rate limit di quel tag e
+  ritardare le verifiche autentiche (mai accettare un clone: i tap limitati
+  ricevono `429`). Ogni rinvio è comunque loggato come `REPLAY`.
+- **I tap pubblici non portano posizione**: la velocità impossibile richiede
+  lettori autenticati; i tap anonimi da telefono alimentano solo i segnali
+  basati sul contatore.
+- Il rate limiter in-process vale per singola replica; un limite globale
+  richiede un backend `RateLimiter` condiviso.
 
 ## Rischio residuo
 

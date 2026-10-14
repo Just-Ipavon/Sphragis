@@ -117,16 +117,36 @@ python -m sphragis.cli verify \
   "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
 ```
 
+## REST API
+
+An optional FastAPI front end (`pip install "sphragis[api]"`). It takes the
+tapped URL and returns a scored verdict, writes one structured JSON log event
+per verification, alerts on `CLONE_LIKELY` and rate-limits requests:
+
+```bash
+uvicorn --factory sphragis.api:create_app_from_env
+curl "http://localhost:8000/t?picc_data=…&cmac=…"
+# {"event_id":"…","verdict":"GENUINE","risk_score":0,"message":"Authentic tag."}
+```
+
+The public response is deliberately minimal: forged and malformed inputs return
+the same `INVALID` answer, so the endpoint gives an attacker no oracle.
+Authenticated readers get the full assessment, and their `reader_id` comes from
+their token only. See [docs/api.md](docs/api.md).
+
 ## Tests
 
 ```bash
-python -m pytest -q      # 32 tests
+pip install -e ".[api,test]"
+python -m pytest -q      # 71 tests
 ```
 
 - **Known-answer**: reproduces the official NXP SDM vector.
 - **Adversarial**: replay, forged MAC, truncated MAC, counter rollback,
   key-clone divergence, impossible velocity, constant-time MAC comparison.
 - **Production**: atomic DB floor under concurrency, secrets backends.
+- **Service & API**: shared detector history across workers, no-oracle public
+  tier, `reader_id` spoofing, alerting on a real key-clone, rate limiting.
 
 ## Production hardening
 
@@ -157,6 +177,7 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durable, atomic
 | Protocol (SDM/SUN) | [protocol.md](docs/protocol.md) | [protocol.it.md](docs/protocol.it.md) |
 | Clone detection | [clone-detection.md](docs/clone-detection.md) | [clone-detection.it.md](docs/clone-detection.it.md) |
 | Key management | [key-management.md](docs/key-management.md) | [key-management.it.md](docs/key-management.it.md) |
+| REST API | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |
 | Production & deployment | [production.md](docs/production.md) | [production.it.md](docs/production.it.md) |
 | Threat model | [THREAT_MODEL.md](THREAT_MODEL.md) | [THREAT_MODEL.it.md](THREAT_MODEL.it.md) |
 | Security policy | [SECURITY.md](SECURITY.md) | [SECURITY.md](SECURITY.md) |
@@ -172,11 +193,17 @@ sphragis/
   secrets.py       key-material backends (env / file / KMS extension point)
   diversify.py     AN10922 per-UID key diversification
   detection.py     scored clone-detection engine (signals + risk score)
+  observations.py  detector history stores (memory / SQLite, atomic observe)
   analyzer.py      full pipeline: crypto + detection -> scored assessment
+  service.py       framework-agnostic verification service (logs, alerts)
+  alerts.py        alert sinks (log / SQLite audit trail / signed webhook)
+  logs.py          JSON log formatter + UID pseudonymization
+  ratelimit.py     token-bucket rate limiter
+  api/             FastAPI app (optional extra `sphragis[api]`)
   adversary.py     attacker toolkit (replay, forge, rollback, key-clone)
   emulator.py      software NTAG 424 DNA tag (generates valid SUN URLs)
   cli.py           command-line verify / emulate
-tests/             known-answer + adversarial + production suites
+tests/             known-answer + adversarial + production + service/API suites
 examples/          demo.py, clone_demo.py
 docs/              bilingual technical documentation
 ```
@@ -189,6 +216,7 @@ docs/              bilingual technical documentation
 - [x] Threat model + adversarial harness
 - [x] Atomic DB-backed anti-replay floor (SQLite)
 - [x] Key-material abstraction (env / file / KMS extension point)
+- [x] REST verification API (structured logs, alerting, rate limiting)
 - [ ] Postgres backend + horizontal scale
 - [ ] Encrypted-file-data (SDMENCFileData) support
 - [ ] Verification against physical tags
