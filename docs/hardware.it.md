@@ -107,6 +107,49 @@ CMAC alterato dà `FORGED`. Con `--store` la soglia anti-replay persiste tra
 un'esecuzione e l'altra; con `--wait` si possono scambiare i tag tra un tap e
 l'altro.
 
+## Clone detection su hardware
+
+Un clone è un secondo dispositivo fisico che risponde per lo stesso tag. Qui il
+tag autentico è la NTAG 424 DNA programmata; il clone è un Chameleon Ultra che
+emula una NTAG215 il cui NDEF contiene un URL SUN calcolato da Sphragis per
+l'UID autentico con le chiavi a zero (compromesse). Entrambi i tap hanno un CMAC
+valido — il clone non è un falso, ha le stesse chiavi — quindi a distinguerli è
+solo il contatore di letture: ogni dispositivo ha il suo flusso di contatore.
+
+Genera l'URL clone per un contatore scelto e caricalo in uno slot libero:
+
+```bash
+sphragis emulate --meta-key 0*32 --file-key 0*32 --uid 04084582161690 --counter 1 --taps 1
+# -> https://example.com/t?picc_data=...&cmac=...   (URI NDEF in un'immagine NTAG215)
+```
+
+```
+hw slot change -s 5
+hw slot enable -s 5 --hf
+hw slot type   -s 5 --type NTAG_215
+hf mfu eload   -f clone_ntag215.bin        # immagine NTAG215 con l'URL
+hf mfu econfig -s 5 --uid 04084582161690   # stesso UID dell'autentico sul filo
+hw slot store                              # salva in flash (regge lo scollegamento)
+hw mode -e                                 # modalità emulatore, così il telefono legge
+```
+
+Leggi entrambi i tag col telefono (NXP TagInfo mostra l'URL), poi passa i due
+tap all'engine nell'ordine reale, con lo stesso storico:
+
+```
+carta vera (telefono)       GENUINE       UID 04084582161690  ctr 8  score 0
+clone Chameleon (telefono)  CLONE_LIKELY  UID 04084582161690  ctr 2  score 70
+  signal counter_regression (+70): read counter 2 is below the maximum seen (8):
+  a second device is emitting its own counter stream (clone)
+```
+
+Il tag autentico fa avanzare il contatore a ogni tap; il clone statico ne
+ripropone uno più basso, quindi l'engine segnala `counter_regression` su dati
+fisici letti dal telefono, non su una cattura rigiocata. L'UID di
+anticollisione sul filo è solo estetico: l'engine legge l'UID dentro il
+PICCData cifrato, quindi un clone con l'UID di default dell'emulatore viene
+comunque rilevato; `econfig --uid` serve solo a rendere il clone fedele sul filo.
+
 ## Risoluzione dei problemi
 
 | Sintomo | Significato |

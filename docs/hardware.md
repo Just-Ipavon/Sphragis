@@ -106,6 +106,49 @@ tap 1 after tap 3 gives `CLONE_LIKELY` (`counter_regression`), a tampered
 CMAC gives `FORGED`. Use `--store` to keep the anti-replay floor across runs
 and `--wait` to swap tags between taps.
 
+## Physical clone detection
+
+A clone is a second physical device that answers for the same tag. Here the
+genuine tag is the provisioned NTAG 424 DNA; the clone is a Chameleon Ultra
+emulating an NTAG215 whose NDEF holds a SUN URL computed by Sphragis for the
+genuine UID with the (compromised) all-zero keys. Both taps carry a valid
+CMAC — the clone is not a forgery, it holds the same keys — so only the read
+counter tells them apart: each device runs its own counter stream.
+
+Build the clone URL for a chosen counter and load it into a spare slot:
+
+```bash
+sphragis emulate --meta-key 0*32 --file-key 0*32 --uid 04084582161690 --counter 1 --taps 1
+# -> https://example.com/t?picc_data=...&cmac=...   (NDEF URI in an NTAG215 image)
+```
+
+```
+hw slot change -s 5
+hw slot enable -s 5 --hf
+hw slot type   -s 5 --type NTAG_215
+hf mfu eload   -f clone_ntag215.bin        # NTAG215 image carrying the URL
+hf mfu econfig -s 5 --uid 04084582161690   # match the genuine UID on the wire
+hw slot store                              # persist to flash (survives unplug)
+hw mode -e                                 # emulator mode, so a phone can read it
+```
+
+Read both tags with a phone (NXP TagInfo shows the URL), then feed the two taps
+to the engine in the real order, sharing one history:
+
+```
+carta vera (phone)        GENUINE       UID 04084582161690  ctr 8  score 0
+clone Chameleon (phone)   CLONE_LIKELY  UID 04084582161690  ctr 2  score 70
+  signal counter_regression (+70): read counter 2 is below the maximum seen (8):
+  a second device is emitting its own counter stream (clone)
+```
+
+The genuine tag advances its counter on every tap; the static clone replays a
+lower one, so the engine flags `counter_regression` on real, phone-read data —
+not a replayed capture. The anti-collision UID shown over the air is cosmetic:
+the engine reads the UID from inside the encrypted PICCData, so a clone with the
+default emulator UID is still caught; `econfig --uid` only makes the clone
+faithful on the wire.
+
 ## Troubleshooting
 
 | Symptom | Meaning |
