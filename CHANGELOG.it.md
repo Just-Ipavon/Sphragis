@@ -22,6 +22,8 @@ irrobustito dopo un auto-audit avversariale e validato su tag fisici.
   possesso delle proprie chiavi, conferma digitando l'UID.
 - Il ritorno alle chiavi di fabbrica risulta concluso una volta raggiunto, e
   una tag già configurata viene aperta prima con le sue chiavi.
+- Una sessione EV2 viene chiusa dopo qualunque scambio fallito o quando il
+  chip la termina, così non si invia nulla con un contatore disallineato.
 
 ### Provisioning
 - Scritture NDEF bloccate sulla chiave 0 in ogni layout; le scritture su una
@@ -37,6 +39,9 @@ irrobustito dopo un auto-audit avversariale e validato su tag fisici.
 - I tap forgiati non restituiscono mai il PICCData decifrato; l'input
   costruito ad arte dà `ERROR`, mai un'eccezione; è accettato solo il layout
   standard del PICCData.
+- Un tap, una sola codifica: `picc_data` e `cmac` devono essere esadecimali
+  esatti della lunghezza giusta, un `enc=` vuoto blocca comunque la verifica e
+  un URL senza query non viene mai letto dal percorso o dal frammento.
 
 ### API
 - Indirizzo del client da `X-Forwarded-For` solo tramite proxy fidati (CIDR),
