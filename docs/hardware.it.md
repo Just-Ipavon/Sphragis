@@ -274,8 +274,8 @@ richiede allora l'autenticazione con il vero slot 0 della tag.
 **Prova su hardware** (UID 04341A82161690, layout SUN in chiaro appena
 configurato): il dry run ha pianificato gli slot 1-4 e poi lo 0, `--yes` li ha
 cambiati in quell'ordine, ogni nuova chiave si è autenticata e i tap sono
-stati verificati con le chiavi lato server. Il contatore è passato da 4 a 7
-perché il rekey legge un tap SUN per conoscere l'UID. Con le chiavi di
+stati verificati con le chiavi lato server. Il contatore salta qualche valore
+perché il dry run e il rekey leggono ciascuno un tap SUN per conoscere l'UID. Con le chiavi di
 fabbrica la stessa tag non si verifica più: il suo PICCData si decifra in byte
 casuali, non nel layout standard, quindi `ERROR` e non `FORGED`.
 

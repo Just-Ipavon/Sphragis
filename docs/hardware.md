@@ -268,7 +268,8 @@ authenticates with the tag's real slot 0.
 **Hardware run** (UID 04341A82161690, plain SUN layout just provisioned): the
 dry run planned slots 1-4 then 0, `--yes` changed them in that order, every
 new key authenticated and taps verified with the server-side keys. The
-counter jumped from 4 to 7 because the rekey reads a SUN tap to learn the UID.
+counter skips a few values because the dry run and the rekey each read a SUN
+tap to learn the UID.
 With factory keys the same tag no longer verifies: its PICCData decrypts to
 garbage, not the standard layout, hence `ERROR` rather than `FORGED`.
 
