@@ -28,14 +28,17 @@ class Pn532Transport(ApduTransport):
             raise TransportError("nfcpy is not installed (pip install 'sphragis[hw]')") from exc
 
         clf = nfc.ContactlessFrontend(path)
-        deadline = time.monotonic() + timeout_s
-        tag = clf.connect(
-            rdwr={"on-connect": lambda tag: False},
-            terminate=lambda: time.monotonic() > deadline,
-        )
-        if tag is None or not hasattr(tag, "transceive"):
-            clf.close()
-            raise TransportError("no ISO-DEP (Type 4) tag found")
+        try:
+            deadline = time.monotonic() + timeout_s
+            tag = clf.connect(
+                rdwr={"on-connect": lambda tag: False},
+                terminate=lambda: time.monotonic() > deadline,
+            )
+            if tag is None or not hasattr(tag, "transceive"):
+                raise TransportError("no ISO-DEP (Type 4) tag found")
+        except BaseException:
+            clf.close()                   # release the reader on every failure
+            raise
         return cls(tag, clf)
 
     @property

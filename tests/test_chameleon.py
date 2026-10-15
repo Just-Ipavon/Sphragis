@@ -184,4 +184,8 @@ def test_provisioning_end_to_end_over_serial_stack():
         report = provision_tag(t, "https://example.com/t")
     assert report.wrote_ndef and report.changed_settings and report.verified
     assert all(len(f) <= DEVICE_MAX_FSC - 2 for f in dev.raw_frames)
-    assert any(f[0] & 0x10 for f in dev.raw_frames)          # NDEF write went chained
+    # The template goes out in single-frame ISOUpdateBinary pieces, each one
+    # written atomically by the tag, never as chained I-blocks.
+    updates = [f for f in dev.raw_frames if f[1:3] == b"\x00\xD6"]
+    assert len(updates) >= 2 and not any(f[0] & 0x10 for f in updates)
+    assert not any(f[0] & 0xE2 == 0x02 and f[0] & 0x10 for f in dev.raw_frames)

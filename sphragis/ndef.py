@@ -182,6 +182,10 @@ def sdm_offsets(url: str, picc_param: str = "picc_data",
                       enc_data=enc, enc_length=len(value.encode("utf-8")))
 
 
+# The NTAG 424 DNA NDEF file (E104h) holds 256 bytes, NLEN included.
+NDEF_MAX_MESSAGE = 256 - 2
+
+
 def read_uri(transport) -> str:
     """
     Read the SUN URL from a Type 4 tag over an ApduTransport: select the NDEF
@@ -199,6 +203,8 @@ def read_uri(transport) -> str:
     if len(head) != 2:
         raise NdefError(f"short NLEN read ({len(head)} B)")
     nlen = int.from_bytes(head, "big")
+    if nlen > NDEF_MAX_MESSAGE:
+        raise NdefError(f"NLEN {nlen} exceeds the {NDEF_MAX_MESSAGE}-byte NDEF file")
     body = b""
     while len(body) < nlen:
         chunk = run(read_binary(2 + len(body), min(0xFF, nlen - len(body))), "read NDEF")
