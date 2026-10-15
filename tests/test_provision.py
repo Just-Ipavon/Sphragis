@@ -23,7 +23,12 @@ from sphragis.ev2 import (  # noqa: E402
     session_vectors,
 )
 from sphragis.ndef import encode_uri_file, read_uri, sdm_offsets  # noqa: E402
-from sphragis.provision import ProvisionError, provision_tag, update_binary  # noqa: E402
+from sphragis.provision import (  # noqa: E402
+    ProvisionError,
+    provision_tag,
+    update_binary,
+    update_binary_an12196,
+)
 from sphragis.sdmconfig import (  # noqa: E402
     FACTORY_ACCESS,
     AccessRights,
@@ -177,9 +182,17 @@ def test_same_config():
     assert not same_config(FileSettings(0, FACTORY_ACCESS), sun_settings(o))
 
 
-def test_update_binary_matches_an12196_encoding():
+def test_update_binary_an12196_matches_the_application_note():
     data = encode_uri_file(AN_URL)
-    assert update_binary(0, data)[:5] == H("00D6000053") and update_binary(0, data)[-1] == 0
+    apdu = update_binary_an12196(0, data)
+    assert apdu[:5] == H("00D6000053") and apdu[-1] == 0
+
+
+def test_update_binary_sends_no_le():
+    # Silicon (UID 04341A82161690) answers 6700 to the AN12196 form with a
+    # trailing Le and writes the same bytes without it.
+    data = bytes(range(48))
+    assert update_binary(0x30, data) == H("00D6003030") + data
 
 
 # --- Full provisioning flow against the fake PICC ---------------------------

@@ -19,7 +19,7 @@ from sphragis import EncFileVerifier, StaticKeys, Verdict  # noqa: E402
 from sphragis.apdu import build_apdu  # noqa: E402
 from sphragis.counterstore import CounterStore  # noqa: E402
 from sphragis.ndef import SdmOffsets, read_uri  # noqa: E402
-from sphragis.provision import ProvisionError, provision_tag, update_binary  # noqa: E402
+from sphragis.provision import ProvisionError, provision_tag, update_binary_an12196  # noqa: E402
 from sphragis.sdmconfig import (  # noqa: E402
     FACTORY_ACCESS,
     AccessRights,
@@ -133,7 +133,7 @@ def test_locked_tag_rejects_unauthenticated_writes():
     # Datasheet form (no Le): reaches the access check -> security status.
     assert tag.transceive(build_apdu(0x00, 0xD6, 0x00, 0x44, b"EVIL")) == b"\x69\x82"
     # AN12196 form (trailing Le): rejected on length first, as on silicon.
-    assert tag.transceive(update_binary(0x44, b"EVIL")) == b"\x67\x00"
+    assert tag.transceive(update_binary_an12196(0x44, b"EVIL")) == b"\x67\x00"
     assert _verifier().verify(read_uri(tag)).file_data == DATA
 
 

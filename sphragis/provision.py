@@ -126,7 +126,19 @@ class ProvisionReport:
 
 
 def update_binary(offset: int, data: bytes) -> bytes:
-    """ISOUpdateBinary at `offset` (encoded as in AN12196 Table 16)."""
+    """
+    ISOUpdateBinary at `offset` in the datasheet form (NT4H2421Gx: no Le).
+    The AN12196 Table 16 form with a trailing Le (`update_binary_an12196`) is
+    refused on silicon: 6700 for a single-frame write to a freely writable
+    file (UID 04341A82161690), and before the access check when writes are
+    locked (UID 04801A82161690). The same bytes without Le are written.
+    """
+    return build_apdu(0x00, 0xD6, offset >> 8, offset & 0xFF, data)
+
+
+def update_binary_an12196(offset: int, data: bytes) -> bytes:
+    """ISOUpdateBinary encoded as in AN12196 Table 16 (trailing Le); kept to
+    pin that encoding, never sent by provisioning."""
     return build_apdu(0x00, 0xD6, offset >> 8, offset & 0xFF, data, le=0)
 
 
