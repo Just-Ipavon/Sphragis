@@ -61,7 +61,7 @@ freschezza.
   calcolare PICCData e SDMMAC validi, quindi un tag così non prova nulla finché
   `tools/rekey.py` non ha sostituito le sue chiavi con chiavi segrete per UID
   (vedi [gestione chiavi](docs/key-management.it.md#scrivere-le-chiavi-sulle-tag);
-  non ancora validato su hardware). Chi possiede `master_admin` può
+  validato su hardware in entrambe le direzioni). Chi possiede `master_admin` può
   riconfigurare tutti i tag: deve stare solo sulla postazione di provisioning.
 - **Riscrittura dell'URL della tag.** Il MAC del SUN semplice non copre dati
   statici, quindi un file NDEF liberamente scrivibile permetterebbe a chiunque

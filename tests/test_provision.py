@@ -208,7 +208,7 @@ def test_provision_factory_tag_then_verify():
     assert report.verified, report.log
     assert report.check.uid == tag.uid.hex().upper()
     assert tag.settings.meta_read == 2 and tag.settings.file_read == 1
-    assert tag.settings.access == locked_access(0)          # writes locked (#13)
+    assert tag.settings.access == locked_access(0)          # writes locked
     assert report.uid == tag.uid
 
     # The engine accepts what the provisioned tag now emits, tap after tap.
@@ -252,7 +252,7 @@ def test_provision_fails_closed_with_non_zero_key():
         provision_tag(tag, BASE)
     assert exc.value.__cause__.sw == 0x91AE    # the PICC rejects RndB'
     assert not tag.settings.sdm_enabled
-    assert tag.writes == 0 and bytes(tag.file[:8]) == b"original"   # untouched (#15)
+    assert tag.writes == 0 and bytes(tag.file[:8]) == b"original"   # untouched
 
 
 def test_free_read_write_right_allows_iso_update():
@@ -286,7 +286,7 @@ def test_unwritable_ndef_file_is_refused():
         provision_tag(tag, BASE)
 
 
-# --- Write lock (#13, #14) and authenticate-before-write (#15) -----------------
+# --- Write lock and authenticate-before-write -----------------------------------
 
 def _raw_update(tag, offset, data):
     """An unauthenticated rewrite, as any phone app would send it."""

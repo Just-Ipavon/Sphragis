@@ -1,5 +1,5 @@
 """
-Detection over the tap ledger (issues #12, #16, #17, #18, #23).
+Detection over the tap ledger.
 
 Each test reproduces an attack found in the audit and asserts the fixed
 behaviour: a stale counter is never shown as authentic, replays cannot push a
@@ -100,7 +100,7 @@ def test_analyzer_needs_a_ledger():
         TagAnalyzer(StaticKeys(bytes(16), bytes(16)), store=FloorOnly())
 
 
-# --- #12: a stale counter is never authentic -------------------------------------
+# --- A stale counter is never authentic ------------------------------------------
 
 def test_stale_counter_with_a_gap_is_not_suspicious(ledger):
     # Audit reproduction: a weak signal on a stale counter used to yield
@@ -131,7 +131,7 @@ def test_every_stale_counter_is_replay_or_clone(ledger):
             assert r.classification in STALE, (counter, floor, r)
 
 
-# --- #16: replays and anonymous taps cannot hide a clone -------------------------
+# --- Replays and anonymous taps cannot hide a clone ------------------------------
 
 def test_replays_do_not_push_the_clone_out_of_view(ledger):
     tag = _tag(counter=9)
@@ -176,7 +176,7 @@ def test_velocity_window_still_ends(ledger):
                             reader_id="gate-B").classification == "GENUINE"
 
 
-# --- #17: replays cannot throttle the genuine tag --------------------------------
+# --- Replays cannot throttle the genuine tag -------------------------------------
 
 def test_replays_do_not_consume_the_tag_budget(ledger):
     tag = _tag()
@@ -193,7 +193,7 @@ def test_replays_do_not_consume_the_tag_budget(ledger):
     assert service.verify(tag.tap()).result.classification == "THROTTLED"
 
 
-# --- #18: a withheld URL raises at most one alert ---------------------------------
+# --- A withheld URL raises at most one alert --------------------------------------
 
 def test_withheld_urls_alert_once_each(ledger):
     tag = _tag()
@@ -209,7 +209,7 @@ def test_withheld_urls_alert_once_each(ledger):
     assert {service.verify(u).result.classification for u in withheld} == {"REPLAY"}
 
 
-# --- #23: concurrent copies of one tap -------------------------------------------
+# --- Concurrent copies of one tap ------------------------------------------------
 
 def test_concurrent_copies_of_one_tap_yield_one_genuine(tmp_path):
     tag = _tag()

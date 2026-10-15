@@ -135,7 +135,7 @@ def test_detailed_response_for_authenticated_reader():
 
 
 def test_detailed_forged_and_error_look_the_same():
-    # #19: even an authenticated reader cannot tell FORGED from ERROR, nor get
+    # Even an authenticated reader cannot tell FORGED from ERROR, nor get
     # the UID and counter of a forged tap (a decryption oracle under MetaRead).
     tag, client, _ = _rig()
     forged = client.get(_path(KeylessAttacker.forge_mac(tag.tap())),
@@ -262,7 +262,7 @@ def test_create_app_from_env_end_to_end(tmp_path, monkeypatch):
     assert [a.event_id for a in stored] == [body["event_id"]]
 
 
-# --- Client address, request guard, logs (#21, #22, #25) -----------------------
+# --- Client address, request guard, logs -----------------------------------
 
 def test_duplicate_forwarded_for_lines_cannot_mint_buckets():
     # HAProxy-style proxies append their own X-Forwarded-For line: the
@@ -386,3 +386,37 @@ def test_declared_oversized_body_is_refused_without_reading_it():
              "headers": [(b"content-length", b"1000000000")], "client": ("1.2.3.4", 1)}
     asyncio.run(guard(scope, receive, send))
     assert sent[0]["status"] == 413
+
+
+# --- Public score and link previewers ---------------------------------------------
+
+def test_public_score_is_fixed_per_verdict():
+    # The analyzer scores this jump 15; the public tier must not reveal that.
+    tag, client, _ = _rig()
+    client.get(_path(tag.tap()))
+    tag.read_counter = 5000
+    pub = client.get(_path(tag.tap())).json()
+    assert pub["verdict"] == "SUSPICIOUS" and pub["risk_score"] == 50
+    tag.read_counter = 10000
+    det = client.post("/v1/verify", json={"url": tag.tap()}, headers=_auth(TOKEN_A)).json()
+    assert det["classification"] == "SUSPICIOUS" and det["risk_score"] == 15
+
+
+@pytest.mark.parametrize("agent", [
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "WhatsApp/2.23.20.0", "TelegramBot (like TwitterBot)",
+    "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+    "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+])
+def test_link_previewers_do_not_spend_the_tap(agent):
+    tag, client, _ = _rig()
+    url = _path(tag.tap())
+    preview = client.get(url, headers={"User-Agent": agent})
+    assert preview.status_code == 200 and "verdict" not in preview.json()
+    assert client.get(url).json()["verdict"] == "GENUINE"   # still fresh
+
+
+def test_readers_are_verified_whatever_their_user_agent():
+    tag, client, _ = _rig()
+    r = client.get(_path(tag.tap()), headers={**_auth(TOKEN_A), "User-Agent": "Slackbot"})
+    assert r.json()["classification"] == "GENUINE"

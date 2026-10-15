@@ -1,5 +1,5 @@
 """
-The reader side against a malicious or broken tag (#27): every exchange is
+The reader side against a malicious or broken tag: every exchange is
 bounded, and a failure leaves the reader in a clean state.
 """
 

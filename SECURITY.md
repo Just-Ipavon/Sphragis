@@ -8,19 +8,20 @@
 
 ### Status
 
-Sphragis is a **learning / portfolio project**. Its cryptography is validated
-against the official NXP test vectors and the code has been adversarially
-self-reviewed (see [THREAT_MODEL.md](THREAT_MODEL.md)), but it has **not** been
-independently audited. It has been validated end to end on physical NTAG 424 DNA
-tags with the factory all-zero keys. Tags keep those keys, and are therefore
-not protected, until `tools/rekey.py` replaces them with per-UID keys; that
-step is not yet validated on hardware (see
+Sphragis 1.0 has its cryptography validated against the official NXP test
+vectors and its code adversarially self-reviewed (see
+[THREAT_MODEL.md](THREAT_MODEL.md)), but it has **not** been independently
+audited. It has been validated end to end on physical NTAG 424 DNA tags,
+including the replacement of the factory all-zero keys with per-UID keys by
+`tools/rekey.py`. A tag keeps the factory keys, and is therefore not
+protected, until that step runs (see
 [THREAT_MODEL.md](THREAT_MODEL.md#known-limitations-honest-scope)).
 Treat it accordingly.
 
 ### Supported versions
 
-Only the latest `main` is supported. There are no backported fixes.
+Only the latest release (1.0.x) and `main` are supported. There are no
+backported fixes to earlier versions.
 
 ### Reporting a vulnerability
 
@@ -49,19 +50,20 @@ this engine.
 
 ### Stato
 
-Sphragis è un **progetto di studio / portfolio**. La sua crittografia è validata
-contro i test vector ufficiali NXP e il codice è stato sottoposto a un
-auto-audit avversariale (vedi [THREAT_MODEL.it.md](THREAT_MODEL.it.md)), ma
-**non** è stato verificato in modo indipendente. È stato validato end to end su
-tag NTAG 424 DNA fisici con le chiavi di fabbrica tutte a zero. I tag tengono
-quelle chiavi, e quindi non sono protetti, finché `tools/rekey.py` non le
-sostituisce con chiavi per UID; questo passo non è ancora validato su hardware
-(vedi [THREAT_MODEL.it.md](THREAT_MODEL.it.md#limiti-noti-ambito-onesto)).
+Sphragis 1.0 ha la crittografia validata contro i test vector ufficiali NXP e
+il codice sottoposto a un auto-audit avversariale (vedi
+[THREAT_MODEL.it.md](THREAT_MODEL.it.md)), ma **non** è stato verificato in
+modo indipendente. È stato validato end to end su tag NTAG 424 DNA fisici,
+compresa la sostituzione delle chiavi di fabbrica tutte a zero con chiavi per
+UID tramite `tools/rekey.py`. Un tag tiene le chiavi di fabbrica, e quindi non
+è protetto, finché quel passo non viene eseguito (vedi
+[THREAT_MODEL.it.md](THREAT_MODEL.it.md#limiti-noti-ambito-onesto)).
 Regolati di conseguenza.
 
 ### Versioni supportate
 
-È supportato solo l'ultimo `main`. Non ci sono fix retroportati.
+Sono supportati solo l'ultima release (1.0.x) e `main`. Non ci sono fix
+retroportati alle versioni precedenti.
 
 ### Segnalare una vulnerabilità
 

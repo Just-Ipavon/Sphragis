@@ -320,7 +320,7 @@ def test_webhook_sink_requires_https_and_real_secret():
         WebhookAlertSink("https://example.com/hook", b"short")
 
 
-# --- Webhook hardening (#25) ------------------------------------------------------
+# --- Webhook hardening ------------------------------------------------------------
 
 def _one_shot_server(status, location=None):
     hits = []

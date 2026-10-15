@@ -246,7 +246,8 @@ successivo era ancora `AUTHENTIC` (contatore 16).
 
 ## Chiavi reali: sostituire le chiavi di fabbrica
 
-Non ancora validato su hardware. `tools/rekey.py` scrive chiavi per UID (vedi
+Validato su hardware, in entrambe le direzioni (UID 04341A82161690, qui
+sotto). `tools/rekey.py` scrive chiavi per UID (vedi
 [gestione chiavi](key-management.it.md#scrivere-le-chiavi-sulle-tag));
 `--to-factory` annulla, così una tag di banco resta riutilizzabile.
 
@@ -283,6 +284,52 @@ ai segreti e fanne il backup insieme a loro.
 Dopo il cambio, `tools/provision.py` vuole gli stessi `--secrets-dir` e
 `--context`: modificare le impostazioni SDM o scrivere un file NDEF bloccato
 richiede allora l'autenticazione con il vero slot 0 della tag.
+
+**Prova su hardware** (UID 04341A82161690, layout SUN in chiaro appena
+configurato): il dry run ha pianificato gli slot 1-4 e poi lo 0, `--yes` li ha
+cambiati in quell'ordine, ogni nuova chiave si è autenticata e i tap sono
+stati verificati con le chiavi lato server. Il contatore salta qualche valore
+perché il dry run e il rekey leggono ciascuno un tap SUN per conoscere l'UID. Con le chiavi di
+fabbrica la stessa tag non si verifica più: il suo PICCData si decifra in byte
+casuali, non nel layout standard, quindi `ERROR` e non `FORGED`.
+
+```
+UID (from tap): 04341A82161690
+UID          : 04341A82161690 (GetCardUID)
+originality  : NXP signature verifies for this UID
+current      : 0=factory, 1=factory, 2=factory, 3=factory, 4=factory
+target       : diversified, version 01, KCV 76E11F 2C0AA4 0D8655 0E2A6A C27F88
+inventory    : unknown UID
+About to change slots 1, 2, 3, 4, 0 of tag 04341A82161690.
+Type the UID to confirm: 04341A82161690
+changed      : slot 1 (factory -> diversified)
+changed      : slot 2 (factory -> diversified)
+changed      : slot 3 (factory -> diversified)
+changed      : slot 4 (factory -> diversified)
+changed      : slot 0 (factory -> diversified)
+check        : all five keys authenticate, versions 01
+RESULT       : keys changed and verified
+
+tap 1: GENUINE      UID 04341A82161690  ctr 7  score 0
+tap 2: GENUINE      UID 04341A82161690  ctr 8  score 0
+tap 3: GENUINE      UID 04341A82161690  ctr 9  score 0
+tap 1: ERROR        UID None  ctr None  score 0      (factory keys)
+```
+
+`--to-factory` ha poi dimostrato il possesso con lo slot 0 della tag stessa
+(inventario `keyed`), ha rimesso le cinque chiavi a zero (KCV `66E94B`,
+versione 00) e la tag si è verificata di nuovo con le chiavi di fabbrica:
+
+```
+changed      : slot 1 (diversified -> factory)
+changed      : slot 2 (diversified -> factory)
+changed      : slot 3 (diversified -> factory)
+changed      : slot 4 (diversified -> factory)
+changed      : slot 0 (diversified -> factory)
+check        : all five keys authenticate, versions 00
+RESULT       : keys changed and verified
+tap 1: GENUINE      UID 04341A82161690  ctr 14  score 0  (factory keys)
+```
 
 ## Clone detection su hardware
 

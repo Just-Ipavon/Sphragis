@@ -63,7 +63,15 @@ documentazione interattiva (`/docs`, `/openapi.json`) è disattivata di default.
 input malformati **e** quelli forgiati diventano entrambi `INVALID` con
 punteggio 100. Il livello pubblico non restituisce mai UID, contatore o
 dettagli dei segnali. Senza questa regola l'endpoint diventerebbe un oracolo
-che dice all'attaccante quale byte del tap forgiato o clonato è sbagliato.
+che dice all'attaccante quale byte del tap forgiato o clonato è sbagliato. Per
+lo stesso motivo `risk_score` è fisso per verdetto (`GENUINE` 0, `SUSPICIOUS`
+50, gli altri 100); i lettori ricevono il punteggio dell'analizzatore.
+
+Le anteprime dei link (WhatsApp, Telegram, Slack, Discord, Facebook e simili,
+riconosciute dallo `User-Agent`) ricevono `{"message": ...}` senza verifica,
+così condividere il link in una chat non consuma il tap e la successiva
+apertura del proprietario non è un `REPLAY`. Uno `User-Agent` falsificato
+ottiene solo la stessa risposta neutra.
 
 **Dettagliato**: con `Authorization: Bearer <token lettore>` la risposta
 include anche `classification`, `uid`, `read_counter`, `reader_id`, `signals`
