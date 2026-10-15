@@ -226,8 +226,8 @@ then returned `6982`, and the next tap was still `AUTHENTIC` (counter 16).
 
 ## Real keys: replacing the factory keys
 
-Validated on hardware (UID 04341A82161690, below); `--to-factory` still has to
-be seen on silicon. `tools/rekey.py` writes per-UID keys (see
+Validated on hardware, both ways (UID 04341A82161690, below).
+`tools/rekey.py` writes per-UID keys (see
 [key management](key-management.md#writing-keys-to-tags)); `--to-factory`
 undoes it, so a bench tag stays reusable.
 
@@ -294,6 +294,21 @@ tap 1: GENUINE      UID 04341A82161690  ctr 7  score 0
 tap 2: GENUINE      UID 04341A82161690  ctr 8  score 0
 tap 3: GENUINE      UID 04341A82161690  ctr 9  score 0
 tap 1: ERROR        UID None  ctr None  score 0      (factory keys)
+```
+
+`--to-factory` then proved possession with the tag's own slot 0 (inventory
+`keyed`), put the five zero keys back (KCV `66E94B`, version 00) and the tag
+verified again with factory keys:
+
+```
+changed      : slot 1 (diversified -> factory)
+changed      : slot 2 (diversified -> factory)
+changed      : slot 3 (diversified -> factory)
+changed      : slot 4 (diversified -> factory)
+changed      : slot 0 (diversified -> factory)
+check        : all five keys authenticate, versions 00
+RESULT       : keys changed and verified
+tap 1: GENUINE      UID 04341A82161690  ctr 14  score 0  (factory keys)
 ```
 
 ## Physical clone detection
