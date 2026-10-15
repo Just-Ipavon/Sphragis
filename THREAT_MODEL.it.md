@@ -28,7 +28,7 @@ difende. Ogni affermazione qui è supportata da un attacco eseguibile in
 |---|--------------------------|---------|-------------|------|
 | 1 | Osservare e rinviare URL | **Replay** di una lettura catturata | Contatore di letture: già visto → `REPLAY` | `test_replay_attack_is_caught` |
 | 2 | Manomettere i byte | **Forgiare** l'SDMMAC (flip di bit) | La verifica CMAC fallisce → `FORGED` | `test_forged_mac_is_caught` |
-| 3 | Manomettere i byte | Inviare un MAC **troncato** | Rifiuto strutturale + CMAC → `FORGED` | `test_truncated_mac_is_rejected` |
+| 3 | Manomettere i byte | Inviare un MAC **troncato** | Rifiuto strutturale prima di ogni calcolo → `ERROR` (pubblico `INVALID`) | `test_truncated_mac_is_rejected` |
 | 4 | Conservare vecchi URL | **Rollback del contatore**: rinviare una lettura più vecchia | Contatore non fresco → `REPLAY`/`CLONE_LIKELY` | `test_counter_rollback_is_caught` |
 | 5 | **Estrarre le chiavi**, clone perfetto | Il clone usa il proprio flusso di contatore | **Divergenza** del contatore (valore sotto il massimo mai visto) → `CLONE_LIKELY` | `test_key_clone_caught_by_counter_divergence` |
 | 6 | **Estrarre le chiavi**, clone altrove | Clone letto lontano, pochi secondi dopo | **Velocità impossibile** tra lettori → `CLONE_LIKELY` | `test_key_clone_caught_by_impossible_velocity` |

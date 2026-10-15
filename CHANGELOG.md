@@ -21,6 +21,8 @@ after an adversarial self-review and validated on physical tags.
   typed confirmation of the UID.
 - Rekey back to factory keys is reported as done once reached, and a keyed
   tag is opened with its own keys first.
+- An EV2 session is closed after any failed exchange or once the PICC ends it,
+  so nothing is sent with a counter out of step.
 
 ### Provisioning
 - NDEF writes locked to key 0 in every layout; writes on a locked tag
@@ -34,6 +36,9 @@ after an adversarial self-review and validated on physical tags.
   a withheld URL alerts once, concurrent copies of a tap yield one GENUINE.
 - Forged taps never echo decrypted PICCData; crafted input is `ERROR`, never
   an exception; only the standard PICCData layout is accepted.
+- One tap, one encoding: `picc_data` and `cmac` must be exact hex of the right
+  length, a blank `enc=` still fails closed, and a URL without a query is
+  never read through its path or fragment.
 
 ### API
 - Client address from `X-Forwarded-For` only through trusted proxies (CIDR),

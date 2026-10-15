@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import unquote_plus, urlparse
+from urllib.parse import unquote_plus
 
 from .counterstore import CounterBackend, CounterStore
 from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
@@ -39,6 +39,7 @@ from .verifier import (
     Verdict,
     VerificationResult,
     _consttime_eq,
+    _query_of,
     _require_standard_picc,
 )
 
@@ -78,11 +79,7 @@ def _hex_field(name: str, value: str, *, size: int | None = None,
 def _parse_tap(url_or_query: str, picc_name: str, enc_name: str,
                mac_name: str) -> _EncTap:
     """Pull the three fields and the raw SDMMAC input from the query string."""
-    try:
-        parsed = urlparse(url_or_query)
-    except ValueError as exc:           # e.g. an unbalanced IPv6 bracket
-        raise SdmError(f"unparsable URL: {exc}") from exc
-    query = parsed.query or url_or_query
+    query = _query_of(url_or_query)
 
     wanted = {name.lower(): name for name in (picc_name, enc_name, mac_name)}
     found: dict[str, tuple[int, str]] = {}   # name -> (value offset, value)

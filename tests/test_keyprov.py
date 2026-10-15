@@ -37,6 +37,7 @@ from sphragis.keyprov import (  # noqa: E402
     crc32nk,
     current_tag_keys,
     get_card_uid,
+    get_key_version,
     key_check_value,
     read_signature,
     rekey_tag,
@@ -629,3 +630,52 @@ def test_rekey_tool_needs_an_inventory(tmp_path):
     with pytest.raises(SystemExit):
         _tool().main(["--reader", "chameleon", "--secrets-dir", _secrets_dir(tmp_path),
                       "--dry-run"])
+
+
+# --- A failed exchange closes the EV2 session -------------------------------------
+
+def test_a_failed_exchange_closes_the_session():
+    from sphragis.ev2 import AuthError, authenticate_ev2_first
+
+    class Counting:
+        def __init__(self, tag):
+            self.tag, self.sent, self.fail = tag, 0, False
+
+        def transceive(self, apdu):
+            self.sent += 1
+            return b"\x91\x1E" if self.fail else self.tag.transceive(apdu)
+
+    link = Counting(FakeNtag424(uid=UID))
+    session = authenticate_ev2_first(link, 0, ZERO)
+    link.fail = True
+    with pytest.raises(ApduError):
+        get_key_version(session, 0)                 # integrity error status
+    link.fail = False
+    assert session.closed
+    sent = link.sent
+    with pytest.raises(AuthError, match="closed"):
+        get_key_version(session, 0)
+    assert link.sent == sent                        # nothing reached the tag
+
+
+def test_a_lost_tag_closes_the_session():
+    from sphragis.ev2 import AuthError, authenticate_ev2_first
+
+    class Lost:
+        def transceive(self, apdu):
+            raise ConnectionError("tag removed")
+
+    session = authenticate_ev2_first(FakeNtag424(uid=UID), 0, ZERO)
+    session.transport = Lost()
+    with pytest.raises(ConnectionError):
+        get_card_uid(session)
+    with pytest.raises(AuthError, match="closed"):
+        session.mac_command_apdu(0x64, b"\x00")
+
+
+def test_changing_the_session_key_closes_the_session():
+    from sphragis.ev2 import authenticate_ev2_first
+    tag = FakeNtag424(uid=UID)
+    session = authenticate_ev2_first(tag, 0, ZERO)
+    assert change_key(session, 0, bytes([7]) * 16, 1, auth_key_no=0) is False
+    assert session.closed

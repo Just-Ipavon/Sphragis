@@ -125,6 +125,7 @@ def change_key(session: Session, key_no: int, new_key: bytes, version: int, *,
         session.send_full(INS_CHANGE_KEY, header, data)
         return True
     apdu = session.full_command_apdu(INS_CHANGE_KEY, header, new_key + bytes([version]))
+    session.close()                      # the PICC ends it, whatever the outcome
     resp = parse_response(session.transport.transceive(apdu))
     if resp.sw != SW_OK:
         raise ApduError(resp.sw, "ChangeKey of the session key failed")
