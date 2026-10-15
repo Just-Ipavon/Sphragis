@@ -150,7 +150,17 @@ quindi ogni pezzo è scritto in modo atomico. Sul chip (UID 04341A82161690) il
 primo pezzo, inviato nella forma di AN12196 Tabella 16 con Le in coda, è stato
 rifiutato con `6700`; gli stessi 48 byte senza Le sono stati scritti (`9000`,
 riletti identici). Per questo il provisioning invia ISOUpdateBinary nella forma
-del datasheet, senza Le:
+del datasheet, senza Le; così il modello SUN in chiaro da 85 byte è passato in
+due pezzi e la tag è stata verificata:
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : UID 04341A82161690, SDMReadCtr 1, CMAC match
+RESULT       : provisioned and verified
+```
+
+La prova con mirror cifrato qui sotto è precedente alla suddivisione:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)

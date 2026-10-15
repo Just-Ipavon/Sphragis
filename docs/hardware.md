@@ -146,7 +146,17 @@ ISOUpdateBinary pieces that each fit one frame, so every piece is written
 atomically. On silicon (UID 04341A82161690) the first such piece, sent in the
 AN12196 Table 16 form with a trailing Le, was refused with `6700`; the same
 48 bytes without Le were written (`9000`, read back identical). Provisioning
-therefore sends ISOUpdateBinary in the datasheet form, without Le:
+therefore sends ISOUpdateBinary in the datasheet form, without Le; with it the
+85-byte plain SUN template went out in two pieces and the tag verified:
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : UID 04341A82161690, SDMReadCtr 1, CMAC match
+RESULT       : provisioned and verified
+```
+
+The encrypted-mirror run below predates the split:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)
