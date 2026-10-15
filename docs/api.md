@@ -64,8 +64,11 @@ rule the endpoint would be an oracle telling an attacker which byte of a forged
 or cloned tap is wrong.
 
 **Detailed**: with `Authorization: Bearer <reader token>` the response also
-includes `classification` (including `FORGED`/`ERROR`), `uid`, `read_counter`,
-`reader_id`, `signals` (name, weight, detail), `detail` and `alerted`.
+includes `classification`, `uid`, `read_counter`, `reader_id`, `signals`
+(name, weight, detail), `detail` and `alerted`. Forged and malformed taps get
+the same answer here too (`classification: INVALID`, no UID, no counter):
+telling them apart would be an oracle on the decrypted PICCData. The log keeps
+the real classification.
 
 A bad or malformed token is rejected with `401`. The request is not silently
 downgraded to the public tier.

@@ -68,9 +68,28 @@ def _consttime_eq(a: bytes, b: bytes) -> bool:
     return hmac.compare_digest(a, b)
 
 
+# PICCDataTag of the layout this engine provisions and verifies: UID mirror,
+# SDMReadCtr mirror, 7-byte UID, RFU bits clear (NT4H2421Gx §9.3.3).
+STANDARD_PICC_TAG = 0xC7
+
+
+def _require_standard_picc(picc) -> None:
+    """
+    Refuse any PICCData other than UID (7 bytes) + SDMReadCtr. A random block
+    decrypts to an arbitrary tag byte; accepting only the one layout keeps
+    crafted input from reaching key derivation with odd UID lengths, and a
+    missing counter from silently reading as 0.
+    """
+    if picc.raw_tag != STANDARD_PICC_TAG or len(picc.uid) != 7:
+        raise SdmError("PICCData is not the UID + SDMReadCtr layout (tag 0xC7)")
+
+
 def _extract_params(url_or_query: str) -> tuple[bytes, bytes]:
     """Pull picc_data and cmac (hex) from a full URL or a bare query string."""
-    parsed = urlparse(url_or_query)
+    try:
+        parsed = urlparse(url_or_query)
+    except ValueError as exc:           # e.g. an unbalanced IPv6 bracket
+        raise SdmError(f"unparsable URL: {exc}") from exc
     query = parsed.query or url_or_query
     params = parse_qs(query)
 
@@ -104,6 +123,7 @@ class Verifier:
         try:
             enc_picc, cmac = _extract_params(url_or_query)
             picc = decrypt_picc_data(enc_picc, self._keys.meta_read_key())
+            _require_standard_picc(picc)
         except SdmError as exc:
             return VerificationResult(Verdict.ERROR, detail=str(exc))
 
@@ -114,8 +134,10 @@ class Verifier:
             self._keys.file_read_key(picc.uid), picc.uid, picc.read_counter
         )
         if not _consttime_eq(expected, cmac):
+            # UID and counter come from an unauthenticated decryption: echoing
+            # them would let anyone decrypt arbitrary blocks under MetaRead.
             return VerificationResult(
-                Verdict.FORGED, uid=uid_hex, read_counter=picc.read_counter,
+                Verdict.FORGED,
                 detail="SDMMAC mismatch: payload is not from a genuine tag",
             )
 

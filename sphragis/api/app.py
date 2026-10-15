@@ -242,6 +242,14 @@ def _public_body(outcome: VerificationOutcome) -> dict:
 def _detailed_body(outcome: VerificationOutcome) -> dict:
     r = outcome.result
     body = _public_body(outcome)
+    if r.classification in ("ERROR", "FORGED"):
+        # Same answer for both, even to readers: telling them apart would be a
+        # one-bit oracle on the decrypted PICCData. The log keeps the reason.
+        body.update({"classification": "INVALID", "authentic_mac": False,
+                     "uid": None, "read_counter": None,
+                     "reader_id": outcome.reader_id, "signals": [],
+                     "detail": "the tap could not be verified", "alerted": False})
+        return body
     body.update({
         "classification": r.classification,
         "authentic_mac": r.authentic_mac,

@@ -66,9 +66,11 @@ dettagli dei segnali. Senza questa regola l'endpoint diventerebbe un oracolo
 che dice all'attaccante quale byte del tap forgiato o clonato è sbagliato.
 
 **Dettagliato**: con `Authorization: Bearer <token lettore>` la risposta
-include anche `classification` (compresi `FORGED`/`ERROR`), `uid`,
-`read_counter`, `reader_id`, `signals` (nome, peso, dettaglio), `detail` e
-`alerted`.
+include anche `classification`, `uid`, `read_counter`, `reader_id`, `signals`
+(nome, peso, dettaglio), `detail` e `alerted`. I tap forgiati e quelli
+malformati ricevono anche qui la stessa risposta (`classification: INVALID`,
+niente UID né contatore): distinguerli sarebbe un oracolo sul PICCData
+decifrato. Il log conserva la classificazione reale.
 
 Un token errato o malformato viene rifiutato con `401`. La richiesta non viene
 declassata in silenzio al livello pubblico.

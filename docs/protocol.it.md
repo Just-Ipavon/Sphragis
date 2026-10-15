@@ -32,7 +32,16 @@ resto         padding casuale
 
 Sphragis valida le lunghezze dichiarate rispetto alla dimensione del blocco
 prima di affettare (`sdm.decrypt_picc_data`), fallendo in modo chiuso su input
-malformati.
+malformati. I verificatori accettano poi solo il layout che questo motore
+programma, tag byte `0xC7` (UID e contatore in mirror, UID di 7 byte, bit RFU
+a zero): qualunque altro valore è `ERROR`, così un blocco casuale non arriva
+alla derivazione delle chiavi con una lunghezza di UID strana e un contatore
+mancante non può valere 0.
+
+Finché l'SDMMAC non è verificato, UID e contatore non sono autenticati: un
+risultato `FORGED` non li riporta, altrimenti chiunque potrebbe decifrare
+blocchi a scelta con la chiave MetaRead condivisa inviandoli con un MAC
+sbagliato.
 
 ## Verificare l'SDMMAC
 

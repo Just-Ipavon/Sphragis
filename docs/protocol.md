@@ -32,7 +32,15 @@ remainder     random padding
 ```
 
 Sphragis validates the declared field lengths against the block size before
-slicing (`sdm.decrypt_picc_data`), failing closed on malformed input.
+slicing (`sdm.decrypt_picc_data`), failing closed on malformed input. The
+verifiers then accept only the layout this engine provisions, tag byte `0xC7`
+(UID and counter mirrored, 7-byte UID, RFU bits clear): any other value is
+`ERROR`, so a random block cannot reach key derivation with an odd UID length
+and a missing counter cannot read as 0.
+
+Until the SDMMAC has verified, UID and counter are unauthenticated: a `FORGED`
+result carries neither, otherwise anyone could decrypt chosen blocks under the
+shared MetaRead key by submitting them with a wrong MAC.
 
 ## Verifying the SDMMAC
 
