@@ -369,9 +369,14 @@ def _write_data(transport, session: Session, data: bytes) -> None:
     (NT4H2421Gx §9.1.8), so the session counter is kept in step for any
     MAC'd or encrypted command that follows.
     """
+    session._require_open()
     for off in range(0, len(data), _WRITE_DATA_CHUNK):
-        native_exchange(transport, INS_WRITE_DATA,
-                        write_data(off, data[off : off + _WRITE_DATA_CHUNK]))
+        try:
+            native_exchange(transport, INS_WRITE_DATA,
+                            write_data(off, data[off : off + _WRITE_DATA_CHUNK]))
+        except Exception:
+            session.close()
+            raise
         session.cmd_ctr += 1
 
 

@@ -107,6 +107,16 @@ class Session:
     k_enc: bytes = field(repr=False)     # session keys never appear in a repr
     k_mac: bytes = field(repr=False)
     cmd_ctr: int = 0
+    # Set after any failed exchange or once the PICC has ended the session:
+    # the counter may be out of step with the PICC, so nothing more is sent.
+    closed: bool = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def _require_open(self) -> None:
+        if self.closed:
+            raise AuthError("EV2 session is closed: authenticate again")
 
     def _ctr(self, value: int) -> bytes:
         return value.to_bytes(2, "little")
@@ -125,11 +135,13 @@ class Session:
 
     def full_command_apdu(self, ins: int, header: bytes, data: bytes) -> bytes:
         """C-APDU for a CommMode.Full command at the current counter."""
+        self._require_open()
         enc = self.encrypt_command_data(data) if data else b""
         return native_apdu(ins, header + enc + self.command_mac(ins, header, enc))
 
     def mac_command_apdu(self, ins: int, header: bytes, data: bytes = b"") -> bytes:
         """C-APDU for a CommMode.MAC command at the current counter."""
+        self._require_open()
         return native_apdu(ins, header + data + self.command_mac(ins, header, data))
 
     def _verify_response(self, raw: bytes) -> bytes:
@@ -146,15 +158,20 @@ class Session:
             raise AuthError("response MAC mismatch")
         return body
 
+    def _exchange(self, apdu: bytes) -> bytes:
+        try:
+            return self._verify_response(self.transport.transceive(apdu))
+        except Exception:
+            self.close()
+            raise
+
     def send_full(self, ins: int, header: bytes, data: bytes) -> bytes:
         """Send a CommMode.Full command; returns the still-encrypted response body."""
-        return self._verify_response(
-            self.transport.transceive(self.full_command_apdu(ins, header, data)))
+        return self._exchange(self.full_command_apdu(ins, header, data))
 
     def send_mac(self, ins: int, header: bytes, data: bytes = b"") -> bytes:
         """Send a CommMode.MAC command; returns the (plain) response body."""
-        return self._verify_response(
-            self.transport.transceive(self.mac_command_apdu(ins, header, data)))
+        return self._exchange(self.mac_command_apdu(ins, header, data))
 
 
 def authenticate_ev2_first(transport, key_no: int, key: bytes,
