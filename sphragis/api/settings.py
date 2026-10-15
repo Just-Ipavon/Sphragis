@@ -124,6 +124,10 @@ class ApiSettings:
             raise ValueError("SPHRAGIS_ALERT_ON must list classifications among "
                              + ", ".join(sorted(CLASSIFICATIONS))
                              + (f" (unknown: {', '.join(sorted(unknown))})" if unknown else ""))
+        key_context = get("KEY_CONTEXT", "").encode()
+        if len(key_context) > 23:
+            # UID (7) + slot (1) + context must fit AN10922's 31 bytes.
+            raise ValueError("SPHRAGIS_KEY_CONTEXT must be at most 23 bytes")
         log_level = get("LOG_LEVEL", "INFO").upper()
         if log_level not in _LOG_LEVELS:
             raise ValueError(f"SPHRAGIS_LOG_LEVEL must be one of {', '.join(sorted(_LOG_LEVELS))}")
@@ -135,7 +139,7 @@ class ApiSettings:
         return cls(
             db_path=get("DB_PATH", "sphragis.db"),
             db_url=db_url,
-            key_context=get("KEY_CONTEXT", "").encode(),
+            key_context=key_context,
             reader_tokens=parse_reader_tokens(get("READER_TOKENS", "")),
             trusted_proxies=frozenset(proxies),
             ip_rate=_positive("IP_RATE", get("IP_RATE", "5")),

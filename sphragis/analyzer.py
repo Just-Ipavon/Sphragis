@@ -25,7 +25,7 @@ from typing import Callable
 from .counterstore import CounterStore, TapLedger
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
-from .verifier import KeyProvider, _consttime_eq, _extract_params
+from .verifier import KeyProvider, _consttime_eq, _extract_params, _require_standard_picc
 
 
 @dataclass(frozen=True)
@@ -85,23 +85,26 @@ class TagAnalyzer:
         Gating only authentic, fresh taps means neither forged junk nor
         replays of a captured URL can drain a specific tag's budget.
         """
-        # 1 + 2: parse and decrypt
+        # 1-3: parse, decrypt, derive the tag key and check the MAC. Everything
+        #    here runs on unauthenticated input, so any failure is an ERROR,
+        #    never an exception reaching the caller.
         try:
             enc_picc, cmac = _extract_params(url_or_query)
             picc = decrypt_picc_data(enc_picc, self._keys.meta_read_key())
-        except SdmError as exc:
+            _require_standard_picc(picc)
+            expected = compute_sdmmac(
+                self._keys.file_read_key(picc.uid), picc.uid, picc.read_counter
+            )
+        except (SdmError, ValueError) as exc:
             return AnalysisResult("ERROR", False, None, None, 0, (), str(exc))
 
         uid_hex = picc.uid_hex
 
-        # 3: authenticity. A bad MAC means the counter is untrusted, so we stop
-        #    here and never feed forged data to the detector.
-        expected = compute_sdmmac(
-            self._keys.file_read_key(picc.uid), picc.uid, picc.read_counter
-        )
+        # A bad MAC means UID and counter are unauthenticated: they are neither
+        # returned (decryption oracle) nor fed to the detector.
         if not _consttime_eq(expected, cmac):
             return AnalysisResult(
-                "FORGED", False, uid_hex, picc.read_counter, 100, (),
+                "FORGED", False, None, None, 100, (),
                 "SDMMAC mismatch: payload is not from a genuine tag",
             )
 

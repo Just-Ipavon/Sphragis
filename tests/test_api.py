@@ -134,11 +134,19 @@ def test_detailed_response_for_authenticated_reader():
     assert body["read_counter"] == 1
 
 
-def test_detailed_forged_reports_real_classification():
+def test_detailed_forged_and_error_look_the_same():
+    # #19: even an authenticated reader cannot tell FORGED from ERROR, nor get
+    # the UID and counter of a forged tap (a decryption oracle under MetaRead).
     tag, client, _ = _rig()
-    body = client.get(_path(KeylessAttacker.forge_mac(tag.tap())),
-                      headers=_auth(TOKEN_A)).json()
-    assert body["verdict"] == "INVALID" and body["classification"] == "FORGED"
+    forged = client.get(_path(KeylessAttacker.forge_mac(tag.tap())),
+                        headers=_auth(TOKEN_A)).json()
+    error = client.get("/t?picc_data=00&cmac=00", headers=_auth(TOKEN_A)).json()
+    for body in (forged, error):
+        assert body["verdict"] == "INVALID" and body["classification"] == "INVALID"
+        assert body["uid"] is None and body["read_counter"] is None
+    strip = ("event_id",)
+    assert {k: v for k, v in forged.items() if k not in strip} == \
+        {k: v for k, v in error.items() if k not in strip}
 
 
 @pytest.mark.parametrize("header", ["Bearer wrong", "Basic abc", "Bearer ", "token"])

@@ -80,12 +80,20 @@ class VerificationService:
             result = AnalysisResult("ERROR", False, None, None, 0, (),
                                     "input too long")
         else:
-            result = self._analyzer.analyze(
-                url_or_query,
-                timestamp=now,
-                reader_id=reader_id,
-                admit=self._admit if self._uid_limiter is not None else None,
-            )
+            try:
+                result = self._analyzer.analyze(
+                    url_or_query,
+                    timestamp=now,
+                    reader_id=reader_id,
+                    admit=self._admit if self._uid_limiter is not None else None,
+                )
+            except Exception as exc:
+                # Storage or key backend failure: fail closed (the caller gets
+                # an error), but never without a trace. The input is not logged.
+                self._log.error("verification_failed", extra={"fields": {
+                    "event_id": event_id, "reader_id": reader_id,
+                    "error": type(exc).__name__}})
+                raise
         uid_ref = self._pseudo.ref(result.uid)
         signal_names = tuple(s.name for s in result.signals)
 

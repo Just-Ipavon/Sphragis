@@ -39,6 +39,7 @@ from .verifier import (
     Verdict,
     VerificationResult,
     _consttime_eq,
+    _require_standard_picc,
 )
 
 _HEX = re.compile(r"[0-9A-Fa-f]+")
@@ -77,7 +78,10 @@ def _hex_field(name: str, value: str, *, size: int | None = None,
 def _parse_tap(url_or_query: str, picc_name: str, enc_name: str,
                mac_name: str) -> _EncTap:
     """Pull the three fields and the raw SDMMAC input from the query string."""
-    parsed = urlparse(url_or_query)
+    try:
+        parsed = urlparse(url_or_query)
+    except ValueError as exc:           # e.g. an unbalanced IPv6 bracket
+        raise SdmError(f"unparsable URL: {exc}") from exc
     query = parsed.query or url_or_query
 
     wanted = {name.lower(): name for name in (picc_name, enc_name, mac_name)}
@@ -141,6 +145,7 @@ class EncFileVerifier:
             picc = decrypt_picc_data(tap.picc_data, self._keys.meta_read_key())
             if not picc.raw_tag & _PICC_TAG_CTR_MIRROR:
                 raise SdmError("SDMENCFileData requires SDMReadCtr in PICCData")
+            _require_standard_picc(picc)
         except SdmError as exc:
             return EncVerificationResult(Verdict.ERROR, detail=str(exc))
 
@@ -151,8 +156,9 @@ class EncFileVerifier:
         expected = compute_sdmmac(file_key, picc.uid, picc.read_counter,
                                   tap.mac_input)
         if not _consttime_eq(expected, tap.cmac):
+            # Never echo the unauthenticated UID and counter (decryption oracle).
             return EncVerificationResult(
-                Verdict.FORGED, uid=uid_hex, read_counter=picc.read_counter,
+                Verdict.FORGED,
                 detail="SDMMAC mismatch: payload is not from a genuine tag",
             )
 
