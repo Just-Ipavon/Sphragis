@@ -86,7 +86,8 @@ Classificazioni: `GENUINE`, `SUSPICIOUS`, `REPLAY`, `CLONE_LIKELY`, `FORGED`, `E
 ## Installazione
 
 ```bash
-pip install -r requirements.txt   # pycryptodome
+pip install sphragis               # da PyPI
+pip install -r requirements.txt   # oppure, da un checkout: pycryptodome
 ```
 
 ## Avvio rapido (nessun hardware necessario)
@@ -199,6 +200,7 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durevole, atomic
 | API REST | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |
 | Produzione e deployment | [production.md](docs/production.md) | [production.it.md](docs/production.it.md) |
 | Tag fisici (banco) | [hardware.md](docs/hardware.md) | [hardware.it.md](docs/hardware.it.md) |
+| Pubblicare una release | [release.md](docs/release.md) | [release.it.md](docs/release.it.md) |
 | Threat model | [THREAT_MODEL.md](THREAT_MODEL.md) | [THREAT_MODEL.it.md](THREAT_MODEL.it.md) |
 | Politica di sicurezza | [SECURITY.md](SECURITY.md) | [SECURITY.md](SECURITY.md) |
 

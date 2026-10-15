@@ -1,0 +1,4 @@
+# Build tools for the release workflow; locked in requirements/release.lock.
+build
+setuptools>=68
+wheel

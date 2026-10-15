@@ -32,6 +32,12 @@ hw = ["pyserial>=3.5"]
 pg = ["psycopg[binary]>=3.1"]
 test = ["pytest>=7", "httpx>=0.27"]
 
+[project.urls]
+Homepage = "https://github.com/Just-Ipavon/Sphragis"
+Documentation = "https://github.com/Just-Ipavon/Sphragis/tree/main/docs"
+Changelog = "https://github.com/Just-Ipavon/Sphragis/blob/main/CHANGELOG.md"
+Security = "https://github.com/Just-Ipavon/Sphragis/blob/main/SECURITY.md"
+
 [project.scripts]
 sphragis = "sphragis.cli:main"
 
