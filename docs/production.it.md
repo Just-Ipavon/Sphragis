@@ -119,6 +119,28 @@ La cronologia per UID del rilevatore passa da un `ObservationStore`.
 dell'host, con un `observe()` atomico, così più worker valutano un unico flusso
 coerente. Vedi [la documentazione API](api.it.md#scalabilità-orizzontale-cronologia-condivisa-del-rilevatore).
 
+## Dipendenze e supply chain
+
+- **Installazioni bloccate e verificate con hash.** `requirements/ci.lock`
+  fissa ogni dipendenza degli extra `api`, `test` e `pg` con hash SHA-256,
+  per Python 3.10–3.13. La CI installa solo da lì (`pip install
+  --require-hashes -r requirements/ci.lock`, poi `pip install --no-deps -e
+  .`); fai il deploy allo stesso modo. Dopo aver cambiato `pyproject.toml`,
+  rigeneralo con `uv pip compile pyproject.toml --universal --extra api
+  --extra test --extra pg --generate-hashes -o requirements/ci.lock`.
+- **Actions fissate per SHA del commit**, workflow con `contents: read`.
+  Dependabot propone gli aggiornamenti sia delle dipendenze Python sia delle
+  fissature.
+- **Workflow di sicurezza:** `pip-audit` sul lock e `bandit` sul codice, a
+  ogni modifica e ogni settimana, perché le nuove vulnerabilità escono senza
+  un commit.
+- **pycryptodome, mai PyCrypto.** Entrambi installano un pacchetto `Crypto`;
+  il motore rifiuta di importarsi se `Crypto` non è pycryptodome 3 o
+  successivo, così un PyCrypto rimasto nell'ambiente non può sostituirlo in
+  silenzio.
+- Lo stato di runtime e i segreti (`*.db`, `*.sqlite`, `keys/`, `.sphragis/`,
+  file di chiave) sono esclusi da git.
+
 ## Checklist di indurimento
 
 - [ ] Chiavi in KMS/HSM, non in env su host a lunga vita
