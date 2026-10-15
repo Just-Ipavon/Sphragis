@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hmac
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
@@ -104,8 +104,8 @@ class Session:
 
     transport: object
     ti: bytes
-    k_enc: bytes
-    k_mac: bytes
+    k_enc: bytes = field(repr=False)     # session keys never appear in a repr
+    k_mac: bytes = field(repr=False)
     cmd_ctr: int = 0
 
     def _ctr(self, value: int) -> bytes:

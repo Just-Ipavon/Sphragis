@@ -226,3 +226,11 @@ def test_cli_without_keys_or_terminal_refuses(monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     with pytest.raises(SystemExit, match="no keys"):
         main(["verify", _tap(K1, K2)])
+
+
+def test_ev2_session_repr_hides_the_session_keys():
+    from sphragis.ev2 import Session
+    k_enc, k_mac = bytes([0xAB]) * 16, bytes([0xCD]) * 16
+    text = repr(Session(transport=None, ti=bytes(4), k_enc=k_enc, k_mac=k_mac))
+    assert k_enc.hex() not in text.lower() and k_mac.hex() not in text.lower()
+    assert "cmd_ctr" in text
