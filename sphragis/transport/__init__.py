@@ -18,7 +18,6 @@ Hardware backends (need `sphragis[hw]` and the reader attached):
 
     ChameleonTransport  Chameleon Ultra used as a raw 14443-A frame pipe
                         (serial protocol covered by tests with a fake device)
-    Pn532Transport      PN532 via nfcpy (not exercised by the test suite)
 """
 
 from __future__ import annotations
@@ -81,7 +80,6 @@ class ScriptedTransport(ApduTransport):
 from .emulated import EmulatorTransport  # noqa: E402
 from .isodep import IsoDepTransport  # noqa: E402
 from .chameleon import ChameleonTransport  # noqa: E402
-from .pn532 import Pn532Transport  # noqa: E402
 
 __all__ = [
     "ApduTransport",
@@ -90,5 +88,4 @@ __all__ = [
     "EmulatorTransport",
     "IsoDepTransport",
     "ChameleonTransport",
-    "Pn532Transport",
 ]

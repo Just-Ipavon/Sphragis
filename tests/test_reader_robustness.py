@@ -135,23 +135,3 @@ def test_chameleon_opens_the_serial_port_exclusively(monkeypatch):
     monkeypatch.setitem(sys.modules, "serial", fake)
     chameleon.ChameleonLink.open_serial("/dev/ttyACM0")
     assert opened["exclusive"] is True and opened["port"] == "/dev/ttyACM0"
-
-
-def test_pn532_releases_the_reader_when_connect_fails(monkeypatch):
-    from sphragis.transport.pn532 import Pn532Transport
-    closed = []
-
-    class Frontend:
-        def __init__(self, path):
-            pass
-
-        def connect(self, **kwargs):
-            raise OSError("reader unplugged")
-
-        def close(self):
-            closed.append(True)
-
-    monkeypatch.setitem(sys.modules, "nfc", types.SimpleNamespace(ContactlessFrontend=Frontend))
-    with pytest.raises(OSError):
-        Pn532Transport.open("usb")
-    assert closed == [True]

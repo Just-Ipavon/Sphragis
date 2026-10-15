@@ -55,7 +55,7 @@ def test_provision_offline_dry_run(capsys):
 @pytest.mark.parametrize("argv", [
     ["--base-url", "https://example.com/t"],                         # no reader
     ["--reader", "emulator", "--base-url", "https://example.com/t"],  # cannot provision
-    ["--reader", "pn532", "--base-url", "https://example.com/t"],     # no --yes
+    ["--reader", "chameleon", "--base-url", "https://example.com/t"],     # no --yes
 ])
 def test_provision_refuses_unsafe_invocations(argv):
     with pytest.raises(SystemExit):
@@ -66,7 +66,7 @@ def test_provision_with_fake_picc(capsys):
     tool = _load("provision")
     tag = FakeNtag424()
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
+    argv = ["--reader", "chameleon", "--base-url", "https://example.com/t", "--yes",
             "--uid", tag.uid.hex()]
     assert tool.main(argv) == 0
     assert "provisioned and verified" in capsys.readouterr().out
@@ -78,7 +78,7 @@ def test_provision_asks_to_type_the_uid(capsys, monkeypatch):
     tool = _load("provision")
     tag = FakeNtag424()
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes"]
+    argv = ["--reader", "chameleon", "--base-url", "https://example.com/t", "--yes"]
     monkeypatch.setattr("builtins.input", lambda prompt: "04")
     assert tool.main(argv) == 1 and tag.writes == 0
     assert "aborted" in capsys.readouterr().out
@@ -91,7 +91,7 @@ def test_provision_refuses_a_tag_whose_keys_it_lacks(capsys):
     tool = _load("provision")
     tag = FakeNtag424(keys=[_os.urandom(16)] + [bytes(16)] * 4)
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
+    argv = ["--reader", "chameleon", "--base-url", "https://example.com/t", "--yes",
             "--uid", tag.uid.hex()]
     assert tool.main(argv) == 2 and tag.writes == 0
     assert "REFUSED" in capsys.readouterr().out
@@ -126,7 +126,7 @@ def test_provision_enc_with_fake_picc(capsys):
     tool = _load("provision")
     tag = FakeNtag424()
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
+    argv = ["--reader", "chameleon", "--base-url", "https://example.com/t", "--yes",
             "--uid", tag.uid.hex(), "--enc-data-hex", "00112233445566778899AABBCCDDEEFF"]
     assert tool.main(argv) == 0
     out = capsys.readouterr().out
@@ -141,7 +141,7 @@ def test_tap_verify_enc_with_fake_picc(capsys):
     provision_tag(tag, "https://example.com/t", file_data=b"0123456789ABCDEF")
     tool = _load("tap_verify")
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    assert tool.main(["--reader", "pn532", "--taps", "2", "--enc"]) == 0
+    assert tool.main(["--reader", "chameleon", "--taps", "2", "--enc"]) == 0
     out = capsys.readouterr().out
     assert out.count("AUTHENTIC") == 2
     assert out.count(b"0123456789ABCDEF".hex().upper()) == 2

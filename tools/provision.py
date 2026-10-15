@@ -19,7 +19,8 @@ ps and shell history) the tag also mirrors that plaintext as
 encrypted file data (SDMENCFileData, a multiple of 16 bytes).
 
     python tools/provision.py --dry-run --base-url https://example.com/t
-    python tools/provision.py --reader pn532 --base-url https://example.com/t --yes
+    python tools/provision.py --reader chameleon --port /dev/ttyACM0 \\
+        --base-url https://example.com/t --yes
     python tools/provision.py --reader chameleon --base-url https://example.com/t \\
         --enc-data 0123456789ABCDEF --dry-run
 """

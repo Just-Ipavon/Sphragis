@@ -10,7 +10,7 @@ in [gestione chiavi](key-management.it.md). Solo `tools/rekey.py` esegue
 ChangeKey.
 
 ```bash
-pip install -e ".[hw]"         # pyserial (Chameleon Ultra), nfcpy (PN532)
+pip install -e ".[hw]"         # pyserial (Chameleon Ultra)
 ```
 
 ## Lettori
@@ -18,7 +18,6 @@ pip install -e ".[hw]"         # pyserial (Chameleon Ultra), nfcpy (PN532)
 | Backend | `--reader` | Stato |
 |---------|------------|-------|
 | Chameleon Ultra (seriale USB) | `chameleon --port /dev/ttyACM0` | validato su firmware v2.1 |
-| PN532 via nfcpy | `pn532 --port usb` | non ancora validato su hardware |
 | Tag software | `emulator` | sottoinsieme ISO in sola lettura, senza hardware |
 
 Il Chameleon Ultra fa da semplice tubo di frame ISO 14443-A. Sphragis parla

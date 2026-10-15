@@ -3,7 +3,7 @@
 Smoke test of the APDU path: ISOSelect the NDEF application and print the
 exchange. Runs on the host with the reader; `--reader emulator` needs nothing.
 
-    python tools/sdm_probe.py --reader pn532
+    python tools/sdm_probe.py --reader chameleon --port /dev/ttyACM0
     python tools/sdm_probe.py --reader chameleon --port /dev/ttyACM0
 """
 
