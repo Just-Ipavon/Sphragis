@@ -329,6 +329,24 @@ def test_nxp_originality_key_is_a_p224_point():
                  curve="P-224")                         # raises if off the curve
 
 
+# Read_Sig of three NTAG 424 DNA tags (Chameleon Ultra, read-only).
+PHYSICAL_SIGNATURES = {
+    H("04084582161690"): H("B7392FB84163BB23FB7CCEDCD5F7A9A7DD4CF60697F7350062ED9739"
+                           "B4964E729C32DC58923720DBF91E1EDDABE10E4D96ECAE52F62050CB"),
+    H("04801A82161690"): H("A833A802FE2412C4BEDEFBDEC7E66D0808864AC973ABDC3638C9593C"
+                           "BED002E3A170B3B001F1BAD9E86067545D7986572273CD2EB1E1C9DD"),
+    H("04341A82161690"): H("5C03AC92B0E7644C2842F0E9CBA2A8A728A1DE260266D7D911AB24A2"
+                           "7E802E89BCA6377ED5700125DCA2349C7B9C1D77224EEB40D594D861"),
+}
+
+
+@pytest.mark.parametrize("uid", list(PHYSICAL_SIGNATURES))
+def test_physical_tag_signatures_verify_under_the_nxp_key(uid):
+    assert verify_originality(uid, PHYSICAL_SIGNATURES[uid])
+    others = [u for u in PHYSICAL_SIGNATURES if u != uid]
+    assert not any(verify_originality(o, PHYSICAL_SIGNATURES[uid]) for o in others)
+
+
 def test_originality_signature_verifies_only_for_its_uid():
     sig = sign_uid(UID)
     assert verify_originality(UID, sig, TEST_ORIGINALITY_KEY)
