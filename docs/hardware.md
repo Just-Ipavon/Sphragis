@@ -214,6 +214,13 @@ Before writing, provisioning authenticates with every key the writes will need
 and shows the UID: a tag whose keys you do not hold is refused with nothing
 written, and without `--uid` you type the UID to confirm.
 
+Validated on UID 04084582161690 (plain SUN, previously free-writable): the dry
+run planned only the access change (`NDEF matches`, `auth check : keys 0
+accepted`); `--yes` changed the file settings after the typed confirmation and
+the check tap verified (`SDMReadCtr 14, CMAC match`). An unauthenticated
+ISOUpdateBinary without Le of the bytes already stored (`example.com` at 0x07)
+then returned `6982`, and the next tap was still `AUTHENTIC` (counter 16).
+
 ## Real keys: replacing the factory keys
 
 Not yet validated on hardware. `tools/rekey.py` writes per-UID keys (see

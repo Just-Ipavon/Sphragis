@@ -219,6 +219,14 @@ Prima di scrivere, il provisioning si autentica con ogni chiave che le
 scritture richiederanno e mostra l'UID: una tag di cui non hai le chiavi viene
 rifiutata senza scrivere nulla, e senza `--uid` digiti l'UID per confermare.
 
+Validato sull'UID 04084582161690 (SUN semplice, prima scrivibile liberamente):
+il dry run prevedeva solo il cambio dei diritti (`NDEF matches`, `auth check :
+keys 0 accepted`); `--yes` ha cambiato le impostazioni del file dopo la
+conferma digitata e il tap di controllo ha verificato (`SDMReadCtr 14, CMAC
+match`). Un ISOUpdateBinary senza autenticazione e senza Le degli stessi byte
+già presenti (`example.com` a 0x07) ha poi restituito `6982`, e il tap
+successivo era ancora `AUTHENTIC` (contatore 16).
+
 ## Chiavi reali: sostituire le chiavi di fabbrica
 
 Non ancora validato su hardware. `tools/rekey.py` scrive chiavi per UID (vedi
