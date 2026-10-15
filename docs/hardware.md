@@ -141,10 +141,22 @@ would change : file settings (auth with key 0, CommMode.Full)
 **2. Provision** (writes; `--yes` instead of `--dry-run`). In this run the
 122-byte template went out as a single ISOUpdateBinary, i.e. with ISO-DEP
 chaining on the Chameleon Ultra (whose frames are limited to 62 bytes), which
-validated chaining on hardware. Since #27 the template is written in 48-byte
+validated chaining on hardware. Since v1.0 the template is written in 48-byte
 ISOUpdateBinary pieces that each fit one frame, so every piece is written
-atomically; this split still has to be seen on silicon at the next template
-write:
+atomically. On silicon (UID 04341A82161690) the first such piece, sent in the
+AN12196 Table 16 form with a trailing Le, was refused with `6700`; the same
+48 bytes without Le were written (`9000`, read back identical). Provisioning
+therefore sends ISOUpdateBinary in the datasheet form, without Le; with it the
+85-byte plain SUN template went out in two pieces and the tag verified:
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : UID 04341A82161690, SDMReadCtr 1, CMAC match
+RESULT       : provisioned and verified
+```
+
+The encrypted-mirror run below predates the split:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)
@@ -177,10 +189,10 @@ tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414
 
 `6982` (security status not satisfied) confirms the lock. Note the second
 line: with writes locked, the AN12196 Table 16 form with a trailing Le is
-rejected as a length error (`6700`) **before** the access check, while with
-free write access the same form is accepted (it is how the template was
-written). To test a lock, use the datasheet form without Le; a `6700` proves
-nothing about access rights.
+rejected as a length error (`6700`) **before** the access check. With free
+write access the same form got through only as a chained 122-byte write; as a
+single frame it gets `6700` too (see step 2). To test a lock, use the
+datasheet form without Le; a `6700` proves nothing about access rights.
 
 **5. Authenticated rewrite.** Changing the plaintext of the locked tag to 32
 bytes changes the placeholder too, so one EV2 session carries both plain

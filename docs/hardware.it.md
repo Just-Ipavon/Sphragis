@@ -144,10 +144,23 @@ would change : file settings (auth with key 0, CommMode.Full)
 **2. Provisioning** (scrive; `--yes` al posto di `--dry-run`). In questa prova
 il modello da 122 byte è passato con una sola ISOUpdateBinary, cioè con il
 chaining ISO-DEP del Chameleon Ultra (i cui frame sono limitati a 62 byte), e
-questo ha validato il chaining su hardware. Dalla #27 il modello viene scritto
-in pezzi ISOUpdateBinary da 48 byte che stanno ciascuno in un frame, quindi
-ogni pezzo è scritto in modo atomico; questa suddivisione va ancora vista sul
-chip alla prossima scrittura del modello:
+questo ha validato il chaining su hardware. Dalla v1.0 il modello viene
+scritto in pezzi ISOUpdateBinary da 48 byte che stanno ciascuno in un frame,
+quindi ogni pezzo è scritto in modo atomico. Sul chip (UID 04341A82161690) il
+primo pezzo, inviato nella forma di AN12196 Tabella 16 con Le in coda, è stato
+rifiutato con `6700`; gli stessi 48 byte senza Le sono stati scritti (`9000`,
+riletti identici). Per questo il provisioning invia ISOUpdateBinary nella forma
+del datasheet, senza Le; così il modello SUN in chiaro da 85 byte è passato in
+due pezzi e la tag è stata verificata:
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : UID 04341A82161690, SDMReadCtr 1, CMAC match
+RESULT       : provisioned and verified
+```
+
+La prova con mirror cifrato qui sotto è precedente alla suddivisione:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)
@@ -182,9 +195,10 @@ tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414
 `6982` (security status not satisfied) conferma il blocco. Attenzione alla
 seconda riga: con la scrittura bloccata, la forma di AN12196 Tabella 16 con Le
 in coda è rifiutata come errore di lunghezza (`6700`) **prima** del controllo
-dei permessi, mentre con la scrittura libera la stessa forma è accettata (è
-così che è stato scritto il modello). Per provare un blocco va usata la forma
-del datasheet senza Le; un `6700` non dimostra nulla sui permessi.
+dei permessi. Con la scrittura libera la stessa forma è passata solo come
+scrittura concatenata da 122 byte; in un solo frame dà anch'essa `6700` (vedi
+il passo 2). Per provare un blocco va usata la forma del datasheet senza Le; un
+`6700` non dimostra nulla sui permessi.
 
 **5. Riscrittura autenticata.** Portare a 32 byte il testo in chiaro della tag
 bloccata cambia anche lo spazio riservato, quindi un'unica sessione EV2 porta
