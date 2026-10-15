@@ -61,7 +61,14 @@ docs (`/docs`, `/openapi.json`) are off by default.
 Malformed **and** forged inputs both become `INVALID` with score 100. The
 public tier never returns the UID, the counter or signal details. Without that
 rule the endpoint would be an oracle telling an attacker which byte of a forged
-or cloned tap is wrong.
+or cloned tap is wrong. For the same reason `risk_score` is fixed per verdict
+(`GENUINE` 0, `SUSPICIOUS` 50, the others 100); readers get the analyzer's
+score.
+
+Link previewers (WhatsApp, Telegram, Slack, Discord, Facebook and similar,
+recognised by `User-Agent`) get `{"message": ...}` without verifying, so
+sharing the link in a chat does not spend the tap and the owner's next open is
+not a `REPLAY`. A forged `User-Agent` only gets the same neutral answer.
 
 **Detailed**: with `Authorization: Bearer <reader token>` the response also
 includes `classification`, `uid`, `read_counter`, `reader_id`, `signals`

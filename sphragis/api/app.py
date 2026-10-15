@@ -43,6 +43,7 @@ import ipaddress
 import json
 import logging
 import math
+import re
 from typing import Iterable, Mapping
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -60,6 +61,27 @@ PUBLIC_MESSAGES = {
     "CLONE_LIKELY": "Warning: this tag shows signs of duplication.",
     "INVALID": "This link could not be verified.",
 }
+
+# The public score is fixed per verdict: the analyzer's score would tell an
+# anonymous caller which signals fired. Readers still get the real score.
+PUBLIC_SCORES = {"GENUINE": 0, "SUSPICIOUS": 50, "REPLAY": 100,
+                 "CLONE_LIKELY": 100, "INVALID": 100}
+
+# Link previewers fetch a shared URL before the person does; verifying for
+# them would spend the tap and show the owner REPLAY. They get a neutral
+# answer and the tap stays fresh. Spoofing the header gains nothing.
+_PREVIEWERS = re.compile(
+    r"facebookexternalhit|facebot|twitterbot|slackbot|slack-imgproxy|whatsapp|"
+    r"telegrambot|discordbot|linkedinbot|skypeuripreview|pinterest|redditbot|"
+    r"embedly|iframely|vkshare|bitlybot|google-pagerenderer|mastodon|"
+    r"applebot|bingpreview", re.I)
+PREVIEW_BODY = {"message": "Open this link on the device that tapped the tag "
+                           "to verify it."}
+
+
+def is_link_previewer(user_agent: str | None) -> bool:
+    return bool(user_agent) and _PREVIEWERS.search(user_agent) is not None
+
 
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -227,14 +249,11 @@ async def _respond(send, status: int, payload: dict,
 
 def _public_body(outcome: VerificationOutcome) -> dict:
     cls = outcome.result.classification
-    if cls in ("ERROR", "FORGED"):
-        verdict, score = "INVALID", 100
-    else:
-        verdict, score = cls, outcome.result.risk_score
+    verdict = "INVALID" if cls in ("ERROR", "FORGED") else cls
     return {
         "event_id": outcome.event_id,
         "verdict": verdict,
-        "risk_score": score,
+        "risk_score": PUBLIC_SCORES[verdict],
         "message": PUBLIC_MESSAGES[verdict],
     }
 
@@ -251,6 +270,7 @@ def _detailed_body(outcome: VerificationOutcome) -> dict:
                      "detail": "the tap could not be verified", "alerted": False})
         return body
     body.update({
+        "risk_score": r.risk_score,
         "classification": r.classification,
         "authentic_mac": r.authentic_mac,
         "uid": r.uid,
@@ -338,6 +358,8 @@ def create_app(
 
     @app.get("/t")
     def tap(request: Request, reader: str | None = Depends(reader_identity)) -> dict:
+        if reader is None and is_link_previewer(request.headers.get("user-agent")):
+            return dict(PREVIEW_BODY)
         # The raw query string goes to the parser untouched, so duplicated
         # parameters and encrypted-file-data markers are still detected.
         outcome = service.verify(request.url.query, reader_id=reader)
