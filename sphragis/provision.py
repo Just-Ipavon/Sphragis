@@ -4,12 +4,20 @@ Provision an NTAG 424 DNA for SUN in the layout the engine verifies.
 Steps (idempotent; nothing is written when the tag already matches):
 
   1. ISOSelect NDEF application, GetFileSettings(02) in plain, read the NDEF file.
-  2. If the NDEF content (mirrors masked) differs from the template:
-     ISOUpdateBinary the template (requires the factory free write access).
-  3. If the file settings differ: AuthenticateEV2First with the file's Change
+  2. Before anything is written, authenticate with every key the writes will
+     need (the file's Change key, and its write key when writes are locked):
+     a tag whose keys we do not hold is left exactly as it was. The UID is
+     read here (anticollision, or GetCardUID) and the caller may confirm it.
+  3. If the NDEF content (mirrors masked) differs from the template: write it,
+     with ISOUpdateBinary when writes are free, else authenticated WriteData.
+  4. If the file settings differ: AuthenticateEV2First with the file's Change
      key, then ChangeFileSettings in CommMode.Full (encrypted PICCData + MAC).
-  4. Re-read one tap and decode it with `inspect_tap` (all-zero keys) to
+  5. Re-read one tap and decode it with `inspect_tap` (all-zero keys) to
      confirm the mirror is encrypted, the CMAC matches and offsets line up.
+
+NDEF writes end up locked to `write_key` (0, 3 or 4) in both layouts, so the
+URL cannot be rewritten without that key; `write_key=None` keeps the factory
+free write access, for bench tags of the plain layout only.
 
 With `file_data` the tag gets the SDMENCFileData layout instead: the NDEF
 template carries an `enc` placeholder holding the plaintext, SDM encrypts and
@@ -32,6 +40,7 @@ from typing import Callable
 
 from .apdu import (
     NDEF_FILE_ID,
+    ApduError,
     build_apdu,
     parse_response,
     read_binary,
@@ -48,9 +57,10 @@ from .ev2 import (
     authenticate_ev2_first,
     native_exchange,
 )
-from .keyprov import FactoryKeys, TagKeys
+from .keyprov import FactoryKeys, TagKeys, get_card_uid
 from .ndef import NdefError, decode_uri_file, read_uri
 from .sdmconfig import (
+    FACTORY_ACCESS,
     KEY_FREE,
     NDEF_FILE_NO,
     FileSettings,
@@ -60,6 +70,7 @@ from .sdmconfig import (
     sun_enc_layout,
     sun_enc_settings,
     sun_layout,
+    locked_access,
     sun_settings,
 )
 from .verifier import StaticKeys
@@ -86,6 +97,8 @@ class ProvisionReport:
     wrote_ndef: bool = False
     changed_settings: bool = False
     dry_run: bool = False
+    uid: bytes | None = None
+    aborted: bool = False
     check: TapInspection | None = None
     enc_check: EncVerificationResult | None = None
     log: list[str] = field(default_factory=list)
@@ -153,19 +166,25 @@ def _read_file(transport, length: int) -> bytes:
 
 
 def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
-                  write_key: int = 0, tag_keys: TagKeys | None = None,
-                  dry_run: bool = False,
+                  write_key: int | None = 0, tag_keys: TagKeys | None = None,
+                  uid: bytes | None = None, dry_run: bool = False,
+                  confirm: Callable[[ProvisionReport], bool] | None = None,
                   log: Callable[[str], None] | None = None) -> ProvisionReport:
     """
     Bring the tag behind `transport` to the SUN layout for `base_url`, or,
-    with `file_data`, to the SDMENCFileData layout mirroring that plaintext
-    with NDEF writes locked to `write_key`.
+    with `file_data`, to the SDMENCFileData layout mirroring that plaintext.
+    NDEF writes are locked to `write_key` (None leaves them free, plain layout
+    only). `uid`, if given, must match the tag. `confirm` sees the report
+    (UID and plan) before anything is written and returns whether to go on.
     With `transport=None` (and `dry_run=True`) only the offline plan is built.
     """
     if file_data is None:
         layout = sun_layout(base_url)
-        desired = sun_settings(layout.offsets)
+        access = FACTORY_ACCESS if write_key is None else locked_access(write_key)
+        desired = sun_settings(layout.offsets, access=access)
     else:
+        if write_key is None:
+            raise ProvisionError("the encrypted mirror needs locked NDEF writes")
         layout = sun_enc_layout(base_url, file_data)
         desired = sun_enc_settings(layout.offsets, write_key=write_key)
     report = ProvisionReport(layout=layout, desired=desired, dry_run=dry_run)
@@ -186,8 +205,9 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
         say(f"NDEF file     : {len(layout.ndef_file)} B, PICCDataOffset=0x{o.picc_data:02X}, "
             f"SDMMACInputOffset=SDMENCOffset=0x{o.enc_data:02X}, "
             f"SDMENCLength=0x{o.enc_length:02X}, SDMMACOffset=0x{o.mac:02X}")
-        say(f"file data     : {len(file_data)} B plaintext, "
-            f"NDEF writes locked to key {write_key}")
+        say(f"file data     : {len(file_data)} B plaintext")
+    say("NDEF writes   : " + ("FREE (bench tag)" if write_key is None
+                              else f"locked to key {write_key}"))
     say(f"file settings : {desired.encode_change().hex().upper()} "
         f"(SDM on, encrypted PICCData key {desired.meta_read}, MAC key {desired.file_read})")
 
@@ -217,6 +237,10 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
     say(f"current       : settings {'match' if report.settings_match else 'differ'}, "
         f"NDEF {'matches' if report.ndef_matches else 'differs'}")
 
+    # 2. Prove every key the writes need before writing anything.
+    if not report.already_provisioned:
+        _preflight(transport, report, current, keys, uid, say)
+
     if report.already_provisioned:
         say("already provisioned: nothing to write")
     elif dry_run:
@@ -230,9 +254,13 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
                 f"CommMode.Full)")
         return report
     else:
+        if confirm is not None and not confirm(report):
+            report.aborted = True
+            say("aborted      : not confirmed, nothing written")
+            return report
         session: Session | None = None
         session_key: int | None = None
-        # 2. NDEF template.
+        # 3. NDEF template.
         if not report.ndef_matches:
             key = _write_key(current.access)
             if key is None:
@@ -248,7 +276,7 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
                 _write_data(transport, session, layout.ndef_file)
                 say(f"wrote        : NDEF template (WriteData, authenticated with key {key})")
             report.wrote_ndef = True
-        # 3. File settings.
+        # 4. File settings.
         if not report.settings_match:
             change_key = current.access.change
             if not 0 <= change_key <= 4:
@@ -261,7 +289,7 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
             report.changed_settings = True
             say(f"changed      : file settings (authenticated with key {change_key})")
 
-    # 4. Confirm with a fresh tap (re-selecting drops the authenticated state).
+    # 5. Confirm with a fresh tap (re-selecting drops the authenticated state).
     tap = read_uri(transport)
     if file_data is None:
         report.check = inspect_tap(tap, meta_key, file_key)
@@ -274,6 +302,49 @@ def provision_tag(transport, base_url: str, *, file_data: bytes | None = None,
             f"file data {'match' if e.file_data == file_data else 'MISMATCH'}"
             + ("" if report.verified else f" -> NOT VERIFIED ({e.detail})"))
     return report
+
+
+def _preflight(transport, report: ProvisionReport, current: FileSettings,
+               keys: TagKeys, uid: bytes | None, say: Callable[[str], None]) -> None:
+    """
+    Authenticate with each key the planned writes need and read the UID, so a
+    missing key or a different tag stops the run before the tag is touched.
+    """
+    needed: list[int] = []
+    if not report.ndef_matches:
+        key = _write_key(current.access)
+        if key is not None:
+            needed.append(key)
+    change_key = current.access.change
+    if not 0 <= change_key <= 4:
+        raise ProvisionError(f"unsupported Change access right 0x{change_key:X}")
+    anticollision = getattr(transport, "anticollision_uid", None)
+    report.uid = None if anticollision is None else bytes(anticollision)
+    if (not report.settings_match or report.uid is None) and change_key not in needed:
+        needed.append(change_key)
+    for key in needed:
+        _iso(transport, select_ndef_app(), "select NDEF application")
+        try:
+            session = authenticate_ev2_first(transport, key, keys[key])
+        except ApduError as exc:
+            if exc.sw != 0x91AE:
+                raise
+            raise ProvisionError(
+                f"the tag rejects key {key}: nothing was written. If its keys were "
+                "replaced, pass them (tools/provision.py --secrets-dir)") from exc
+        card_uid = get_card_uid(session)
+        if report.uid is None:
+            report.uid = card_uid
+        elif card_uid != report.uid:
+            raise ProvisionError("GetCardUID differs from the anticollision UID: refusing")
+    if uid is not None and report.uid != uid:
+        raise ProvisionError(f"tag UID {report.uid.hex().upper()} differs from the "
+                             f"expected {uid.hex().upper()}: nothing was written")
+    say(f"UID          : {report.uid.hex().upper()}")
+    if needed:
+        say("auth check   : keys " + ", ".join(map(str, needed)) + " accepted")
+        # Leave the authenticated state, so the writes run exactly as before.
+        _iso(transport, select_ndef_app(), "select NDEF application")
 
 
 def _write_data(transport, session: Session, data: bytes) -> None:

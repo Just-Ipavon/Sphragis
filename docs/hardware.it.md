@@ -210,8 +210,14 @@ to write`); i tap successivi si verificano con il testo da 32 byte.
 
 Tutti questi tap sono conservati come test di regressione
 (`tests/test_sdmenc.py`, `test_physical_tag_*`). Rilanciare il provisioning semplice (senza `--enc-data`) riporta il tag al SUN
-semplice e sblocca il file NDEF: Change resta sulla chiave 0 e le chiavi sono
-ancora a zero, quindi il blocco è reversibile.
+semplice; il file NDEF resta bloccato sulla `--write-key` (default 0), perché
+anche il layout semplice blocca le scritture. `--leave-writable` ripristina la
+scrittura libera di fabbrica su una tag di banco. Finché le chiavi sono a zero,
+Change sulla chiave 0 rende ogni blocco reversibile.
+
+Prima di scrivere, il provisioning si autentica con ogni chiave che le
+scritture richiederanno e mostra l'UID: una tag di cui non hai le chiavi viene
+rifiutata senza scrivere nulla, e senza `--uid` digiti l'UID per confermare.
 
 ## Chiavi reali: sostituire le chiavi di fabbrica
 

@@ -62,6 +62,12 @@ first-class, scored detector rather than a simple freshness flag.
   [key management](docs/key-management.md#writing-keys-to-tags); not yet
   validated on hardware). Whoever holds `master_admin` can reconfigure every
   tag; it belongs on the provisioning station only.
+- **Rewriting the tag's URL.** The plain SUN MAC covers no static data, so a
+  freely writable NDEF file would let anyone with a phone point a genuine tag
+  at another site while it keeps emitting valid taps. Provisioning locks NDEF
+  writes in every layout, to key 0, 3 or 4 (never to the FileRead or MetaRead
+  keys verification servers hold). The lock means something only once
+  `tools/rekey.py` has replaced the all-zero keys.
 - **Impersonation at keying time.** A tag is first keyed under the public
   factory key, so a device posing as a factory tag would receive the keys of
   the UID it claims. `rekey_tag` verifies the NXP originality signature,

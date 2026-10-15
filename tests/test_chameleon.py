@@ -178,7 +178,7 @@ def test_silent_device_times_out():
 
 
 def test_provisioning_end_to_end_over_serial_stack():
-    tag = FakeNtag424()
+    tag = FakeNtag424(uid=UID)              # the UID the fake Chameleon reports
     dev = FakeChameleon(FakeCard(tag.transceive, fsd=64))   # forces PICC chaining
     with _open(dev) as t:
         report = provision_tag(t, "https://example.com/t")
