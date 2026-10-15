@@ -226,7 +226,8 @@ then returned `6982`, and the next tap was still `AUTHENTIC` (counter 16).
 
 ## Real keys: replacing the factory keys
 
-Not yet validated on hardware. `tools/rekey.py` writes per-UID keys (see
+Validated on hardware (UID 04341A82161690, below); `--to-factory` still has to
+be seen on silicon. `tools/rekey.py` writes per-UID keys (see
 [key management](key-management.md#writing-keys-to-tags)); `--to-factory`
 undoes it, so a bench tag stays reusable.
 
@@ -263,6 +264,36 @@ secrets and back it up with them.
 Once keyed, `tools/provision.py` needs the same `--secrets-dir` and
 `--context`: changing the SDM settings or writing a locked NDEF file then
 authenticates with the tag's real slot 0.
+
+**Hardware run** (UID 04341A82161690, plain SUN layout just provisioned): the
+dry run planned slots 1-4 then 0, `--yes` changed them in that order, every
+new key authenticated and taps verified with the server-side keys. The
+counter jumped from 4 to 7 because the rekey reads a SUN tap to learn the UID.
+With factory keys the same tag no longer verifies: its PICCData decrypts to
+garbage, not the standard layout, hence `ERROR` rather than `FORGED`.
+
+```
+UID (from tap): 04341A82161690
+UID          : 04341A82161690 (GetCardUID)
+originality  : NXP signature verifies for this UID
+current      : 0=factory, 1=factory, 2=factory, 3=factory, 4=factory
+target       : diversified, version 01, KCV 76E11F 2C0AA4 0D8655 0E2A6A C27F88
+inventory    : unknown UID
+About to change slots 1, 2, 3, 4, 0 of tag 04341A82161690.
+Type the UID to confirm: 04341A82161690
+changed      : slot 1 (factory -> diversified)
+changed      : slot 2 (factory -> diversified)
+changed      : slot 3 (factory -> diversified)
+changed      : slot 4 (factory -> diversified)
+changed      : slot 0 (factory -> diversified)
+check        : all five keys authenticate, versions 01
+RESULT       : keys changed and verified
+
+tap 1: GENUINE      UID 04341A82161690  ctr 7  score 0
+tap 2: GENUINE      UID 04341A82161690  ctr 8  score 0
+tap 3: GENUINE      UID 04341A82161690  ctr 9  score 0
+tap 1: ERROR        UID None  ctr None  score 0      (factory keys)
+```
 
 ## Physical clone detection
 

@@ -95,6 +95,7 @@ class FakeNtag424:
         self.keys = list(keys or [bytes(16)] * 5)
         self.key_versions = [0x00] * 5
         self.key_changes = 0
+        self.failed_auths = 0
         self.settings = settings or FileSettings(0x00, FACTORY_ACCESS)
         self.file = bytearray(content.ljust(256, b"\x00"))
         self.counter = 0
@@ -191,6 +192,7 @@ class FakeNtag424:
             plain = AES.new(key, AES.MODE_CBC, ZERO_IV).decrypt(data)
             rnd_a, rnd_b_rot = plain[:16], plain[16:]
             if rnd_b_rot != rnd_b[1:] + rnd_b[:1]:
+                self.failed_auths += 1
                 return b"\x91\xAE"
             ti = os.urandom(4)
             tail = (rnd_a[0:2] + bytes(x ^ y for x, y in zip(rnd_a[2:8], rnd_b[0:6]))
