@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import stat
+import warnings
 from pathlib import Path
 from typing import Protocol
 
@@ -39,6 +40,9 @@ def _validate(name: str, key: bytes) -> bytes:
         raise SecretsError(
             f"key '{name}' must be AES-128 (16 bytes), got {len(key)}"
         )
+    if key == bytes(16):
+        raise SecretsError(f"key '{name}' is all zero: the public factory key "
+                           "is not a secret")
     return key
 
 
@@ -69,28 +73,70 @@ class FileSecretsBackend:
     """
     Reads hex-encoded keys from `<directory>/<name>` files.
 
-    Refuses files that are group/world readable (POSIX), to catch the common
-    misconfiguration of leaving key material readable by other users.
+    On POSIX, with `enforce_perms` (the default) it refuses:
+    - a key file that is a symlink, not a regular file, not owned by the
+      current user, or group/world accessible (chmod 600);
+    - a directory that is group/world writable (someone else could swap a
+      key file in) or owned by another user.
+    The checks run on the opened file descriptor (`O_NOFOLLOW` + `fstat`), so
+    the file that is checked is the file that is read. On other systems the
+    permissions cannot be checked this way: a warning is emitted, or pass
+    `enforce_perms=False` knowingly.
     """
 
     def __init__(self, directory: str | os.PathLike, enforce_perms: bool = True) -> None:
         self._dir = Path(directory)
         self._enforce = enforce_perms
+        if enforce_perms and os.name != "posix":
+            warnings.warn("FileSecretsBackend cannot check key file permissions on "
+                          f"{os.name}: protect {self._dir} with the OS ACLs",
+                          RuntimeWarning, stacklevel=2)
+
+    def _check_dir(self) -> None:
+        try:
+            st = os.stat(self._dir)
+        except FileNotFoundError:
+            raise SecretsError(f"secrets directory not found: {self._dir}") from None
+        if not stat.S_ISDIR(st.st_mode):
+            raise SecretsError(f"{self._dir} is not a directory")
+        if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise SecretsError(f"insecure permissions on {self._dir}: must not be "
+                               "group/world writable (chmod 700)")
+        if st.st_uid not in (os.geteuid(), 0):
+            raise SecretsError(f"{self._dir} is owned by another user")
 
     def get_key(self, name: str) -> bytes:
+        if not name or "/" in name or name in (".", ".."):
+            raise SecretsError(f"invalid key name {name!r}")
         path = self._dir / name
-        if not path.exists():
-            raise SecretsError(f"key file not found: {path}")
-        if self._enforce and os.name == "posix":
-            mode = path.stat().st_mode
-            if mode & (stat.S_IRWXG | stat.S_IRWXO):
-                raise SecretsError(
-                    f"insecure permissions on {path}: must not be group/world "
-                    f"accessible (chmod 600)"
-                )
+        posix = os.name == "posix"
+        if self._enforce and posix:
+            self._check_dir()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
-            key = bytes.fromhex(path.read_text().strip())
-        except ValueError as exc:
+            fd = os.open(path, flags)
+        except FileNotFoundError:
+            raise SecretsError(f"key file not found: {path}") from None
+        except OSError as exc:            # ELOOP: a symlink under O_NOFOLLOW
+            raise SecretsError(f"cannot open {path} safely: {exc.strerror}") from exc
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise SecretsError(f"{path} is not a regular file")
+            if self._enforce and posix:
+                if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                    raise SecretsError(
+                        f"insecure permissions on {path}: must not be group/world "
+                        f"accessible (chmod 600)"
+                    )
+                if st.st_uid != os.geteuid():
+                    raise SecretsError(f"{path} is owned by another user")
+            raw = os.read(fd, 4096)
+        finally:
+            os.close(fd)
+        try:
+            key = bytes.fromhex(raw.decode("ascii").strip())
+        except (UnicodeDecodeError, ValueError) as exc:
             raise SecretsError(f"{path} is not valid hex: {exc}") from exc
         return _validate(name, key)
 

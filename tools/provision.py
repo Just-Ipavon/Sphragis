@@ -14,7 +14,8 @@ The NDEF file ends up writable only after authenticating with --write-key
 key the writes need is checked before anything is written. Without --uid, a
 real run asks you to type the UID shown.
 
-With --enc-data / --enc-data-hex the tag also mirrors that plaintext as
+With --enc-data / --enc-data-hex / --enc-data-file (keeps the plaintext out of
+ps and shell history) the tag also mirrors that plaintext as
 encrypted file data (SDMENCFileData, a multiple of 16 bytes).
 
     python tools/provision.py --dry-run --base-url https://example.com/t
@@ -59,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     enc.add_argument("--enc-data", help="plaintext (ASCII) to mirror encrypted, "
                                         "a multiple of 16 bytes")
     enc.add_argument("--enc-data-hex", help="plaintext as hex, a multiple of 16 bytes")
+    enc.add_argument("--enc-data-file", help="read the plaintext from this file (raw "
+                                             "bytes; keeps it out of ps and history)")
     lock = parser.add_mutually_exclusive_group()
     lock.add_argument("--write-key", type=int, default=0, choices=WRITE_LOCK_KEYS,
                       help="key NDEF writes are locked to (default 0)")
@@ -83,7 +86,10 @@ def main(argv: list[str] | None = None) -> int:
             file_data = args.enc_data.encode("ascii")
         elif args.enc_data_hex is not None:
             file_data = bytes.fromhex(args.enc_data_hex)
-    except (UnicodeEncodeError, ValueError) as exc:
+        elif args.enc_data_file is not None:
+            with open(args.enc_data_file, "rb") as f:
+                file_data = f.read(257)
+    except (UnicodeEncodeError, ValueError, OSError) as exc:
         parser.error(f"invalid file data: {exc}")
     if file_data is not None and (not file_data or len(file_data) % 16):
         parser.error(f"file data must be a non-empty multiple of 16 bytes, "

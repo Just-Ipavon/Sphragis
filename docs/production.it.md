@@ -18,6 +18,16 @@ dentro una transazione serializzata:
 - WAL mantiene i lettori non bloccanti; `busy_timeout` fa attendere i writer.
 - Una connessione per thread (una singola connessione non deve eseguire
   statement interleaved da più thread).
+- `synchronous=FULL`: un avanzamento del floor confermato sopravvive a un calo
+  di corrente (con `NORMAL` le ultime transazioni del WAL potrebbero tornare
+  indietro e i loro tap verificare di nuovo). Il file del database viene creato
+  leggibile solo dal proprietario.
+
+Il `CounterStore` JSON usato dagli strumenti da riga di comando è sicuro per
+pochi processi su un host: ogni modifica rilegge il file sotto un `flock`
+esclusivo, viene sincronizzata su disco (file e cartella) prima che cambi la
+memoria, e un file vuoto o corrotto viene rifiutato invece di essere letto
+come "nessun floor". Non è pensato per un servizio: lì usa SQLite o Postgres.
 
 ```python
 from sphragis import Verifier, SqliteCounterStore, build_diversified_keys, EnvSecretsBackend

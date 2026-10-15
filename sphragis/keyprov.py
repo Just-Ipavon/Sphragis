@@ -330,6 +330,12 @@ class DiversifiedTagKeys:
                  label: str = "diversified") -> None:
         if any(len(k) != 16 for k in (master_admin, master_file, meta_read)):
             raise ValueError("master keys must be AES-128 (16 bytes)")
+        if len({master_admin, master_file, meta_read}) != 3:
+            # Equal masters would make the admin and file derivations overlap
+            # and hand verification servers the key that reconfigures tags.
+            raise ValueError("master_admin, master_file and meta_read must be distinct")
+        if bytes(16) in (master_admin, master_file, meta_read):
+            raise ValueError("a master key is all zero (the public factory key)")
         if len(context) > 23:
             raise ValueError("context too long (UID || slot || context must fit 31 bytes)")
         if version == FACTORY_VERSION or not 0 < version <= 0xFF:

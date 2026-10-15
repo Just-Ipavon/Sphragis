@@ -112,10 +112,28 @@ reconfigured or reset; taps still verify as long as `master_file` and
 dev env var to a managed KMS:
 
 - **`EnvSecretsBackend`** — hex keys from environment variables (`SPHRAGIS_*`).
-- **`FileSecretsBackend`** — hex keys from files; **refuses** group/world
-  readable files (POSIX).
+- **`FileSecretsBackend`** — hex keys from files. On POSIX it **refuses** key
+  files that are symlinks, not regular files, owned by another user or
+  group/world accessible, and a directory that is group/world writable or
+  owned by another user; the checks run on the opened descriptor
+  (`O_NOFOLLOW` + `fstat`), so the file checked is the file read. Elsewhere it
+  warns: protect the directory with the OS ACLs.
 - **`KmsSecretsBackend`** — extension point: subclass and implement `get_key`
   for AWS KMS, GCP KMS, HashiCorp Vault, or a PKCS#11 HSM.
+
+Every backend refuses an all-zero key (the public factory key is not a
+secret), and the key schemes refuse equal masters: `master_admin`,
+`master_file` and `meta_read` must be three different keys, otherwise
+verification servers would hold the key that reconfigures tags. The
+derivation inputs need no extra framing: the UID is always 7 bytes (other
+PICCData layouts are refused), so `context ‖ UID` is unambiguous.
+
+On the command line, `sphragis verify` and `emulate` take keys from
+`--secrets-dir` (diversified, like the API), from `SPHRAGIS_CLI_META_KEY` /
+`SPHRAGIS_CLI_FILE_KEY`, or by prompting without echo; `--meta-key` /
+`--file-key` remain for test keys and print a warning, since arguments are
+visible to other users (`ps`, shell history). `tools/provision.py
+--enc-data-file` keeps the encrypted plaintext off the command line too.
 
 ```python
 from sphragis import EnvSecretsBackend, build_diversified_keys
