@@ -205,8 +205,21 @@ write`); further taps verify with the 32-byte plaintext.
 
 All these taps are kept as regression tests (`tests/test_sdmenc.py`,
 `test_physical_tag_*`). Running plain provisioning again (without `--enc-data`) returns the tag to
-plain SUN and unlocks the NDEF file: Change stays on key 0 and the keys are
-still all-zero, so the lock is reversible.
+plain SUN; its NDEF file stays locked to `--write-key` (default 0), since the
+plain layout locks writes too. `--leave-writable` restores the factory free
+write access on a bench tag. While the keys are still all-zero, Change on
+key 0 keeps every lock reversible.
+
+Before writing, provisioning authenticates with every key the writes will need
+and shows the UID: a tag whose keys you do not hold is refused with nothing
+written, and without `--uid` you type the UID to confirm.
+
+Validated on UID 04084582161690 (plain SUN, previously free-writable): the dry
+run planned only the access change (`NDEF matches`, `auth check : keys 0
+accepted`); `--yes` changed the file settings after the typed confirmation and
+the check tap verified (`SDMReadCtr 14, CMAC match`). An unauthenticated
+ISOUpdateBinary without Le of the bytes already stored (`example.com` at 0x07)
+then returned `6982`, and the next tap was still `AUTHENTIC` (counter 16).
 
 ## Real keys: replacing the factory keys
 

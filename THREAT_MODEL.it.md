@@ -63,6 +63,13 @@ freschezza.
   (vedi [gestione chiavi](docs/key-management.it.md#scrivere-le-chiavi-sulle-tag);
   non ancora validato su hardware). Chi possiede `master_admin` può
   riconfigurare tutti i tag: deve stare solo sulla postazione di provisioning.
+- **Riscrittura dell'URL della tag.** Il MAC del SUN semplice non copre dati
+  statici, quindi un file NDEF liberamente scrivibile permetterebbe a chiunque
+  con un telefono di puntare una tag autentica verso un altro sito, mentre
+  continua a emettere tap validi. Il provisioning blocca le scritture NDEF in
+  ogni layout, sulla chiave 0, 3 o 4 (mai sulle chiavi FileRead o MetaRead che
+  hanno i server di verifica). Il blocco ha senso solo dopo che
+  `tools/rekey.py` ha sostituito le chiavi a zero.
 - **Impersonificazione al cambio chiavi.** Una tag riceve le prime chiavi con
   la chiave di fabbrica pubblica, quindi un dispositivo che si finge una tag
   di fabbrica riceverebbe le chiavi dell'UID che dichiara. `rekey_tag`

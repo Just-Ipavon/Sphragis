@@ -16,10 +16,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from fake_ntag424 import FakeNtag424  # noqa: E402
 from sphragis import EncFileVerifier, StaticKeys, Verdict  # noqa: E402
-from sphragis.apdu import ApduError, build_apdu  # noqa: E402
+from sphragis.apdu import build_apdu  # noqa: E402
 from sphragis.counterstore import CounterStore  # noqa: E402
 from sphragis.ndef import SdmOffsets, read_uri  # noqa: E402
-from sphragis.provision import provision_tag, update_binary  # noqa: E402
+from sphragis.provision import ProvisionError, provision_tag, update_binary  # noqa: E402
 from sphragis.sdmconfig import (  # noqa: E402
     FACTORY_ACCESS,
     AccessRights,
@@ -171,7 +171,7 @@ def test_same_layout_new_plaintext_keeps_settings():
 
 def test_plain_sun_tag_upgrades_to_encrypted_mirror():
     tag = FakeNtag424()
-    provision_tag(tag, BASE)
+    provision_tag(tag, BASE, write_key=None)            # bench tag, writes free
     assert tag.settings.access == FACTORY_ACCESS
     report = provision_tag(tag, BASE, file_data=DATA)
     assert report.wrote_ndef and report.changed_settings and report.verified
@@ -183,7 +183,9 @@ def test_encrypted_tag_can_go_back_to_plain_sun():
     report = provision_tag(tag, BASE)
     assert report.wrote_ndef and report.changed_settings and report.verified
     assert not tag.settings.enc_enabled
-    assert tag.settings.access == FACTORY_ACCESS
+    assert tag.settings.access == locked_access(0)      # plain SUN stays locked
+    unlocked = provision_tag(tag, BASE, write_key=None)
+    assert unlocked.changed_settings and tag.settings.access == FACTORY_ACCESS
 
 
 def test_dry_run_on_factory_tag_writes_nothing():
@@ -208,10 +210,9 @@ def test_dry_run_on_locked_tag_plans_authenticated_write():
 
 def test_encrypted_provisioning_fails_closed_with_non_zero_key():
     tag = FakeNtag424(keys=[os.urandom(16)] + [ZERO] * 4)
-    with pytest.raises(ApduError) as exc:
+    with pytest.raises(ProvisionError, match="rejects key 0"):
         provision_tag(tag, BASE, file_data=DATA)
-    assert exc.value.sw == 0x91AE
-    assert not tag.settings.sdm_enabled
+    assert tag.writes == 0 and not tag.settings.sdm_enabled
 
 
 def test_not_verified_when_file_key_differs():

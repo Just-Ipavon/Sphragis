@@ -32,6 +32,8 @@ from sphragis.sdmconfig import (  # noqa: E402
     parse_file_settings,
     same_config,
     sun_layout,
+    WRITE_LOCK_KEYS,
+    locked_access,
     sun_settings,
     template_url,
 )
@@ -193,7 +195,8 @@ def test_provision_factory_tag_then_verify():
     assert report.verified, report.log
     assert report.check.uid == tag.uid.hex().upper()
     assert tag.settings.meta_read == 2 and tag.settings.file_read == 1
-    assert tag.settings.access == FACTORY_ACCESS
+    assert tag.settings.access == locked_access(0)          # writes locked (#13)
+    assert report.uid == tag.uid
 
     # The engine accepts what the provisioned tag now emits, tap after tap.
     verifier = Verifier(StaticKeys(ZERO, ZERO), CounterStore())
@@ -231,11 +234,12 @@ def test_dry_run_writes_nothing():
 
 
 def test_provision_fails_closed_with_non_zero_key():
-    tag = FakeNtag424(keys=[os.urandom(16)] + [ZERO] * 4)
-    with pytest.raises(ApduError) as exc:      # the PICC rejects RndB'
+    tag = FakeNtag424(keys=[os.urandom(16)] + [ZERO] * 4, content=b"original")
+    with pytest.raises(ProvisionError, match="nothing was written") as exc:
         provision_tag(tag, BASE)
-    assert exc.value.sw == 0x91AE
+    assert exc.value.__cause__.sw == 0x91AE    # the PICC rejects RndB'
     assert not tag.settings.sdm_enabled
+    assert tag.writes == 0 and bytes(tag.file[:8]) == b"original"   # untouched (#15)
 
 
 def test_free_read_write_right_allows_iso_update():
@@ -258,9 +262,8 @@ def test_locked_ndef_file_with_non_zero_key_fails_closed():
     keys = [ZERO, ZERO, ZERO, os.urandom(16), ZERO]
     tag = FakeNtag424(keys=keys,
                       settings=FileSettings(0x00, AccessRights(0x3, 0x0, 0xE, 0x3)))
-    with pytest.raises(ApduError) as exc:
+    with pytest.raises(ProvisionError, match="rejects key 3"):
         provision_tag(tag, BASE)
-    assert exc.value.sw == 0x91AE
     assert tag.writes == 0 and not tag.settings.sdm_enabled
 
 
@@ -268,3 +271,88 @@ def test_unwritable_ndef_file_is_refused():
     tag = FakeNtag424(settings=FileSettings(0x00, AccessRights(0xF, 0x0, 0xE, 0xF)))
     with pytest.raises(ProvisionError):
         provision_tag(tag, BASE)
+
+
+# --- Write lock (#13, #14) and authenticate-before-write (#15) -----------------
+
+def _raw_update(tag, offset, data):
+    """An unauthenticated rewrite, as any phone app would send it."""
+    from sphragis.apdu import build_apdu
+    tag.transceive(build_apdu(0x00, 0xA4, 0x04, 0x00, H("D2760000850101"), le=0))
+    tag.transceive(build_apdu(0x00, 0xA4, 0x00, 0x0C, H("E104")))
+    return tag.transceive(build_apdu(0x00, 0xD6, offset >> 8, offset & 0xFF, data))
+
+
+def test_plain_layout_refuses_unauthenticated_rewrites():
+    tag = FakeNtag424()
+    provision_tag(tag, BASE)
+    url = read_uri(tag)
+    assert _raw_update(tag, 0x07, b"evilxpl.com") == b"\x69\x82"
+    assert read_uri(tag).split("?")[0] == url.split("?")[0]   # host unchanged
+
+
+def test_bench_tag_can_stay_writable():
+    tag = FakeNtag424()
+    report = provision_tag(tag, BASE, write_key=None)
+    assert report.verified and tag.settings.access == FACTORY_ACCESS
+    assert _raw_update(tag, 0x07, b"x") == b"\x90\x00"
+    assert "FREE" in "\n".join(report.log)
+
+
+@pytest.mark.parametrize("key", [1, 2, 5])
+def test_write_lock_never_uses_a_verifier_key(key):
+    with pytest.raises(SdmConfigError):
+        locked_access(key)
+    with pytest.raises(SdmConfigError):
+        provision_tag(FakeNtag424(), BASE, write_key=key)
+
+
+def test_write_lock_keys_are_the_admin_slots():
+    assert WRITE_LOCK_KEYS == (0, 3, 4)
+    o = sun_layout(BASE).offsets
+    assert sun_settings(o).access == locked_access(0)              # locked by default
+    for key in WRITE_LOCK_KEYS:
+        assert sun_settings(o, access=locked_access(key)).access.write == key
+    with pytest.raises(SdmConfigError, match="verification servers"):
+        sun_settings(o, access=AccessRights(0x2, 0x0, 0xE, 0x2))   # MetaRead key
+
+
+def test_write_lock_on_key_3_is_written_and_verified():
+    tag = FakeNtag424()
+    report = provision_tag(tag, BASE, write_key=3)
+    assert report.verified and tag.settings.access == locked_access(3)
+    again = provision_tag(tag, "https://example.org/x", write_key=3)
+    assert again.wrote_ndef and "WriteData, authenticated with key 3" in "\n".join(again.log)
+
+
+def test_dry_run_checks_the_keys_and_shows_the_uid():
+    tag = FakeNtag424()
+    report = provision_tag(tag, BASE, dry_run=True)
+    assert report.uid == tag.uid and tag.writes == 0
+    assert "auth check   : keys 0 accepted" in report.log
+    locked = FakeNtag424(keys=[os.urandom(16)] + [ZERO] * 4)
+    with pytest.raises(ProvisionError, match="rejects key 0"):
+        provision_tag(locked, BASE, dry_run=True)
+
+
+def test_operator_can_decline_provisioning():
+    tag, seen = FakeNtag424(), []
+    report = provision_tag(tag, BASE, confirm=lambda r: seen.append(r.uid) or False)
+    assert report.aborted and seen == [tag.uid]
+    assert tag.writes == 0 and not tag.settings.sdm_enabled
+
+
+def test_expected_uid_must_match():
+    tag = FakeNtag424(uid=H("04112233445566"))
+    with pytest.raises(ProvisionError, match="differs from the expected"):
+        provision_tag(tag, BASE, uid=H("04FFFFFFFFFFFF"))
+    assert tag.writes == 0
+    assert provision_tag(tag, BASE, uid=H("04112233445566")).verified
+
+
+def test_anticollision_uid_is_cross_checked():
+    tag = FakeNtag424()
+    tag.anticollision_uid = H("04000000000001")
+    with pytest.raises(ProvisionError, match="anticollision"):
+        provision_tag(tag, BASE)
+    assert tag.writes == 0

@@ -69,6 +69,12 @@ class AccessRights:
 # Factory default of the NDEF file: RW free, Change key 0, Read free, Write free.
 FACTORY_ACCESS = AccessRights(KEY_FREE, 0x0, KEY_FREE, KEY_FREE)
 
+# Keys the NDEF write lock may be bound to: the AppMasterKey and the two slots
+# the SUN layout leaves unused. Slots 1 (SDMFileRead) and 2 (SDMMetaRead) are
+# derivable on every verification server, so a lock on them would let anyone
+# holding verifier secrets rewrite the URL or the encrypted plaintext.
+WRITE_LOCK_KEYS = (0, 3, 4)
+
 
 def locked_access(write_key: int = 0) -> AccessRights:
     """
@@ -76,8 +82,10 @@ def locked_access(write_key: int = 0) -> AccessRights:
     reads left free (needed for SDM) and Change on key 0, as NT4H2421Gx
     Table 8 recommends after personalization.
     """
-    if not 0 <= write_key <= 4:
-        raise SdmConfigError("write_key must be an application key 0..4")
+    if write_key not in WRITE_LOCK_KEYS:
+        raise SdmConfigError(
+            f"write_key must be one of {', '.join(map(str, WRITE_LOCK_KEYS))}: "
+            "slots 1 and 2 are held by verification servers")
     return AccessRights(write_key, 0x0, KEY_FREE, write_key)
 
 
@@ -198,18 +206,28 @@ def template_url(base_url: str) -> str:
 
 
 def sun_settings(offsets: SdmOffsets, meta_read_key: int = 2, file_read_key: int = 1,
-                 ctr_ret_key: int = 1, access: AccessRights = FACTORY_ACCESS) -> FileSettings:
+                 ctr_ret_key: int = 1, access: AccessRights | None = None) -> FileSettings:
     """
     File settings for the engine's layout. Defaults mirror AN12196 §5.9
-    (MetaRead = key 2, FileRead = key 1, CtrRet = key 1) while keeping the
-    factory access rights, so the NDEF file stays freely writable.
+    (MetaRead = key 2, FileRead = key 1, CtrRet = key 1), with NDEF writes
+    locked to key 0 (`locked_access`): the plain SUN MAC covers no static
+    data, so a freely writable file would let anyone point the tag at another
+    URL while it keeps emitting valid taps. Pass `access=FACTORY_ACCESS` only
+    for a bench tag that must stay rewritable.
     """
+    if access is None:
+        access = locked_access(0)
     for name, k in (("meta_read_key", meta_read_key), ("file_read_key", file_read_key)):
         if not 0 <= k <= 4:
             raise SdmConfigError(f"{name} must be an application key 0..4 "
                                  f"(encrypted mirror + MAC are mandatory)")
     if not (0 <= ctr_ret_key <= 4 or ctr_ret_key in (KEY_FREE, KEY_NONE)):
         raise SdmConfigError("ctr_ret_key must be 0..4, 0xE or 0xF")
+    sdm_keys = {meta_read_key, file_read_key, ctr_ret_key}
+    for name, k in (("Write", access.write), ("ReadWrite", access.read_write)):
+        if k in sdm_keys:
+            raise SdmConfigError(f"{name} access must not use key {k}, which the SDM "
+                                 "layout gives to verification servers")
     return FileSettings(
         file_option=_FILE_OPT_SDM,          # SDM on, CommMode.Plain
         access=access,

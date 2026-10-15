@@ -45,7 +45,11 @@ def test_tap_verify_emulator(capsys):
 def test_provision_offline_dry_run(capsys):
     tool = _load("provision")
     assert tool.main(["--dry-run", "--base-url", "https://example.com/t"]) == 0
-    assert "40E0EEC1F121" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "4000E0C1F121" in out and "locked to key 0" in out     # writes locked (#13)
+    assert tool.main(["--dry-run", "--base-url", "https://example.com/t",
+                      "--leave-writable"]) == 0
+    assert "40E0EEC1F121" in capsys.readouterr().out           # factory access kept
 
 
 @pytest.mark.parametrize("argv", [
@@ -62,11 +66,35 @@ def test_provision_with_fake_picc(capsys):
     tool = _load("provision")
     tag = FakeNtag424()
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes"]
+    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
+            "--uid", tag.uid.hex()]
     assert tool.main(argv) == 0
     assert "provisioned and verified" in capsys.readouterr().out
     assert tool.main(argv) == 0
     assert "already provisioned" in capsys.readouterr().out
+
+
+def test_provision_asks_to_type_the_uid(capsys, monkeypatch):
+    tool = _load("provision")
+    tag = FakeNtag424()
+    tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
+    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes"]
+    monkeypatch.setattr("builtins.input", lambda prompt: "04")
+    assert tool.main(argv) == 1 and tag.writes == 0
+    assert "aborted" in capsys.readouterr().out
+    monkeypatch.setattr("builtins.input", lambda prompt: tag.uid.hex())
+    assert tool.main(argv) == 0 and tag.settings.sdm_enabled
+
+
+def test_provision_refuses_a_tag_whose_keys_it_lacks(capsys):
+    import os as _os
+    tool = _load("provision")
+    tag = FakeNtag424(keys=[_os.urandom(16)] + [bytes(16)] * 4)
+    tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
+    argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
+            "--uid", tag.uid.hex()]
+    assert tool.main(argv) == 2 and tag.writes == 0
+    assert "REFUSED" in capsys.readouterr().out
 
 
 def test_provision_enc_offline_dry_run(capsys):
@@ -83,6 +111,10 @@ def test_provision_enc_offline_dry_run(capsys):
     ["--enc-data-hex", "zz" * 16],                             # not hex
     ["--enc-data", "0123456789ABCDEF", "--enc-data-hex", "00" * 16],
     ["--enc-data", "0123456789ABCDEF", "--write-key", "14"],   # not a key
+    ["--write-key", "2"],                                      # verifier-held key (#14)
+    ["--write-key", "1"],
+    ["--enc-data", "0123456789ABCDEF", "--leave-writable"],
+    ["--write-key", "3", "--leave-writable"],
 ])
 def test_provision_enc_rejects_bad_arguments(extra):
     with pytest.raises(SystemExit):
@@ -95,7 +127,7 @@ def test_provision_enc_with_fake_picc(capsys):
     tag = FakeNtag424()
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
     argv = ["--reader", "pn532", "--base-url", "https://example.com/t", "--yes",
-            "--enc-data-hex", "00112233445566778899AABBCCDDEEFF"]
+            "--uid", tag.uid.hex(), "--enc-data-hex", "00112233445566778899AABBCCDDEEFF"]
     assert tool.main(argv) == 0
     out = capsys.readouterr().out
     assert "provisioned and verified" in out and "file data match" in out
