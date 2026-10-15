@@ -37,3 +37,9 @@ sphragis = "sphragis.cli:main"
 
 [tool.setuptools]
 packages = ["sphragis", "sphragis.api", "sphragis.transport"]
+
+[tool.bandit]
+# B413 flags every `Crypto` import because PyCrypto and pycryptodome share the
+# namespace. The engine requires pycryptodome and refuses PyCrypto at import
+# time (sphragis/_cryptocheck.py), so the finding does not apply.
+skips = ["B413"]

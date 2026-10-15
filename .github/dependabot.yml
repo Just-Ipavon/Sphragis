@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Python dependencies (pyproject.toml); regenerate requirements/ci.lock
+  # in the same PR (see docs/production.md, Dependencies and supply chain).
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # Actions are pinned by commit SHA; Dependabot keeps the pins current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

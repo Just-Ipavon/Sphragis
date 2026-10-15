@@ -24,6 +24,7 @@ Testing / demos:
     from sphragis.adversary import KeylessAttacker, KeyCloner
 """
 
+from . import _cryptocheck  # noqa: F401  (must run before any Crypto import)
 from .alerts import Alert, AlertSink, LogAlertSink, SqliteAlertSink, WebhookAlertSink
 from .analyzer import AnalysisResult, TagAnalyzer
 from .counterstore import CounterBackend, CounterStore

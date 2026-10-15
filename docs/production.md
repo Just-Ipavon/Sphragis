@@ -110,6 +110,25 @@ The clone detector's per-UID history goes through an `ObservationStore`.
 host, with an atomic `observe()`, so several workers score one consistent
 stream. See [the API docs](api.md#horizontal-scale-shared-detector-history).
 
+## Dependencies and supply chain
+
+- **Locked, hash-checked installs.** `requirements/ci.lock` pins every
+  dependency of the `api`, `test` and `pg` extras with SHA-256 hashes, for
+  Python 3.10–3.13. CI installs only from it (`pip install --require-hashes
+  -r requirements/ci.lock`, then `pip install --no-deps -e .`); deploy the
+  same way. After changing `pyproject.toml`, regenerate it with
+  `uv pip compile pyproject.toml --universal --extra api --extra test
+  --extra pg --generate-hashes -o requirements/ci.lock`.
+- **Actions pinned by commit SHA**, workflows run with `contents: read`.
+  Dependabot proposes updates to both the Python dependencies and the pins.
+- **Security workflow:** `pip-audit` on the lock and `bandit` on the code, on
+  every change and weekly, since new advisories appear without a commit.
+- **pycryptodome, never PyCrypto.** Both install a `Crypto` package; the
+  engine refuses to import if `Crypto` is not pycryptodome 3 or later, so a
+  stray PyCrypto cannot silently take its place.
+- Runtime state and secrets (`*.db`, `*.sqlite`, `keys/`, `.sphragis/`, key
+  files) are git-ignored.
+
 ## Hardening checklist
 
 - [ ] Keys in KMS/HSM, not in env on long-lived hosts
