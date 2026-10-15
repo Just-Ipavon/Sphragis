@@ -46,14 +46,22 @@ stessi contratti su Postgres:
   RETURNING c.counter;
   ```
 
+  È anche il registro dei tap dell'analyzer: `record_tap` aggiunge il
+  contatore a `sphragis_tap_counters` e fa avanzare il floor in un'unica
+  transazione, serializzata per UID con un advisory lock (vedi
+  [clone detection](clone-detection.it.md#il-registro-dei-tap)).
+
 - **`PostgresObservationStore`**: `observe` legge la cronologia precedente,
   aggiunge il tap e la accorcia in un'unica transazione, serializzata per UID
   con un advisory lock a livello di transazione.
 - **`PostgresAlertSink`**: l'audit trail degli alert, condiviso da tutte le
   repliche.
 
-Le tabelle (`sphragis_counters`, `sphragis_observations`, `sphragis_alerts`)
-sono create al primo uso. Ogni thread ha la sua connessione; una connessione
+Le tabelle (`sphragis_counters`, `sphragis_tap_counters`,
+`sphragis_tap_ledgers`, `sphragis_observations`, `sphragis_alerts`) sono create
+al primo uso. Il registro dei tap cresce di una piccola riga per ogni tap
+accettato; i floor esistenti continuano a funzionare (i contatori sotto il
+floor che un UID aveva quando è iniziato il suo registro risultano `REPLAY`). Ogni thread ha la sua connessione; una connessione
 interrotta viene sostituita alla chiamata successiva e gli errori si
 propagano, quindi una verifica fallisce in modo chiuso invece di saltare il
 floor.

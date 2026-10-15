@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .counterstore import CounterBackend, CounterStore
+from .counterstore import CounterStore, TapLedger
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
 from .verifier import KeyProvider, _consttime_eq, _extract_params
@@ -48,15 +48,19 @@ class TagAnalyzer:
         self,
         keys: KeyProvider,
         detector: CloneDetector | None = None,
-        store: CounterBackend | None = None,
+        store: TapLedger | None = None,
     ) -> None:
         self._keys = keys
         self._detector = detector or CloneDetector()
-        # Persistent monotonic floor. The in-memory detector gives rich scoring
-        # but its history is lost on restart; this store keeps a hard anti-replay
-        # floor that survives restarts/crashes. Pass a path-backed CounterStore
-        # in production.
-        self._store = store or CounterStore()
+        # Persistent tap ledger: the monotonic floor plus every counter value
+        # submitted per UID, updated atomically. It decides replay and
+        # regression exactly and survives restarts; the detector's bounded
+        # history only scores fresh taps. Pass a durable backend in production
+        # (SqliteCounterStore, PostgresCounterStore).
+        self._store = store if store is not None else CounterStore()
+        if not isinstance(self._store, TapLedger):
+            raise TypeError("TagAnalyzer needs a tap ledger store "
+                            "(last_counter, record_tap)")
 
     @property
     def detector(self) -> CloneDetector:
@@ -70,11 +74,16 @@ class TagAnalyzer:
         admit: Callable[[str], bool] | None = None,
     ) -> AnalysisResult:
         """
+        Stale counters are decided by the tap ledger alone and touch no other
+        state: one already submitted is REPLAY; one below the floor and never
+        submitted is CLONE_LIKELY, once (submitting it again is REPLAY).
+
         `admit`, if given, is called with the UID once the SDMMAC has been
-        verified and before the counter floor or the detector are touched.
-        Returning False yields THROTTLED and leaves all state unchanged, so a
-        throttled genuine tap does not burn its counter value. Gating only
-        authentic taps means forged junk cannot drain a specific tag's budget.
+        verified and only for a counter above the floor, before any state is
+        touched. Returning False yields THROTTLED and leaves all state
+        unchanged, so a throttled genuine tap does not burn its counter value.
+        Gating only authentic, fresh taps means neither forged junk nor
+        replays of a captured URL can drain a specific tag's budget.
         """
         # 1 + 2: parse and decrypt
         try:
@@ -96,39 +105,63 @@ class TagAnalyzer:
                 "SDMMAC mismatch: payload is not from a genuine tag",
             )
 
-        if admit is not None and not admit(uid_hex):
+        # 4: classify against the tap ledger (floor + every counter submitted).
+        counter = picc.read_counter
+        floor = self._store.last_counter(uid_hex)
+        stale = floor is not None and counter <= floor
+
+        # Only a fresh counter, which needs the physical tag, is charged to the
+        # per-UID budget: replays of a captured URL cannot throttle the tag.
+        if not stale and admit is not None and not admit(uid_hex):
             return AnalysisResult(
-                "THROTTLED", True, uid_hex, picc.read_counter, 0, (),
+                "THROTTLED", True, uid_hex, counter, 0, (),
                 "verification refused by admission policy (rate limit)",
             )
 
-        # 4: persistent anti-replay floor (survives restarts) + scored analysis.
-        fresh = self._store.check_and_advance(uid_hex, picc.read_counter)
-        det: DetectionResult = self._detector.analyze(
-            uid_hex, picc.read_counter, timestamp=timestamp, reader_id=reader_id
+        record = self._store.record_tap(uid_hex, counter)
+        if not record.new:                       # already submitted (or a racing copy)
+            return self._replay(uid_hex, counter, record.floor_before)
+        if not record.fresh:
+            if record.predates_ledger:          # store upgraded from a bare floor
+                return self._replay(uid_hex, counter, record.floor_before,
+                                    "below the floor the UID had when its tap "
+                                    "ledger began: treated as a replay")
+            return self._regression(uid_hex, counter, record.floor_before)
+
+        # 5: a fresh counter: score velocity and gap, and keep it in the history.
+        det: DetectionResult = self._detector.assess_fresh(
+            uid_hex, counter, timestamp=timestamp, reader_id=reader_id,
+            floor_before=record.floor_before,
         )
-
-        # If the rich (in-memory) detector sees nothing but the persistent store
-        # knows this counter was already used (e.g. a replay after a restart
-        # cleared the detector's history), fall back to REPLAY.
-        if det.risk_level is RiskLevel.GENUINE and not fresh:
-            return AnalysisResult(
-                classification=RiskLevel.REPLAY.value,
-                authentic_mac=True,
-                uid=uid_hex,
-                read_counter=picc.read_counter,
-                risk_score=65,
-                signals=(),
-                detail="counter already seen in the persistent store "
-                       "(replay across a detector-history reset)",
-            )
-
         return AnalysisResult(
             classification=det.risk_level.value,
             authentic_mac=True,
             uid=uid_hex,
-            read_counter=picc.read_counter,
+            read_counter=counter,
             risk_score=det.risk_score,
             signals=det.signals,
             detail=det.detail,
         )
+
+    @staticmethod
+    def _replay(uid_hex: str, counter: int, floor: int | None,
+                why: str | None = None) -> AnalysisResult:
+        if why is None:
+            signal = Signal("exact_replay", 65,
+                            f"read counter {counter} was already submitted for this "
+                            f"UID (floor {floor}): a captured tap is being replayed")
+        else:
+            signal = Signal("stale_counter", 65, f"read counter {counter} is {why} "
+                                                 f"(floor {floor})")
+        return AnalysisResult(RiskLevel.REPLAY.value, True, uid_hex, counter,
+                              signal.weight, (signal,), signal.detail)
+
+    @staticmethod
+    def _regression(uid_hex: str, counter: int, floor: int | None) -> AnalysisResult:
+        signal = Signal("counter_regression", 70,
+                        f"read counter {counter} is below the floor ({floor}) and was "
+                        f"never submitted before: a second device emitting its own "
+                        f"counter stream (clone), or a genuine tap that was read and "
+                        f"withheld (pre-play)")
+        return AnalysisResult(RiskLevel.CLONE_LIKELY.value, True, uid_hex, counter,
+                              signal.weight, (signal,), signal.detail)

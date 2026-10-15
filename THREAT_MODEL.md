@@ -84,10 +84,15 @@ first-class, scored detector rather than a simple freshness flag.
   a restart; `SqliteObservationStore` (used by the API) makes it durable and
   shared across processes on one host; with `SPHRAGIS_DB_URL` the Postgres
   backends share floor, history and alerts across hosts.
-- **Per-UID budget exhaustion**: an attacker holding a captured, MAC-valid URL
-  can replay it to drain that tag's per-UID rate-limit budget and delay genuine
-  verifications (never accept a clone: throttled taps get `429`). Each replay is
-  itself logged as `REPLAY`.
+- **Per-UID budget**: only counters above the floor, which need the physical
+  tag, are charged to the per-UID rate limit; replays of a captured URL are
+  answered `REPLAY` without touching it, so they cannot throttle the genuine
+  tag. Someone who holds the tag can still spend its budget with fresh taps.
+- **Withheld URLs (pre-play)**: someone who reads a tag without submitting the
+  URLs can present them later, once each. Above the floor they verify as
+  genuine (a one-time window that only a verifier challenge closes); below it
+  each raises one `CLONE_LIKELY`, never more, since the tap ledger remembers
+  every counter submitted.
 - **Public taps carry no location**: impossible-velocity needs authenticated
   readers; anonymous phone taps feed only the counter-based signals.
 - The in-process rate limiter is per replica; a global limit needs a shared

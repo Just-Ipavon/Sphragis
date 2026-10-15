@@ -269,3 +269,64 @@ def test_api_on_postgres_shares_state_across_app_instances(pg_dsn):
     second = TestClient(create_app_from_env(env, secrets=Secrets()))
     assert first.post("/v1/verify", json={"url": url}).json()["verdict"] == "GENUINE"
     assert second.post("/v1/verify", json={"url": url}).json()["verdict"] == "REPLAY"
+
+
+# --- Tap ledger (record_tap) -----------------------------------------------------
+
+def test_tap_ledger_contract(backend):
+    from sphragis.counterstore import TapRecord
+    s = backend["counters"]()
+    assert s.record_tap("04aa", 5) == TapRecord(5, True, None, None)
+    assert s.record_tap("04AA", 5) == TapRecord(5, False, 5, None)
+    assert s.record_tap("04AA", 3) == TapRecord(3, True, 5, None)
+    assert s.record_tap("04AA", 9).fresh and s.last_counter("04aa") == 9
+    assert s.seen("04AA", 3) and not s.seen("04AA", 4)
+    s.check_and_advance("04BB", 100)                     # floor before the ledger
+    assert s.record_tap("04BB", 50).predates_ledger
+    assert not s.record_tap("04BB", 101).predates_ledger
+
+
+def test_same_tap_from_many_threads_is_new_once(backend):
+    s = backend["counters"]()
+    for value in range(1, 6):
+        results, barrier = [], threading.Barrier(16)
+
+        def tap():
+            barrier.wait()
+            results.append(s.record_tap("04EF", value).new)
+
+        threads = [threading.Thread(target=tap) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert results.count(True) == 1, (value, results)
+    assert s.last_counter("04EF") == 5
+
+
+def _process_record_tap(spec, uid, value, start):
+    kind, target = spec
+    if kind == "sqlite":
+        store = SqliteCounterStore(target)
+    else:
+        from sphragis.pgstore import PostgresCounterStore
+        store = PostgresCounterStore(target)
+    start.wait()
+    try:
+        return store.record_tap(uid, value).new
+    finally:
+        store.close()
+
+
+def test_same_tap_from_many_processes_is_new_once(backend):
+    backend["counters"]()
+    ctx = mp.get_context("spawn")
+    with ctx.Manager() as manager:
+        start = manager.Event()
+        with ctx.Pool(6) as pool:
+            pending = [pool.apply_async(_process_record_tap,
+                                        (backend["spec"], "04AC", 7, start))
+                       for _ in range(6)]
+            start.set()
+            results = [p.get(timeout=60) for p in pending]
+    assert results.count(True) == 1, results

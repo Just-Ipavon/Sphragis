@@ -88,10 +88,16 @@ freschezza.
   vivo dopo un riavvio; `SqliteObservationStore` (usato dall'API) lo rende
   durevole e condiviso tra i processi di un host; con `SPHRAGIS_DB_URL` i
   backend Postgres condividono floor, cronologia e alert tra più host.
-- **Esaurimento del budget per UID**: un attaccante con un URL catturato e MAC
-  valido può rinviarlo per esaurire il budget di rate limit di quel tag e
-  ritardare le verifiche autentiche (mai accettare un clone: i tap limitati
-  ricevono `429`). Ogni rinvio è comunque loggato come `REPLAY`.
+- **Budget per UID**: solo i contatori sopra il floor, che richiedono la tag
+  fisica, consumano il rate limit per UID; i rinvii di un URL catturato
+  ricevono `REPLAY` senza toccarlo, quindi non possono bloccare la tag
+  autentica. Chi ha in mano la tag può comunque consumarne il budget con tap
+  nuovi.
+- **URL trattenuti (pre-play)**: chi legge una tag senza inviare gli URL può
+  presentarli più tardi, una volta ciascuno. Sopra il floor verificano come
+  autentici (una finestra monouso che chiude solo una sfida del verificatore);
+  sotto il floor ognuno genera un `CLONE_LIKELY`, mai di più, perché il
+  registro dei tap ricorda ogni contatore inviato.
 - **I tap pubblici non portano posizione**: la velocità impossibile richiede
   lettori autenticati; i tap anonimi da telefono alimentano solo i segnali
   basati sul contatore.

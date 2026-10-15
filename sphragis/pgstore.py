@@ -35,6 +35,7 @@ import threading
 import time
 
 from .alerts import Alert
+from .counterstore import TapRecord
 from .observations import Observation
 
 try:
@@ -102,6 +103,16 @@ class PostgresCounterStore(_PgBase):
         counter     BIGINT NOT NULL,
         updated_at  DOUBLE PRECISION NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sphragis_tap_counters (
+        uid         TEXT NOT NULL,
+        counter     BIGINT NOT NULL,
+        first_seen  DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (uid, counter)
+    );
+    CREATE TABLE IF NOT EXISTS sphragis_tap_ledgers (
+        uid         TEXT PRIMARY KEY,
+        since       BIGINT
+    );
     """
 
     def last_counter(self, uid_hex: str) -> int | None:
@@ -123,6 +134,44 @@ class PostgresCounterStore(_PgBase):
             (uid_hex.upper(), counter, time.time()),
         ).fetchone()
         return row is not None
+
+    def seen(self, uid_hex: str, counter: int) -> bool:
+        return self._connection().execute(
+            "SELECT 1 FROM sphragis_tap_counters WHERE uid = %s AND counter = %s",
+            (uid_hex.upper(), counter),
+        ).fetchone() is not None
+
+    def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
+        """
+        Tap ledger (`counterstore.TapLedger`): record `counter` and advance the
+        floor if it is new and higher, in one transaction serialized per UID.
+        """
+        uid_hex = uid_hex.upper()
+        now = time.time()
+        conn = self._connection()
+        with conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))",
+                         (_LOCK_NS + 1, uid_hex))
+            row = conn.execute("SELECT counter FROM sphragis_counters WHERE uid = %s",
+                               (uid_hex,)).fetchone()
+            floor = None if row is None else int(row[0])
+            conn.execute("INSERT INTO sphragis_tap_ledgers (uid, since) VALUES (%s, %s) "
+                         "ON CONFLICT DO NOTHING", (uid_hex, floor))
+            since = conn.execute("SELECT since FROM sphragis_tap_ledgers WHERE uid = %s",
+                                 (uid_hex,)).fetchone()[0]
+            new = conn.execute(
+                "INSERT INTO sphragis_tap_counters (uid, counter, first_seen) "
+                "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING 1",
+                (uid_hex, counter, now)).fetchone() is not None
+            record = TapRecord(counter, new, floor, None if since is None else int(since))
+            if record.fresh:
+                conn.execute(
+                    "INSERT INTO sphragis_counters AS c (uid, counter, updated_at) "
+                    "VALUES (%s, %s, %s) ON CONFLICT (uid) DO UPDATE "
+                    "SET counter = EXCLUDED.counter, updated_at = EXCLUDED.updated_at "
+                    "WHERE c.counter < EXCLUDED.counter",
+                    (uid_hex, counter, now))
+        return record
 
 
 class PostgresObservationStore(_PgBase):
