@@ -75,7 +75,10 @@ from .sdmconfig import (
 )
 from .verifier import StaticKeys
 
-_WRITE_CHUNK = 0xF0
+# ISOUpdateBinary chunks small enough for one ISO-DEP frame on every reader in
+# use (5 B header + data + Le + PCB + CRC within the Chameleon's 62 bytes), so
+# each piece is written atomically rather than across chained frames.
+_WRITE_CHUNK = 48
 INS_WRITE_DATA = 0x8D
 # WriteData payload per command: 5 B header + 7 B FileNo/Offset/Length + data
 # + Le fits one 64-byte ISO-DEP frame, so every chunk is tearing protected

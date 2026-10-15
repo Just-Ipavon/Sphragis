@@ -127,7 +127,10 @@ class ChameleonLink:
         except ImportError as exc:
             raise TransportError("pyserial is not installed (pip install 'sphragis[hw]')") from exc
         try:
-            port = serial.Serial(port=device, baudrate=115200, timeout=0.1)
+            # exclusive: another process (or a second tool run) on the same
+            # device would interleave frames with ours.
+            port = serial.Serial(port=device, baudrate=115200, timeout=0.1,
+                                 exclusive=True)
             port.dtr = True
         except serial.SerialException as exc:
             raise TransportError(f"cannot open {device}: {exc}") from exc
@@ -232,6 +235,10 @@ class ChameleonTransport(IsoDepTransport):
             transport.fsc = min(transport.fsc, DEVICE_MAX_FSC)
             transport.tag = tag
         except BaseException:
+            try:
+                link.field_off()          # do not leave the RF field on
+            except Exception:
+                pass
             link.close()
             raise
         return transport

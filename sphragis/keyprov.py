@@ -150,7 +150,11 @@ def get_card_uid(session: Session) -> bytes:
     plain = AES.new(session.k_enc, AES.MODE_CBC, iv).decrypt(enc).rstrip(b"\x00")
     if not plain.endswith(b"\x80"):
         raise KeyProvisionError("GetCardUID response padding is invalid")
-    return plain[:-1]
+    uid = plain[:-1]
+    if len(uid) != 7:
+        raise KeyProvisionError(f"GetCardUID returned {len(uid)} bytes; NTAG 424 DNA UIDs "
+                                "are 7 bytes")
+    return uid
 
 
 # --- Originality signature -------------------------------------------------------

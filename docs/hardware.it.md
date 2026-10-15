@@ -142,9 +142,13 @@ would write  : NDEF template via ISOUpdateBinary
 would change : file settings (auth with key 0, CommMode.Full)
 ```
 
-**2. Provisioning** (scrive; `--yes` al posto di `--dry-run`). Il modello da
-122 byte è passato con una sola ISOUpdateBinary, cioè con il chaining ISO-DEP
-del Chameleon Ultra (i cui frame sono limitati a 62 byte):
+**2. Provisioning** (scrive; `--yes` al posto di `--dry-run`). In questa prova
+il modello da 122 byte è passato con una sola ISOUpdateBinary, cioè con il
+chaining ISO-DEP del Chameleon Ultra (i cui frame sono limitati a 62 byte), e
+questo ha validato il chaining su hardware. Dalla #27 il modello viene scritto
+in pezzi ISOUpdateBinary da 48 byte che stanno ciascuno in un frame, quindi
+ogni pezzo è scritto in modo atomico; questa suddivisione va ancora vista sul
+chip alla prossima scrittura del modello:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)
