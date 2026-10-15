@@ -210,6 +210,11 @@ class ChameleonTransport(IsoDepTransport):
         self._link = link
         self.tag: Tag14a | None = None
 
+    @property
+    def anticollision_uid(self) -> bytes | None:
+        """UID the tag gave during anticollision, for cross-checks."""
+        return None if self.tag is None else self.tag.uid
+
     @classmethod
     def open(cls, port: str) -> "ChameleonTransport":
         """Connect to the device on `port` and select the tag (RATS included)."""

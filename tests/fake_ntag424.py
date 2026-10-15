@@ -5,8 +5,12 @@ Test-only model of the NTAG 424 DNA PICC side, enough to exercise provisioning:
   (PICCData, SDMENCFileData, SDMMAC over the dynamic MAC input),
   ISOUpdateBinary and WriteData under the file's access rights,
   GetFileSettings (plain), AuthenticateEV2First, ChangeFileSettings and
-  ChangeKey (both cases) in CommMode.Full, GetKeyVersion (MAC) and
-  GetCardUID (Full, encrypted response).
+  ChangeKey (both cases) in CommMode.Full, GetKeyVersion (MAC),
+  GetCardUID (Full, encrypted response) and Read_Sig (plain, unauthenticated).
+
+The originality signature is made with a test key (`TEST_ORIGINALITY_KEY` is
+its public half) by a small affine secp224r1 implementation written here,
+independent of the pycryptodome point arithmetic the verifier uses.
 
 It reuses Sphragis' own primitives for SDM (compute_sdmmac) and file settings
 parsing, but implements the PICC half of EV2 independently so that the
@@ -25,6 +29,58 @@ from sphragis.sdmenc import encrypt_file_data
 from sphragis.sdmconfig import FACTORY_ACCESS, KEY_FREE, FileSettings, parse_file_settings
 
 ZERO_IV = bytes(16)
+
+# --- secp224r1, affine coordinates (test signer only) ---------------------------
+_P = 2**224 - 2**96 + 1
+_A = _P - 3
+_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF16A2E0B8F03E13DD29455C5C2A3D
+_G = (0xB70E0CBD6BB4BF7F321390B94A03C1D356C21122343280D6115C1D21,
+      0xBD376388B5F723FB4C22DFE6CD4375A05A07476444D5819985007E34)
+
+
+def _ec_add(p1, p2):
+    if p1 is None:
+        return p2
+    if p2 is None:
+        return p1
+    (x1, y1), (x2, y2) = p1, p2
+    if x1 == x2 and (y1 + y2) % _P == 0:
+        return None
+    if p1 == p2:
+        lam = (3 * x1 * x1 + _A) * pow(2 * y1, -1, _P) % _P
+    else:
+        lam = (y2 - y1) * pow(x2 - x1, -1, _P) % _P
+    x3 = (lam * lam - x1 - x2) % _P
+    return x3, (lam * (x1 - x3) - y1) % _P
+
+
+def _ec_mul(k, point):
+    result = None
+    while k:
+        if k & 1:
+            result = _ec_add(result, point)
+        point = _ec_add(point, point)
+        k >>= 1
+    return result
+
+
+_TEST_D = int.from_bytes(bytes.fromhex("5A17" * 14), "big") % _N
+_TEST_Q = _ec_mul(_TEST_D, _G)
+TEST_ORIGINALITY_KEY = (b"\x04" + _TEST_Q[0].to_bytes(28, "big")
+                        + _TEST_Q[1].to_bytes(28, "big"))
+
+
+def sign_uid(uid, d=_TEST_D):
+    """ECDSA over the raw UID (no hash), as the NXP originality signature."""
+    e = int.from_bytes(uid, "big")
+    while True:
+        k = int.from_bytes(os.urandom(32), "big") % _N
+        if not k:
+            continue
+        r = _ec_mul(k, _G)[0] % _N
+        s = pow(k, -1, _N) * (e + r * d) % _N
+        if r and s:
+            return r.to_bytes(28, "big") + s.to_bytes(28, "big")
 
 
 def _cmac(key, msg):
@@ -47,6 +103,7 @@ class FakeNtag424:
         self.current = None
         self.snapshot = None
         self._auth = None       # (key_no, rnd_b) during part 1
+        self.signature = sign_uid(self.uid)
         self.session = None     # dict(ti, k_enc, k_mac, ctr)
 
     # -- transport interface -------------------------------------------------
@@ -144,6 +201,10 @@ class FakeNtag424:
                 k_mac=_cmac(key, bytes.fromhex("5AA500010080") + tail))
             resp = ti + rnd_a[1:] + rnd_a[:1] + bytes(12)
             return AES.new(key, AES.MODE_CBC, ZERO_IV).encrypt(resp) + b"\x91\x00"
+        if ins == 0x3C:
+            if data != b"\x00" or self.session:
+                return b"\x91\x7E"        # only the plain, unauthenticated form is modelled
+            return self.signature + b"\x91\x90"     # as on silicon
         if ins == 0x5F:
             return self._change_file_settings(data)
         if ins == 0x8D:

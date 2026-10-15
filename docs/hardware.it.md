@@ -235,12 +235,19 @@ Poi, su una tag già nel layout SUN:
 
 ```bash
 python tools/rekey.py --reader chameleon --port /dev/ttyACM0 \
-    --secrets-dir ~/.sphragis/keys --context DEMO --dry-run       # piano, sola lettura
+    --secrets-dir ~/.sphragis/keys --inventory ~/.sphragis/inventory.db \
+    --context DEMO --dry-run                                       # piano, sola lettura
 python tools/rekey.py ... --yes                                  # cambia le chiavi
 python tools/tap_verify.py --reader chameleon --port /dev/ttyACM0 \
     --secrets-dir ~/.sphragis/keys --context DEMO --taps 2         # chiavi lato server
 python tools/rekey.py ... --to-factory --yes                     # di nuovo chiavi zero
 ```
+
+Il dry run legge già la firma di originalità (Read_Sig, sola lettura) e stampa
+`originality  : NXP signature verifies for this UID`; quella riga su una tag
+autentica è la verifica su hardware del codice della firma. `--yes` senza
+`--uid` chiede di digitare l'UID mostrato. Tieni il file d'inventario accanto
+ai segreti e fanne il backup insieme a loro.
 
 Dopo il cambio, `tools/provision.py` vuole gli stessi `--secrets-dir` e
 `--context`: modificare le impostazioni SDM o scrivere un file NDEF bloccato

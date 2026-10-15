@@ -16,22 +16,31 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fake_ntag424 import FakeNtag424  # noqa: E402
+from fake_ntag424 import TEST_ORIGINALITY_KEY, FakeNtag424, sign_uid  # noqa: E402
 from sphragis import EncFileVerifier, StaticKeys, Verdict, Verifier  # noqa: E402
+from sphragis.apdu import ApduError  # noqa: E402
 from sphragis.counterstore import CounterStore  # noqa: E402
 from sphragis.diversify import DiversifiedKeys  # noqa: E402
 from sphragis.ev2 import Session  # noqa: E402
 from sphragis.keyprov import (  # noqa: E402
     DiversifiedTagKeys,
     FactoryKeys,
+    INVENTORY_FACTORY,
+    INVENTORY_KEYED,
+    INVENTORY_KEYING,
+    NXP_NTAG424_ORIGINALITY_KEY,
     KeyProvisionError,
+    MemoryKeyInventory,
+    SqliteKeyInventory,
     TagKeys,
     change_key,
     crc32nk,
     current_tag_keys,
     get_card_uid,
     key_check_value,
+    read_signature,
     rekey_tag,
+    verify_originality,
 )
 from sphragis.ndef import read_uri  # noqa: E402
 from sphragis.provision import provision_tag  # noqa: E402
@@ -140,6 +149,17 @@ def test_scheme_from_secrets():
 
 # --- Flow against the fake PICC --------------------------------------------------
 
+def _inventory(tag):
+    """One inventory per physical (fake) tag, shared across runs on it."""
+    return vars(getattr(tag, "tag", tag)).setdefault("_inventory", MemoryKeyInventory())
+
+
+def _rekey(tag, target, known=(), **kwargs):
+    kwargs.setdefault("originality_key", TEST_ORIGINALITY_KEY)
+    kwargs.setdefault("inventory", _inventory(tag))
+    return rekey_tag(tag, target, known, **kwargs)
+
+
 def _sun_tag(uid=UID):
     tag = FakeNtag424(uid=uid)
     provision_tag(tag, BASE)
@@ -148,7 +168,7 @@ def _sun_tag(uid=UID):
 
 def test_rekey_from_factory_and_verify_taps():
     tag, scheme = _sun_tag(), _scheme()
-    report = rekey_tag(tag, scheme)
+    report = _rekey(tag, scheme)
     assert report.verified and report.changed == [1, 2, 3, 4, 0]
     assert tag.keys == list(scheme.keys_for(UID).keys)
     assert tag.key_versions == [0x01] * 5
@@ -162,23 +182,23 @@ def test_rekey_from_factory_and_verify_taps():
 
 def test_dry_run_changes_nothing():
     tag = _sun_tag()
-    report = rekey_tag(tag, _scheme(), dry_run=True)
+    report = _rekey(tag, _scheme(), dry_run=True)
     assert report.planned == [1, 2, 3, 4, 0] and not report.changed
     assert tag.key_changes == 0 and tag.keys == [ZERO] * 5
 
 
 def test_rekey_is_idempotent():
     tag, scheme = _sun_tag(), _scheme()
-    rekey_tag(tag, scheme)
+    _rekey(tag, scheme)
     changes = tag.key_changes
-    again = rekey_tag(tag, scheme)
+    again = _rekey(tag, scheme)
     assert again.already_done and again.verified and tag.key_changes == changes
 
 
 def test_back_to_factory():
     tag, scheme = _sun_tag(), _scheme()
-    rekey_tag(tag, scheme)
-    report = rekey_tag(tag, FactoryKeys(), known=[scheme])
+    _rekey(tag, scheme)
+    report = _rekey(tag, FactoryKeys(), known=[scheme])
     assert report.verified and tag.keys == [ZERO] * 5 and tag.key_versions == [0] * 5
 
 
@@ -200,9 +220,9 @@ class _CutAfter:
 def test_interrupted_rekey_resumes(cut):
     tag, scheme = _sun_tag(), _scheme()
     with pytest.raises(ConnectionError):
-        rekey_tag(_CutAfter(tag, cut), scheme)
+        _rekey(_CutAfter(tag, cut), scheme)
     assert tag.key_versions[0] == 0 and sum(tag.key_versions) == cut
-    report = rekey_tag(tag, scheme)
+    report = _rekey(tag, scheme)
     assert report.verified and len(report.changed) == 5 - cut
     assert tag.keys == list(scheme.keys_for(UID).keys)
 
@@ -212,10 +232,10 @@ def test_interrupted_reset_resumes(cut):
     # cut=1 leaves MetaRead diversified but FileRead factory: the UID must
     # still come from a tap verified under mixed slot schemes.
     tag, scheme = _sun_tag(), _scheme()
-    rekey_tag(tag, scheme)
+    _rekey(tag, scheme)
     with pytest.raises(ConnectionError):
-        rekey_tag(_CutAfter(tag, cut), FactoryKeys(), known=[scheme])
-    report = rekey_tag(tag, FactoryKeys(), known=[scheme])
+        _rekey(_CutAfter(tag, cut), FactoryKeys(), known=[scheme])
+    report = _rekey(tag, FactoryKeys(), known=[scheme])
     assert report.verified and tag.keys == [ZERO] * 5
 
 
@@ -233,7 +253,7 @@ _WrongVersionTag._change_key_real = FakeNtag424._change_key
 
 def test_verification_checks_the_stored_versions():
     tag = _WrongVersionTag(uid=UID)
-    report = rekey_tag(tag, _scheme())
+    report = _rekey(tag, _scheme())
     assert report.changed == [1, 2, 3, 4, 0] and not report.verified
 
 
@@ -241,41 +261,41 @@ def test_unknown_key_version_stops_before_writing():
     tag = _sun_tag()
     tag.key_versions[3] = 0x42
     with pytest.raises(KeyProvisionError, match="slot 3"):
-        rekey_tag(tag, _scheme())
+        _rekey(tag, _scheme())
     assert tag.key_changes == 0
 
 
 def test_unknown_slot0_key_is_refused():
     tag = FakeNtag424(uid=UID, keys=[os.urandom(16)] + [ZERO] * 4)
     with pytest.raises(KeyProvisionError, match="slot 0"):
-        rekey_tag(tag, _scheme())
+        _rekey(tag, _scheme())
     assert tag.key_changes == 0
 
 
 def test_expected_uid_mismatch_is_refused():
     tag = _sun_tag()
     with pytest.raises(KeyProvisionError, match="differs"):
-        rekey_tag(tag, _scheme(), uid=H("04FFFFFFFFFFFF"))
+        _rekey(tag, _scheme(), uid=H("04FFFFFFFFFFFF"))
     assert tag.key_changes == 0
 
 
 def test_tag_without_sdm_needs_the_uid_once_keyed():
     tag, scheme = FakeNtag424(uid=UID), _scheme()      # factory, no SUN template
-    assert rekey_tag(tag, scheme).verified              # UID via GetCardUID
+    assert _rekey(tag, scheme).verified              # UID via GetCardUID
     with pytest.raises(KeyProvisionError, match="pass it"):
-        rekey_tag(tag, FactoryKeys(), known=[scheme])   # no tap to read a UID from
-    assert rekey_tag(tag, FactoryKeys(), known=[scheme], uid=UID).verified
+        _rekey(tag, FactoryKeys(), known=[scheme])   # no tap to read a UID from
+    assert _rekey(tag, FactoryKeys(), known=[scheme], uid=UID).verified
 
 
 def test_versions_must_identify_schemes():
     with pytest.raises(ValueError):
-        rekey_tag(_sun_tag(), _scheme(), known=[_scheme(context=b"OTHER")])
+        _rekey(_sun_tag(), _scheme(), known=[_scheme(context=b"OTHER")])
 
 
 def test_current_tag_keys():
     tag, scheme = _sun_tag(), _scheme()
     assert current_tag_keys(tag, [scheme]) == FactoryKeys().keys_for(UID)
-    rekey_tag(tag, scheme)
+    _rekey(tag, scheme)
     assert current_tag_keys(tag, [scheme]) == scheme.keys_for(UID)
     tag.key_versions[4] = 0x00                          # half-done run
     with pytest.raises(KeyProvisionError, match="different schemes"):
@@ -284,7 +304,7 @@ def test_current_tag_keys():
 
 def test_provisioning_after_rekey_uses_the_real_keys():
     tag, scheme = _sun_tag(), _scheme()
-    rekey_tag(tag, scheme)
+    _rekey(tag, scheme)
     keys = current_tag_keys(tag, [scheme])
     data = b"0123456789ABCDEF"
     # ChangeFileSettings and the write lock now need the diversified slot 0.
@@ -297,6 +317,201 @@ def test_provisioning_after_rekey_uses_the_real_keys():
     assert r.ok and r.file_data == b"FEDCBA9876543210"
     with pytest.raises(Exception):                      # factory keys no longer work
         provision_tag(tag, BASE)
+
+
+# --- Originality signature -------------------------------------------------------
+
+def test_nxp_originality_key_is_a_p224_point():
+    from Crypto.PublicKey import ECC
+    key = NXP_NTAG424_ORIGINALITY_KEY
+    assert len(key) == 57 and key[0] == 0x04
+    ECC.EccPoint(int.from_bytes(key[1:29], "big"), int.from_bytes(key[29:], "big"),
+                 curve="P-224")                         # raises if off the curve
+
+
+# Read_Sig of three NTAG 424 DNA tags (Chameleon Ultra, read-only).
+PHYSICAL_SIGNATURES = {
+    H("04084582161690"): H("B7392FB84163BB23FB7CCEDCD5F7A9A7DD4CF60697F7350062ED9739"
+                           "B4964E729C32DC58923720DBF91E1EDDABE10E4D96ECAE52F62050CB"),
+    H("04801A82161690"): H("A833A802FE2412C4BEDEFBDEC7E66D0808864AC973ABDC3638C9593C"
+                           "BED002E3A170B3B001F1BAD9E86067545D7986572273CD2EB1E1C9DD"),
+    H("04341A82161690"): H("5C03AC92B0E7644C2842F0E9CBA2A8A728A1DE260266D7D911AB24A2"
+                           "7E802E89BCA6377ED5700125DCA2349C7B9C1D77224EEB40D594D861"),
+}
+
+
+@pytest.mark.parametrize("uid", list(PHYSICAL_SIGNATURES))
+def test_physical_tag_signatures_verify_under_the_nxp_key(uid):
+    assert verify_originality(uid, PHYSICAL_SIGNATURES[uid])
+    others = [u for u in PHYSICAL_SIGNATURES if u != uid]
+    assert not any(verify_originality(o, PHYSICAL_SIGNATURES[uid]) for o in others)
+
+
+def test_originality_signature_verifies_only_for_its_uid():
+    sig = sign_uid(UID)
+    assert verify_originality(UID, sig, TEST_ORIGINALITY_KEY)
+    assert not verify_originality(H("04112233445567"), sig, TEST_ORIGINALITY_KEY)
+    assert not verify_originality(UID, sig)             # under the NXP key
+    tampered = bytearray(sig)
+    tampered[40] ^= 1
+    assert not verify_originality(UID, bytes(tampered), TEST_ORIGINALITY_KEY)
+
+
+@pytest.mark.parametrize("sig", [bytes(56), b"\xff" * 56, bytes(55)])
+def test_originality_rejects_malformed_signatures(sig):
+    assert not verify_originality(UID, sig, TEST_ORIGINALITY_KEY)
+
+
+def test_originality_rejects_a_key_off_the_curve():
+    bad = TEST_ORIGINALITY_KEY[:-1] + bytes([TEST_ORIGINALITY_KEY[-1] ^ 1])
+    assert not verify_originality(UID, sign_uid(UID), bad)
+
+
+def test_read_signature_apdu():
+    sig = sign_uid(UID)
+    t = ScriptedTransport([(H("903C0000010000"), sig + H("9100"))])
+    assert read_signature(t) == sig and t.exhausted
+    silicon = ScriptedTransport([(H("903C0000010000"), sig + H("9190"))])
+    assert read_signature(silicon) == sig                 # status seen on real tags
+    with pytest.raises(ApduError):
+        read_signature(ScriptedTransport([(H("903C0000010000"), H("911C"))]))
+    chained = ScriptedTransport([(H("903C0000010000"), sig[:40] + H("91AF")),
+                                 (H("90AF000000"), sig[40:] + H("9100"))])
+    assert read_signature(chained) == sig
+    with pytest.raises(KeyProvisionError):
+        read_signature(ScriptedTransport([(H("903C0000010000"), sig[:50] + H("9100"))]))
+
+
+# --- Identity checks before keys leave the station (issue: rekey to an emulator) ---
+
+def _clone_of(tag):
+    """A factory-state device answering with the UID and signature of `tag`."""
+    clone = FakeNtag424(uid=tag.uid)
+    clone.signature = tag.signature                    # the signature is static
+    provision_tag(clone, BASE)
+    return clone
+
+
+def test_clone_of_a_keyed_uid_receives_no_key():
+    genuine, scheme = _sun_tag(), _scheme()
+    inventory = MemoryKeyInventory()
+    assert _rekey(genuine, scheme, inventory=inventory).verified
+    assert inventory.state(UID) == INVENTORY_KEYED
+    clone = _clone_of(genuine)
+    with pytest.raises(KeyProvisionError, match="already in the inventory"):
+        _rekey(clone, scheme, inventory=inventory)
+    assert clone.key_changes == 0 and clone.keys == [ZERO] * 5
+
+
+def test_clone_with_a_made_up_uid_fails_the_signature():
+    fake = FakeNtag424(uid=H("04AABBCCDDEEFF"))
+    fake.signature = sign_uid(UID)                     # a real signature, other UID
+    with pytest.raises(KeyProvisionError, match="originality"):
+        _rekey(fake, _scheme())
+    assert fake.key_changes == 0
+
+
+def test_tag_without_read_sig_is_refused():
+    class NoSig(FakeNtag424):
+        def _native(self, ins, data):
+            return b"\x91\x1C" if ins == 0x3C else super()._native(ins, data)
+
+    tag = NoSig(uid=UID)
+    with pytest.raises(ApduError):
+        _rekey(tag, _scheme())
+    assert tag.key_changes == 0
+    assert _rekey(tag, _scheme(), originality_key=None).verified   # explicit opt-out
+
+
+def test_claimed_keys_must_authenticate():
+    # A clone claiming slot 1 is already keyed (version 01h) cannot prove it.
+    genuine = _sun_tag()
+    _rekey(genuine, _scheme())
+    clone = _clone_of(genuine)
+    clone.key_versions[1] = 0x01
+    with pytest.raises(KeyProvisionError, match="slot 1 claims"):
+        _rekey(clone, _scheme(), inventory=_inventory(genuine))
+    assert clone.key_changes == 0
+
+
+def test_shared_meta_key_is_no_proof_of_identity():
+    # Slot 2 holds the shared MetaRead key, which a reader-side leak exposes:
+    # a clone holding it there still proves nothing about its UID.
+    genuine, scheme = _sun_tag(), _scheme()
+    _rekey(genuine, scheme)
+    clone = _clone_of(genuine)
+    clone.keys[2], clone.key_versions[2] = scheme.meta_read_key, 0x01
+    with pytest.raises(KeyProvisionError, match="already in the inventory"):
+        _rekey(clone, scheme, inventory=_inventory(genuine))
+    assert clone.key_changes == 0
+
+
+def test_interrupted_run_is_resumed_on_proof_of_possession():
+    tag, scheme = _sun_tag(), _scheme()
+    with pytest.raises(ConnectionError):
+        _rekey(_CutAfter(tag, 1), scheme)
+    assert _inventory(tag).state(UID) == INVENTORY_KEYING
+    report = _rekey(tag, scheme)
+    assert report.proven == [1] and report.verified
+    assert _inventory(tag).state(UID) == INVENTORY_KEYED
+
+
+def test_known_uid_back_on_factory_keys():
+    tag, scheme = _sun_tag(), _scheme()
+    _rekey(tag, scheme)
+    _rekey(tag, FactoryKeys(), known=[scheme])          # reset by this tool: recorded
+    assert _inventory(tag).state(UID) == INVENTORY_FACTORY
+    assert _rekey(tag, scheme).verified                 # so keying again is fine
+
+    other = MemoryKeyInventory()                        # reset outside the tool
+    other.record(UID, INVENTORY_KEYED, 0x01)
+    fresh = _sun_tag()
+    with pytest.raises(KeyProvisionError):
+        _rekey(fresh, scheme, inventory=other)
+    report = _rekey(fresh, scheme, inventory=other, allow_known_uid=True)
+    assert report.verified and any("WARNING" in line for line in report.log)
+
+
+def test_anticollision_uid_must_match():
+    tag = _sun_tag()
+    tag.anticollision_uid = H("04000000000001")
+    with pytest.raises(KeyProvisionError, match="anticollision"):
+        _rekey(tag, _scheme())
+    assert tag.key_changes == 0
+    tag.anticollision_uid = UID
+    assert _rekey(tag, _scheme()).verified
+
+
+def test_operator_can_decline():
+    tag, seen = _sun_tag(), []
+
+    def confirm(report):
+        seen.append((report.uid, list(report.planned), report.signature_ok))
+        return False
+
+    report = _rekey(tag, _scheme(), confirm=confirm)
+    assert report.aborted and not report.changed and tag.key_changes == 0
+    assert seen == [(UID, [1, 2, 3, 4, 0], True)]
+    assert _inventory(tag).state(UID) is None           # nothing sent, nothing recorded
+
+
+def test_keying_needs_an_inventory():
+    tag = _sun_tag()
+    with pytest.raises(ValueError, match="inventory"):
+        rekey_tag(tag, _scheme(), originality_key=TEST_ORIGINALITY_KEY)
+    assert rekey_tag(tag, _scheme(), originality_key=TEST_ORIGINALITY_KEY,
+                     dry_run=True).planned
+
+
+def test_sqlite_inventory(tmp_path):
+    path = str(tmp_path / "inventory.db")
+    first = SqliteKeyInventory(path)
+    assert first.state(UID) is None
+    first.record(UID, INVENTORY_KEYING, 1)
+    first.record(UID, INVENTORY_KEYED, 1)
+    assert SqliteKeyInventory(path).state(UID) == INVENTORY_KEYED
+    with pytest.raises(ValueError):
+        first.record(UID, "whatever", 1)
 
 
 # --- tools/rekey.py ----------------------------------------------------------------
@@ -332,17 +547,52 @@ class _Wrapped:
         pass
 
 
-def test_rekey_tool(tmp_path, capsys):
-    tag, tool = _sun_tag(), _tool()
+def _tool_args(tmp_path, *extra):
+    secrets = tmp_path / "keys"
+    secrets.mkdir(exist_ok=True)
+    return ["--reader", "pn532", "--secrets-dir", _secrets_dir(secrets),
+            "--inventory", str(tmp_path / "inventory.db"), "--context", "DEMO", *extra]
+
+
+def _tool_on(tag):
+    tool = _tool()
     tool.reader_factory = lambda args: (lambda: _Wrapped(tag))
-    base = ["--reader", "pn532", "--secrets-dir", _secrets_dir(tmp_path), "--context", "DEMO"]
-    assert tool.main(base + ["--dry-run"]) == 0 and tag.key_changes == 0
-    assert "would change" in capsys.readouterr().out
-    assert tool.main(base + ["--yes"]) == 0
+    tool.ORIGINALITY_KEY = TEST_ORIGINALITY_KEY
+    return tool
+
+
+def test_rekey_tool(tmp_path, capsys):
+    tag = _sun_tag()
+    tool = _tool_on(tag)
+    assert tool.main(_tool_args(tmp_path, "--dry-run")) == 0 and tag.key_changes == 0
+    out = capsys.readouterr().out
+    assert "would change" in out and "NXP signature verifies" in out
+    assert tool.main(_tool_args(tmp_path, "--yes", "--uid", UID.hex())) == 0
     assert "keys changed and verified" in capsys.readouterr().out
     assert tag.keys == list(_scheme().keys_for(UID).keys)
-    assert tool.main(base + ["--to-factory", "--yes"]) == 0
+    assert SqliteKeyInventory(str(tmp_path / "inventory.db")).state(UID) == INVENTORY_KEYED
+    assert tool.main(_tool_args(tmp_path, "--to-factory", "--yes", "--uid", UID.hex())) == 0
     assert tag.keys == [ZERO] * 5
+    assert SqliteKeyInventory(str(tmp_path / "inventory.db")).state(UID) == INVENTORY_FACTORY
+
+
+def test_rekey_tool_asks_to_type_the_uid(tmp_path, monkeypatch, capsys):
+    tag = _sun_tag()
+    tool = _tool_on(tag)
+    monkeypatch.setattr("builtins.input", lambda prompt: "04 11 22")
+    assert tool.main(_tool_args(tmp_path, "--yes")) == 1
+    assert "aborted" in capsys.readouterr().out and tag.key_changes == 0
+    monkeypatch.setattr("builtins.input", lambda prompt: UID.hex().lower())
+    assert tool.main(_tool_args(tmp_path, "--yes")) == 0
+    assert tag.key_versions == [0x01] * 5
+
+
+def test_rekey_tool_refuses_a_clone_of_a_keyed_uid(tmp_path, capsys):
+    genuine = _sun_tag()
+    assert _tool_on(genuine).main(_tool_args(tmp_path, "--yes", "--uid", UID.hex())) == 0
+    clone = _clone_of(genuine)
+    assert _tool_on(clone).main(_tool_args(tmp_path, "--yes", "--uid", UID.hex())) == 2
+    assert "REFUSED" in capsys.readouterr().out and clone.key_changes == 0
 
 
 @pytest.mark.parametrize("extra", [
@@ -350,8 +600,10 @@ def test_rekey_tool(tmp_path, capsys):
     ["--dry-run", "--yes"],
     ["--yes", "--uid", "zz"],
 ])
+# (and --inventory is mandatory: see test_rekey_tool_needs_an_inventory)
 def test_rekey_tool_refuses_unsafe_invocations(tmp_path, extra):
-    argv = ["--reader", "pn532", "--secrets-dir", _secrets_dir(tmp_path), *extra]
+    argv = ["--reader", "pn532", "--secrets-dir", _secrets_dir(tmp_path),
+            "--inventory", str(tmp_path / "inv.db"), *extra]
     with pytest.raises(SystemExit):
         _tool().main(argv)
 
@@ -359,4 +611,10 @@ def test_rekey_tool_refuses_unsafe_invocations(tmp_path, extra):
 def test_rekey_tool_refuses_emulator(tmp_path):
     with pytest.raises(SystemExit):
         _tool().main(["--reader", "emulator", "--secrets-dir", _secrets_dir(tmp_path),
+                      "--inventory", str(tmp_path / "inv.db"), "--dry-run"])
+
+
+def test_rekey_tool_needs_an_inventory(tmp_path):
+    with pytest.raises(SystemExit):
+        _tool().main(["--reader", "pn532", "--secrets-dir", _secrets_dir(tmp_path),
                       "--dry-run"])

@@ -63,6 +63,16 @@ freschezza.
   (vedi [gestione chiavi](docs/key-management.it.md#scrivere-le-chiavi-sulle-tag);
   non ancora validato su hardware). Chi possiede `master_admin` può
   riconfigurare tutti i tag: deve stare solo sulla postazione di provisioning.
+- **Impersonificazione al cambio chiavi.** Una tag riceve le prime chiavi con
+  la chiave di fabbrica pubblica, quindi un dispositivo che si finge una tag
+  di fabbrica riceverebbe le chiavi dell'UID che dichiara. `rekey_tag`
+  verifica la firma di originalità NXP, rifiuta un UID già nel suo inventario
+  che mostra chiavi di fabbrica e richiede che le chiavi dichiarate si
+  autentichino (vedi
+  [cambiare le chiavi in sicurezza](docs/key-management.it.md#cambiare-le-chiavi-in-sicurezza)).
+  Una cattura radio passiva di un cambio chiavi da fabbrica ne rivela comunque
+  le chiavi: cambia le chiavi in un luogo schermato, con una fornitura
+  controllata.
 - **Esaurimento del contatore**: `SDMReadCtr` è a 24 bit. La gestione del
   rollover è una questione di deployment e non è modellata qui.
 - `TagAnalyzer` mantiene un floor anti-replay persistente (`CounterBackend`)
