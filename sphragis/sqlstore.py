@@ -32,11 +32,23 @@ import sqlite3
 import threading
 import time
 
+from .counterstore import TapRecord
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS counters (
     uid         TEXT PRIMARY KEY,
     counter     INTEGER NOT NULL,
     updated_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tap_counters (
+    uid         TEXT NOT NULL,
+    counter     INTEGER NOT NULL,
+    first_seen  REAL NOT NULL,
+    PRIMARY KEY (uid, counter)
+);
+CREATE TABLE IF NOT EXISTS tap_ledgers (
+    uid         TEXT PRIMARY KEY,
+    since       INTEGER
 );
 """
 
@@ -99,6 +111,44 @@ class SqliteCounterStore:
                 accepted = False
             conn.execute("COMMIT")
             return accepted
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def seen(self, uid_hex: str, counter: int) -> bool:
+        return self._connection().execute(
+            "SELECT 1 FROM tap_counters WHERE uid = ? AND counter = ?",
+            (uid_hex.upper(), counter),
+        ).fetchone() is not None
+
+    def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
+        """
+        Tap ledger (`counterstore.TapLedger`): record `counter` for the UID and
+        advance the floor if it is new and higher, in one IMMEDIATE transaction.
+        """
+        uid_hex = uid_hex.upper()
+        now = time.time()
+        conn = self._connection()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT counter FROM counters WHERE uid = ?", (uid_hex,)).fetchone()
+            floor = None if row is None else int(row[0])
+            conn.execute("INSERT OR IGNORE INTO tap_ledgers (uid, since) VALUES (?, ?)",
+                         (uid_hex, floor))
+            since = conn.execute("SELECT since FROM tap_ledgers WHERE uid = ?",
+                                 (uid_hex,)).fetchone()[0]
+            new = conn.execute(
+                "INSERT OR IGNORE INTO tap_counters (uid, counter, first_seen) "
+                "VALUES (?, ?, ?)", (uid_hex, counter, now)).rowcount == 1
+            record = TapRecord(counter, new, floor, since)
+            if record.fresh:
+                conn.execute(
+                    "INSERT INTO counters (uid, counter, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT (uid) DO UPDATE SET counter = excluded.counter, "
+                    "updated_at = excluded.updated_at", (uid_hex, counter, now))
+            conn.execute("COMMIT")
+            return record
         except Exception:
             conn.execute("ROLLBACK")
             raise

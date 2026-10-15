@@ -44,13 +44,20 @@ Postgres:
   RETURNING c.counter;
   ```
 
+  It is also the analyzer's tap ledger: `record_tap` adds the counter to
+  `sphragis_tap_counters` and advances the floor in one transaction,
+  serialized per UID with an advisory lock (see
+  [clone detection](clone-detection.md#the-tap-ledger)).
+
 - **`PostgresObservationStore`**: `observe` reads the prior history, appends
   the tap and trims it in one transaction, serialized per UID with a
   transaction-scoped advisory lock.
 - **`PostgresAlertSink`**: the alert audit trail, shared by every replica.
 
-Tables (`sphragis_counters`, `sphragis_observations`, `sphragis_alerts`) are
-created on first use. Each thread holds its own connection; a broken one is
+Tables (`sphragis_counters`, `sphragis_tap_counters`, `sphragis_tap_ledgers`,
+`sphragis_observations`, `sphragis_alerts`) are created on first use. The tap
+ledger grows by one small row per accepted tap; existing floors keep working
+(counters below the floor a UID had when its ledger began read as `REPLAY`). Each thread holds its own connection; a broken one is
 replaced on the next call and errors propagate, so a verification fails closed
 rather than skipping the floor.
 

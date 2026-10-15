@@ -19,6 +19,8 @@ Heuristics
                        emitting its own, lower counter stream (key-cloned tag).
 - impossible_velocity: two reads from different readers closer in time than any
                        physical object could travel -> two tags in two places.
+                       Every authenticated reader observation inside the window
+                       counts, so an anonymous tap in between hides nothing.
 - large_counter_gap  : an unusually large jump (weak, informational).
 
 The genuine tag can only ever move the counter strictly upward from one place,
@@ -128,29 +130,58 @@ class CloneDetector:
                 f"a second device is emitting its own counter stream (clone)",
             ))
 
-        # --- impossible velocity: different readers, too little time between ---
-        if reader_id is not None and hist:
-            last = hist[-1]
-            if (last.reader_id is not None
-                    and last.reader_id != reader_id
-                    and (now - last.timestamp) < self.min_travel_seconds):
-                dt = now - last.timestamp
-                signals.append(Signal(
-                    "impossible_velocity", 60,
-                    f"seen at reader '{last.reader_id}' then '{reader_id}' "
-                    f"{dt:.1f}s apart (< {self.min_travel_seconds:.0f}s): "
-                    f"one tag cannot be in two places",
-                ))
+        signals += self._velocity_and_gap(hist, counter, now, reader_id, max_seen)
+        return self._aggregate(signals)
+
+    def assess_fresh(
+        self,
+        uid_hex: str,
+        counter: int,
+        timestamp: float | None = None,
+        reader_id: str | None = None,
+        floor_before: int | None = None,
+    ) -> DetectionResult:
+        """
+        Score a tap the caller has already established as fresh (a new counter
+        above the persistent floor `floor_before`), and record it in the
+        history. Replays and regressions are decided by the caller's tap
+        ledger, so only velocity and counter gap are scored here, and the
+        history only ever holds fresh taps.
+        """
+        uid_hex = uid_hex.upper()
+        now = time.time() if timestamp is None else timestamp
+        hist = self._store.observe(
+            uid_hex, Observation(counter, now, reader_id), self.history_limit
+        )
+        return self._aggregate(
+            self._velocity_and_gap(hist, counter, now, reader_id, floor_before))
+
+    def _velocity_and_gap(self, hist: list[Observation], counter: int, now: float,
+                          reader_id: str | None, reference: int | None) -> list[Signal]:
+        signals: list[Signal] = []
+        # --- impossible velocity: another reader, too little time ago ----------
+        if reader_id is not None:
+            for prior in reversed(hist):
+                dt = now - prior.timestamp
+                if dt >= self.min_travel_seconds:
+                    break
+                if prior.reader_id is not None and prior.reader_id != reader_id:
+                    signals.append(Signal(
+                        "impossible_velocity", 60,
+                        f"seen at reader '{prior.reader_id}' then '{reader_id}' "
+                        f"{dt:.1f}s apart (< {self.min_travel_seconds:.0f}s): "
+                        f"one tag cannot be in two places",
+                    ))
+                    break
 
         # --- large counter gap (weak / informational) -------------------------
-        if max_seen is not None and counter > max_seen + self.gap_threshold:
+        if reference is not None and counter > reference + self.gap_threshold:
             signals.append(Signal(
                 "large_counter_gap", 15,
-                f"counter jumped from {max_seen} to {counter} "
-                f"(+{counter - max_seen}); unusual but not conclusive",
+                f"counter jumped from {reference} to {counter} "
+                f"(+{counter - reference}); unusual but not conclusive",
             ))
-
-        return self._aggregate(signals)
+        return signals
 
     def _aggregate(self, signals: list[Signal]) -> DetectionResult:
         score = min(100, sum(s.weight for s in signals))
