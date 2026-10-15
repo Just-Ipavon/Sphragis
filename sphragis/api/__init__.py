@@ -11,7 +11,13 @@ from __future__ import annotations
 import logging
 from typing import Mapping
 
-from ..alerts import AlertSink, LogAlertSink, SqliteAlertSink, WebhookAlertSink
+from ..alerts import (
+    AlertSink,
+    BackgroundAlertSink,
+    LogAlertSink,
+    SqliteAlertSink,
+    WebhookAlertSink,
+)
 from ..analyzer import TagAnalyzer
 from ..detection import CloneDetector
 from ..logs import UidPseudonymizer, configure_logging
@@ -49,7 +55,9 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
 
     sinks: list[AlertSink] = [LogAlertSink(), audit]
     if settings.webhook_url:
-        sinks.append(WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook")))
+        # Off the request path: a slow incident endpoint never delays a tap.
+        sinks.append(BackgroundAlertSink(
+            WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook"))))
 
     pseudo = UidPseudonymizer(
         None if settings.log_uid == "plain" else secrets.get_key("log_pseudonym")
@@ -67,4 +75,5 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         reader_tokens=settings.reader_tokens,
         trusted_proxies=settings.trusted_proxies,
         throttle_retry_after=1.0 / settings.uid_rate,
+        max_body_bytes=settings.max_body_bytes,
     )

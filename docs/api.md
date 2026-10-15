@@ -9,11 +9,17 @@ verification, raises an alert on `CLONE_LIKELY`, and rate-limits requests.
 ```bash
 pip install "sphragis[api]"
 export SPHRAGIS_MASTER_FILE=<hex>  SPHRAGIS_META_READ=<hex>  SPHRAGIS_LOG_PSEUDONYM=<hex>
-uvicorn --factory sphragis.api:create_app_from_env --host 0.0.0.0 --port 8000
+uvicorn --factory sphragis.api:create_app_from_env --host 0.0.0.0 --port 8000 --no-access-log
 ```
 
 The core package still depends only on `pycryptodome`. FastAPI and uvicorn are
 pulled in by the `api` extra alone.
+
+**Access logs.** A tapped URL carries `picc_data` and `cmac`, and a tap that
+was never verified stays redeemable from wherever it is written down. The app
+strips the query string from uvicorn's access-log lines (`QueryRedactingFilter`
+on `uvicorn.access`); `--no-access-log` is stricter still. Configure any
+reverse proxy in front the same way (log the path, not the query).
 
 ## Architecture
 
@@ -115,9 +121,14 @@ There is one JSON line per verification on stdout, written with the stdlib
 | `WebhookAlertSink` | HTTPS POST, signed `X-Sphragis-Signature: sha256=HMAC(secret, ts + "." + body)` |
 
 The webhook receiver must verify the signature in constant time and reject
-stale `X-Sphragis-Timestamp` values. A failing sink is logged and skipped: it
-never breaks verification or the other sinks. The webhook is synchronous (2 s
-timeout, no retry), so keep the SQLite sink as the system of record.
+stale `X-Sphragis-Timestamp` values: `sphragis.alerts.verify_webhook(secret,
+timestamp, signature, body)` does both. A failing sink is logged and skipped:
+it never breaks verification or the other sinks. `create_app_from_env` runs
+the webhook on a background worker (`BackgroundAlertSink`, bounded queue), so a
+slow endpoint never delays a tap; delivery has a 2 s timeout and no retry,
+only a 2xx answer counts, and redirects are refused (they would replay the
+signed alert elsewhere). Keep the SQLite or Postgres sink as the system of
+record.
 
 ## Rate limiting
 
@@ -127,7 +138,13 @@ timeout, no retry), so keep the SQLite sink as the system of record.
   does not burn its counter value. Forged junk cannot drain a specific tag's
   budget.
 - `X-Forwarded-For` is honoured only when the direct peer is listed in
-  `SPHRAGIS_TRUSTED_PROXIES`. The client is then the right-most untrusted hop.
+  `SPHRAGIS_TRUSTED_PROXIES` (addresses or CIDR networks). Every header line
+  is read, in order, and the client is the right-most untrusted hop, so a
+  proxy that appends its own line (HAProxy `option forwardfor`) cannot be
+  outvoted by a line the client sent. IPv6 clients are limited per /64.
+- The per-IP limit and a body cap (`SPHRAGIS_MAX_BODY_BYTES`, 8 KiB) apply
+  before the request is parsed: oversized bodies get `413` without being read
+  in full, and invalid JSON counts against the limit like any other request.
 
 The `TokenBucketLimiter` works within a single process. With N replicas the
 effective limit is N times higher. For a global limit, implement the
@@ -153,14 +170,19 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_DB_URL` | none | `postgresql://` URL; replaces SQLite for multi-host (needs `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | empty | AN10922 diversification context |
 | `SPHRAGIS_READER_TOKENS` | none | `reader=sha256hex,…` |
-| `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs allowed to set `X-Forwarded-For` |
+| `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs or CIDRs allowed to set `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | per-IP bucket |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | per-tag bucket |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | impossible-velocity threshold |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classifications that raise an alert |
+| `SPHRAGIS_MAX_BODY_BYTES` | `8192` | largest accepted request body |
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` or `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | log level |
+
+Every value is validated at startup: rates, bursts and the travel time must
+be finite and positive, `SPHRAGIS_ALERT_ON` must name known classifications.
+A typo stops the service instead of silently disabling a limit or an alert.
 
 Secrets are read through a `SecretsBackend` (`EnvSecretsBackend` by default,
 which expects `SPHRAGIS_<NAME>` as hex): `master_file` and `meta_read` are
@@ -173,8 +195,8 @@ required when a webhook URL is set. To use a KMS, pass your own backend to
 - A `REPLAY` is also what a user sees after **reloading** the verification
   page: the URL was already used. The public message asks them to tap the tag
   again.
-- An attacker holding a captured, MAC-valid URL can replay it to use up a
-  tag's per-UID budget and delay real verifications. Each such replay is
-  itself logged as `REPLAY` (and alerted, if enabled).
+- Only counters above the floor are charged to a tag's per-UID budget, so
+  replaying a captured URL cannot throttle the genuine tag; someone holding
+  the tag can still spend it with fresh taps.
 - Public taps carry no location, so velocity detection needs authenticated
   readers.

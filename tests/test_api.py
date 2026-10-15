@@ -42,7 +42,8 @@ class ListSink:
         self.alerts.append(alert)
 
 
-def _rig(counter=0, ip_limiter=None, uid_limiter=None, **app_kw):
+def _rig(counter=0, ip_limiter=None, uid_limiter=None, peer=("testclient", 50000),
+         **app_kw):
     tag = EmulatedTag(uid=os.urandom(7), meta_read_key=os.urandom(16),
                       file_read_key=os.urandom(16), read_counter=counter)
     sink = ListSink()
@@ -51,7 +52,7 @@ def _rig(counter=0, ip_limiter=None, uid_limiter=None, **app_kw):
         alert_sinks=[sink], uid_limiter=uid_limiter,
     )
     app = create_app(service, ip_limiter=ip_limiter, reader_tokens=READERS, **app_kw)
-    return tag, TestClient(app), sink
+    return tag, TestClient(app, client=peer), sink
 
 
 def _path(url):
@@ -202,9 +203,10 @@ def test_forwarded_for_ignored_unless_peer_is_trusted_proxy():
     assert client.get("/t", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
     assert client.get("/t", headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 429
 
-    # TestClient's peer is "testclient"; trust it as a proxy.
+    # A trusted proxy in front of the API.
     limiter2 = TokenBucketLimiter(rate=0.01, burst=1)
-    tag, client, _ = _rig(ip_limiter=limiter2, trusted_proxies=frozenset({"testclient"}))
+    tag, client, _ = _rig(ip_limiter=limiter2, peer=("10.0.0.2", 50000),
+                          trusted_proxies=frozenset({"10.0.0.2"}))
     assert client.get("/t", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
     assert client.get("/t", headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 200
     # Left-most (client-controlled) hops are ignored: the right-most decides.
@@ -250,3 +252,129 @@ def test_create_app_from_env_end_to_end(tmp_path, monkeypatch):
     # The durable audit trail lives in the same database.
     stored = SqliteAlertSink(db).recent()
     assert [a.event_id for a in stored] == [body["event_id"]]
+
+
+# --- Client address, request guard, logs (#21, #22, #25) -----------------------
+
+def test_duplicate_forwarded_for_lines_cannot_mint_buckets():
+    # HAProxy-style proxies append their own X-Forwarded-For line: the
+    # attacker's line comes first and must not win.
+    from sphragis.api.app import client_address, parse_trusted_proxies
+    proxy = parse_trusted_proxies(["10.0.0.0/8"])
+    assert client_address("10.0.0.2", ["6.6.6.6", "1.1.1.1"], proxy) == "1.1.1.1"
+    assert client_address("10.0.0.2", ["6.6.6.6, 1.1.1.1", "10.0.0.9"], proxy) == "1.1.1.1"
+    assert client_address("10.0.0.2", ["not-an-ip"], proxy) == "10.0.0.2"
+    assert client_address("8.8.8.8", ["1.1.1.1"], proxy) == "8.8.8.8"   # untrusted peer
+
+
+def test_duplicate_forwarded_for_header_end_to_end():
+    limiter = TokenBucketLimiter(rate=0.01, burst=1)
+    tag, client, _ = _rig(ip_limiter=limiter, peer=("10.0.0.2", 50000),
+                          trusted_proxies=["10.0.0.0/8"])
+    headers = [("X-Forwarded-For", "6.6.6.1"), ("X-Forwarded-For", "1.1.1.1")]
+    assert client.get("/t", headers=headers).status_code == 200
+    headers = [("X-Forwarded-For", "6.6.6.2"), ("X-Forwarded-For", "1.1.1.1")]
+    assert client.get("/t", headers=headers).status_code == 429
+
+
+def test_ipv6_clients_share_a_bucket_per_64():
+    from sphragis.api.app import bucket_key, client_address
+    a = client_address("2001:db8:1:2::1", [], ())
+    b = client_address("2001:db8:1:2:ffff::9", [], ())
+    assert a == b == "2001:db8:1:2::/64"
+    assert client_address("2001:db8:1:3::1", [], ()) != a
+    assert client_address("::ffff:1.2.3.4", [], ()) == "1.2.3.4"     # IPv4-mapped
+    import ipaddress
+    assert bucket_key(ipaddress.ip_address("192.0.2.7")) == "192.0.2.7"
+
+
+def test_invalid_trusted_proxy_is_a_configuration_error():
+    with pytest.raises(ValueError, match="trusted proxy"):
+        _rig(trusted_proxies=["10.0.0.0/33"])
+
+
+def test_oversized_body_is_refused_before_parsing():
+    _, client, _ = _rig()
+    r = client.post("/v1/verify", content=b"{" + b" " * 9000 + b"}",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 413 and r.headers["cache-control"] == "no-store"
+
+    def chunks():                                   # no Content-Length: streamed
+        for _ in range(10):
+            yield b" " * 1024
+    r = client.post("/v1/verify", content=chunks(),
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+
+
+def test_invalid_json_counts_against_the_ip_limit():
+    limiter = TokenBucketLimiter(rate=0.01, burst=2)
+    _, client, _ = _rig(ip_limiter=limiter)
+    for _ in range(2):
+        assert client.post("/v1/verify", content=b"not json",
+                           headers={"Content-Type": "application/json"}).status_code == 422
+    r = client.post("/v1/verify", content=b"not json",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 429 and "retry-after" in r.headers
+
+
+def test_normal_body_still_reaches_the_endpoint():
+    tag, client, _ = _rig()
+    assert client.post("/v1/verify", json={"url": tag.tap()}).json()["verdict"] == "GENUINE"
+
+
+def test_access_log_lines_lose_the_query_string():
+    import logging
+    from sphragis.api.app import QueryRedactingFilter
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1,
+                               '%s - "%s %s HTTP/%s" %d',
+                               ("1.2.3.4:5", "GET", "/t?picc_data=AA&cmac=BB", "1.1", 200),
+                               None)
+    assert QueryRedactingFilter().filter(record)
+    assert "picc_data" not in record.getMessage() and "/t" in record.getMessage()
+    _rig()
+    assert any(isinstance(f, QueryRedactingFilter)
+               for f in logging.getLogger("uvicorn.access").filters)
+
+
+@pytest.mark.parametrize("name,value", [
+    ("IP_RATE", "nan"), ("IP_RATE", "-1"), ("UID_RATE", "0"), ("UID_RATE", "inf"),
+    ("IP_BURST", "0"), ("UID_BURST", "x"), ("MIN_TRAVEL_SECONDS", "nan"),
+    ("MIN_TRAVEL_SECONDS", "-5"), ("ALERT_ON", "CLONE_LIKLEY"), ("ALERT_ON", ","),
+    ("LOG_LEVEL", "VERBOSE"), ("TRUSTED_PROXIES", "10.0.0.0/40"),
+    ("MAX_BODY_BYTES", "0"),
+])
+def test_settings_refuse_values_that_would_disable_protections(name, value):
+    from sphragis.api.settings import ApiSettings
+    with pytest.raises(ValueError, match=name):
+        ApiSettings.from_env({"SPHRAGIS_" + name: value})
+
+
+def test_settings_accept_valid_values():
+    from sphragis.api.settings import ApiSettings
+    s = ApiSettings.from_env({"SPHRAGIS_ALERT_ON": "clone_likely,replay",
+                              "SPHRAGIS_TRUSTED_PROXIES": "10.0.0.0/8, 192.0.2.1",
+                              "SPHRAGIS_MAX_BODY_BYTES": "4096"})
+    assert s.alert_on == {"CLONE_LIKELY", "REPLAY"} and s.max_body_bytes == 4096
+
+
+def test_declared_oversized_body_is_refused_without_reading_it():
+    import asyncio
+    from sphragis.api.app import RequestGuard
+
+    async def app(scope, receive, send):           # must never be reached
+        raise AssertionError("app called")
+
+    async def receive():                           # must never be read
+        raise AssertionError("body read")
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    guard = RequestGuard(app, ip_limiter=None, trusted_proxies=(), max_body_bytes=8192)
+    scope = {"type": "http", "method": "POST", "path": "/v1/verify",
+             "headers": [(b"content-length", b"1000000000")], "client": ("1.2.3.4", 1)}
+    asyncio.run(guard(scope, receive, send))
+    assert sent[0]["status"] == 413

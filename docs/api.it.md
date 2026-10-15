@@ -9,11 +9,18 @@ verifica, genera un alert su `CLONE_LIKELY` e applica il rate limiting.
 ```bash
 pip install "sphragis[api]"
 export SPHRAGIS_MASTER_FILE=<hex>  SPHRAGIS_META_READ=<hex>  SPHRAGIS_LOG_PSEUDONYM=<hex>
-uvicorn --factory sphragis.api:create_app_from_env --host 0.0.0.0 --port 8000
+uvicorn --factory sphragis.api:create_app_from_env --host 0.0.0.0 --port 8000 --no-access-log
 ```
 
 Il pacchetto core continua a dipendere solo da `pycryptodome`. FastAPI e uvicorn
 vengono installati solo con l'extra `api`.
+
+**Log di accesso.** Un URL di tap contiene `picc_data` e `cmac`, e un tap mai
+verificato resta riutilizzabile da ovunque venga scritto. L'app toglie la query
+string dalle righe del log di accesso di uvicorn (`QueryRedactingFilter` su
+`uvicorn.access`); `--no-access-log` è ancora più restrittivo. Configura allo
+stesso modo l'eventuale reverse proxy davanti (logga il percorso, non la
+query).
 
 ## Architettura
 
@@ -119,10 +126,14 @@ viene inviato a ogni `AlertSink` configurato:
 | `WebhookAlertSink` | POST HTTPS firmato `X-Sphragis-Signature: sha256=HMAC(secret, ts + "." + body)` |
 
 Chi riceve il webhook deve verificare la firma a tempo costante e rifiutare i
-valori di `X-Sphragis-Timestamp` troppo vecchi. Un sink che fallisce viene
-loggato e saltato: non blocca mai la verifica né gli altri sink. Il webhook è
-sincrono (timeout 2 s, nessun retry), quindi tieni il sink SQLite come archivio
-di riferimento.
+valori di `X-Sphragis-Timestamp` troppo vecchi: `sphragis.alerts.verify_webhook(
+secret, timestamp, signature, body)` fa entrambe le cose. Un sink che fallisce
+viene loggato e saltato: non blocca mai la verifica né gli altri sink.
+`create_app_from_env` esegue il webhook su un worker in background
+(`BackgroundAlertSink`, coda limitata), quindi un endpoint lento non ritarda
+mai un tap; la consegna ha timeout 2 s e nessun retry, conta solo una risposta
+2xx e i redirect sono rifiutati (rigiocherebbero l'alert firmato altrove).
+Tieni il sink SQLite o Postgres come archivio di riferimento.
 
 ## Rate limiting
 
@@ -133,7 +144,15 @@ di riferimento.
   alcuno stato, quindi un tap autentico non consuma il suo valore di
   contatore. Input forgiati non possono esaurire il budget di un tag specifico.
 - `X-Forwarded-For` viene considerato solo se il peer diretto è elencato in
-  `SPHRAGIS_TRUSTED_PROXIES`. Il client è allora l'hop non fidato più a destra.
+  `SPHRAGIS_TRUSTED_PROXIES` (indirizzi o reti CIDR). Si leggono tutte le righe
+  dell'header, in ordine, e il client è l'hop non fidato più a destra, quindi
+  un proxy che aggiunge la propria riga (HAProxy `option forwardfor`) non può
+  essere scavalcato da una riga inviata dal client. I client IPv6 sono limitati
+  per /64.
+- Il limite per IP e un tetto al body (`SPHRAGIS_MAX_BODY_BYTES`, 8 KiB) si
+  applicano prima di interpretare la richiesta: i body troppo grandi ricevono
+  `413` senza essere letti per intero, e un JSON non valido conta nel limite
+  come ogni altra richiesta.
 
 `TokenBucketLimiter` lavora all'interno di un singolo processo. Con N repliche
 il limite effettivo diventa N volte più alto. Per un limite globale, implementa
@@ -160,14 +179,20 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_DB_URL` | nessuno | URL `postgresql://`; sostituisce SQLite per più host (richiede `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | vuoto | Contesto di diversificazione AN10922 |
 | `SPHRAGIS_READER_TOKENS` | nessuno | `lettore=sha256hex,…` |
-| `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP dei proxy autorizzati a impostare `X-Forwarded-For` |
+| `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP o CIDR dei proxy autorizzati a impostare `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | bucket per IP |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | bucket per tag |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | soglia di velocità impossibile |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classificazioni che generano un alert |
+| `SPHRAGIS_MAX_BODY_BYTES` | `8192` | body di richiesta più grande accettato |
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | livello di log |
+
+Ogni valore viene validato all'avvio: rate, burst e tempo di viaggio devono
+essere finiti e positivi, `SPHRAGIS_ALERT_ON` deve elencare classificazioni
+note. Un errore di battitura ferma il servizio invece di disattivare in
+silenzio un limite o un alert.
 
 I segreti si leggono tramite un `SecretsBackend` (di default
 `EnvSecretsBackend`, che si aspetta `SPHRAGIS_<NOME>` in esadecimale):
@@ -180,9 +205,8 @@ Per usare un KMS, passa il tuo backend a `create_app_from_env(secrets=…)`.
 - `REPLAY` è anche ciò che vede un utente che **ricarica** la pagina di
   verifica: l'URL è già stato usato. Il messaggio pubblico gli chiede di
   rifare il tap sul tag.
-- Un attaccante che possiede un URL catturato con MAC valido può rinviarlo per
-  esaurire il budget per UID di quel tag e ritardare le verifiche vere. Ogni
-  rinvio di questo tipo viene comunque loggato come `REPLAY` (e genera un
-  alert, se abilitato).
+- Solo i contatori sopra il floor consumano il budget per UID di un tag, quindi
+  rigiocare un URL catturato non può bloccare la tag autentica; chi ha in mano
+  la tag può comunque consumarlo con tap nuovi.
 - I tap pubblici non portano informazioni di posizione, quindi il rilevamento
   di velocità richiede lettori autenticati.
