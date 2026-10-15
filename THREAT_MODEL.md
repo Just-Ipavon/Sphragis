@@ -59,8 +59,8 @@ first-class, scored detector rather than a simple freshness flag.
   all-zero factory keys in place. With known keys anyone can compute valid
   PICCData and SDMMAC values, so such a tag proves nothing until
   `tools/rekey.py` has replaced its keys with secret per-UID ones (see
-  [key management](docs/key-management.md#writing-keys-to-tags); not yet
-  validated on hardware). Whoever holds `master_admin` can reconfigure every
+  [key management](docs/key-management.md#writing-keys-to-tags); validated
+  on hardware both ways). Whoever holds `master_admin` can reconfigure every
   tag; it belongs on the provisioning station only.
 - **Rewriting the tag's URL.** The plain SUN MAC covers no static data, so a
   freely writable NDEF file would let anyone with a phone point a genuine tag
