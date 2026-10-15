@@ -195,7 +195,6 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durable, atomic
 | REST API | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |
 | Production & deployment | [production.md](docs/production.md) | [production.it.md](docs/production.it.md) |
 | Physical tags (bench) | [hardware.md](docs/hardware.md) | [hardware.it.md](docs/hardware.it.md) |
-| Releasing | [release.md](docs/release.md) | [release.it.md](docs/release.it.md) |
 | Threat model | [THREAT_MODEL.md](THREAT_MODEL.md) | [THREAT_MODEL.it.md](THREAT_MODEL.it.md) |
 | Security policy | [SECURITY.md](SECURITY.md) | [SECURITY.md](SECURITY.md) |
 
