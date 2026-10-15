@@ -140,3 +140,30 @@ def test_backend_failures_are_logged_and_fail_closed(caplog):
     with pytest.raises(RuntimeError):
         service.verify(tag.tap())
     assert "verification_failed" in caplog.text and "picc_data" not in caplog.text
+
+
+# --- One tap, one encoding -----------------------------------------------------
+
+def _variants(url: str):
+    query = url.split("?", 1)[1]
+    picc = query.split("&")[0].split("=")[1]
+    spaced = query.replace(picc, picc[:8] + " " + picc[8:])
+    plussed = query.replace(picc, picc[:8] + "+" + picc[8:])
+    return [
+        "https://example.com/t#" + query,                # fragment, no query
+        "https://example.com/t?#" + query,
+        "https://example.com/t?" + spaced,              # whitespace in hex
+        "https://example.com/t?" + plussed,             # '+' decoded to a space
+        "https://example.com/t?" + query + "&enc=",     # blank enc: fail closed
+    ]
+
+
+def test_only_the_exact_encoding_of_a_tap_is_accepted():
+    tag = EmulatedTag(uid=os.urandom(7), meta_read_key=META, file_read_key=FILE)
+    url = tag.tap()
+    for variant in _variants(url):
+        assert Verifier(KEYS, CounterStore()).verify(variant).verdict is Verdict.ERROR, variant
+        assert TagAnalyzer(KEYS).analyze(variant).classification == "ERROR", variant
+    assert Verifier(KEYS, CounterStore()).verify(url).ok
+    assert Verifier(KEYS, CounterStore()).verify(url.split("?", 1)[1]).ok   # bare query
+

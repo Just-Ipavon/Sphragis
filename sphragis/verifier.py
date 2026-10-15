@@ -12,6 +12,7 @@ Pipeline for each tapped URL:
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
@@ -84,14 +85,30 @@ def _require_standard_picc(picc) -> None:
         raise SdmError("PICCData is not the UID + SDMReadCtr layout (tag 0xC7)")
 
 
-def _extract_params(url_or_query: str) -> tuple[bytes, bytes]:
-    """Pull picc_data and cmac (hex) from a full URL or a bare query string."""
+def _query_of(url_or_query: str) -> str:
+    """
+    The query string of a full URL, or the input itself when it is a bare
+    query. A URL without a query has none: its fragment or path is never read
+    as one, so a tap has a single encoding.
+    """
     try:
         parsed = urlparse(url_or_query)
     except ValueError as exc:           # e.g. an unbalanced IPv6 bracket
         raise SdmError(f"unparsable URL: {exc}") from exc
-    query = parsed.query or url_or_query
-    params = parse_qs(query)
+    if parsed.scheme or parsed.netloc or "?" in url_or_query or "#" in url_or_query:
+        return parsed.query
+    return url_or_query
+
+
+_HEX_FIELD = {"picc_data": re.compile(r"[0-9A-Fa-f]{32}"),
+              "cmac": re.compile(r"[0-9A-Fa-f]{16}")}
+
+
+def _extract_params(url_or_query: str) -> tuple[bytes, bytes]:
+    """Pull picc_data and cmac (hex) from a full URL or a bare query string."""
+    # Blank values are kept so that an empty `enc=` still trips the
+    # fail-closed check below.
+    params = parse_qs(_query_of(url_or_query), keep_blank_values=True)
 
     # Fail-closed: SDMENCFileData is not supported yet. Refuse rather than
     # verify a partial message and return a misleading verdict.
@@ -105,11 +122,16 @@ def _extract_params(url_or_query: str) -> tuple[bytes, bytes]:
         if len(params.get(name, [])) > 1:
             raise SdmError(f"duplicated parameter '{name}'")
 
-    try:
-        picc = bytes.fromhex(params["picc_data"][0])
-        cmac = bytes.fromhex(params["cmac"][0])
-    except (KeyError, IndexError, ValueError) as exc:
-        raise SdmError(f"missing or malformed picc_data/cmac: {exc}") from exc
+    values = []
+    for name in ("picc_data", "cmac"):
+        if name not in params:
+            raise SdmError(f"missing parameter '{name}'")
+        # bytes.fromhex() tolerates whitespace and parse_qs() decodes '+' and
+        # %xx; the tag emits neither, so only the exact hex form is accepted.
+        if not _HEX_FIELD[name].fullmatch(params[name][0]):
+            raise SdmError(f"malformed parameter '{name}'")
+        values.append(bytes.fromhex(params[name][0]))
+    picc, cmac = values
     return picc, cmac
 
 

@@ -59,7 +59,8 @@ def test_forged_mac_is_caught():
 def test_truncated_mac_is_rejected():
     tag, analyzer = _rig()
     bad = KeylessAttacker.truncate_mac(tag.tap())
-    assert analyzer.analyze(bad).classification == "FORGED"
+    # A MAC of the wrong length is malformed input, refused before any crypto.
+    assert analyzer.analyze(bad).classification == "ERROR"
 
 
 def test_counter_rollback_is_caught():

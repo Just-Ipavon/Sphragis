@@ -28,7 +28,7 @@ defend. Every claim here is backed by an executable attack in
 |---|----------------------|--------|------------|------|
 | 1 | Observe & resend URLs | **Replay** a captured tap | Read-counter: the counter was already seen → `REPLAY` | `test_replay_attack_is_caught` |
 | 2 | Tamper with bytes | **Forge** the SDMMAC (flip bits) | CMAC verification fails → `FORGED` | `test_forged_mac_is_caught` |
-| 3 | Tamper with bytes | Submit a **truncated** MAC | Structural + CMAC rejection → `FORGED` | `test_truncated_mac_is_rejected` |
+| 3 | Tamper with bytes | Submit a **truncated** MAC | Structural rejection before any crypto → `ERROR` (public `INVALID`) | `test_truncated_mac_is_rejected` |
 | 4 | Store old URLs | **Counter rollback**: resend an older, lower-counter tap | Counter not fresh → `REPLAY`/`CLONE_LIKELY` | `test_counter_rollback_is_caught` |
 | 5 | **Extract keys**, build a perfect clone | Clone runs its own counter stream | Counter **divergence** (value below the max ever seen) → `CLONE_LIKELY` | `test_key_clone_caught_by_counter_divergence` |
 | 6 | **Extract keys**, deploy clone elsewhere | Clone scanned far away, seconds apart | **Impossible velocity** across readers → `CLONE_LIKELY` | `test_key_clone_caught_by_impossible_velocity` |
