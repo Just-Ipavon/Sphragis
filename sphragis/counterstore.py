@@ -26,9 +26,15 @@ import json
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows: no cross-process lock
+    fcntl = None
 
 _FORMAT = 2   # JSON file layout with the tap ledger; older files are a bare floor map
 
@@ -83,7 +89,23 @@ class CounterBackend(Protocol):
         ...
 
 
+class CounterStoreError(Exception):
+    """The counter file cannot be trusted (empty, corrupt, unreadable)."""
+
+
 class CounterStore:
+    """
+    JSON-file floor and tap ledger (in memory when `path` is None).
+
+    Durability: every change re-reads the file under an exclusive lock
+    (`fcntl.flock` on `<path>.lock`, POSIX), writes a temporary file, fsyncs
+    it, renames it over the old one and fsyncs the directory; memory is
+    updated only once the file is on disk. Several processes may share one
+    file this way. An empty or corrupt file is refused rather than read as
+    "no floors", which would let every captured tap replay once more. Use
+    `SqliteCounterStore` for anything beyond a single host's tools.
+    """
+
     def __init__(self, path: str | os.PathLike | None = None) -> None:
         self._path = Path(path) if path else None
         self._lock = threading.Lock()
@@ -91,16 +113,98 @@ class CounterStore:
         self._taps: dict[str, set[int]] = {}
         self._since: dict[str, int | None] = {}
         if self._path and self._path.exists():
-            data = json.loads(self._path.read_text() or "{}")
-            if data.get("format") == _FORMAT:
-                self._seen = dict(data["floors"])
-                self._taps = {uid: set(values) for uid, values in data["taps"].items()}
-                self._since = dict(data["since"])
-            else:                                    # bare floor map (older files)
-                self._seen = data
+            self._seen, self._taps, self._since = self._read()
 
+    # -- file I/O ----------------------------------------------------------------
+    def _read(self):
+        try:
+            text = self._path.read_text()
+        except OSError as exc:
+            raise CounterStoreError(f"cannot read {self._path}: {exc}") from exc
+        if not text.strip():
+            raise CounterStoreError(
+                f"{self._path} is empty: refusing to start without the anti-replay "
+                "floors it should hold (restore it, or delete it to start afresh)")
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+            if data.get("format") == _FORMAT:
+                floors = {u.upper(): int(c) for u, c in data["floors"].items()}
+                taps = {u.upper(): {int(c) for c in v} for u, v in data["taps"].items()}
+                since = {u.upper(): (None if c is None else int(c))
+                         for u, c in data["since"].items()}
+            else:                                    # bare floor map (older files)
+                floors = {u.upper(): int(c) for u, c in data.items()}
+                taps, since = {}, {}
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise CounterStoreError(f"{self._path} is not a valid counter store: "
+                                    f"{exc}") from exc
+        return floors, taps, since
+
+    def _write(self, floors, taps, since) -> None:
+        if taps:
+            data = {"format": _FORMAT, "floors": floors,
+                    "taps": {u: sorted(v) for u, v in taps.items()}, "since": since}
+        else:                                  # keep the bare map until the ledger is used
+            data = floors
+        directory = self._path.parent
+        directory.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory)   # created 0600
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2, sort_keys=True)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
+        if hasattr(os, "O_DIRECTORY"):
+            dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+
+    @contextmanager
+    def _file_lock(self):
+        if self._path is None or fcntl is None:
+            yield
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(f"{self._path}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+    def _mutate(self, change):
+        """
+        Apply `change(floors, taps, since) -> (result, dirty)` to the latest
+        state on disk; persist before memory moves.
+        """
+        with self._lock, self._file_lock():
+            if self._path is not None and self._path.exists():
+                floors, taps, since = self._read()
+            else:
+                floors = dict(self._seen)
+                taps = {u: set(v) for u, v in self._taps.items()}
+                since = dict(self._since)
+            result, dirty = change(floors, taps, since)
+            if dirty and self._path is not None:
+                self._write(floors, taps, since)
+            self._seen, self._taps, self._since = floors, taps, since
+            return result
+
+    # -- floor ---------------------------------------------------------------------
     def last_counter(self, uid_hex: str) -> int | None:
-        return self._seen.get(uid_hex.upper())
+        with self._lock:
+            return self._seen.get(uid_hex.upper())
 
     def is_fresh(self, uid_hex: str, counter: int) -> bool:
         """True if this counter is strictly greater than the last one seen."""
@@ -111,66 +215,51 @@ class CounterStore:
         """
         Atomically accept a counter only if it is strictly greater than the
         last one seen, advancing the floor in the same critical section.
-
         Returns True if accepted (fresh), False if it is a replay/rollback.
-        This closes the check-then-act race that `is_fresh` + `record` leaves
-        open under concurrency. For multi-process deployments, back this with a
-        database using an atomic conditional update (e.g. UPDATE ... WHERE
-        new > stored) and treat "0 rows affected" as a replay.
         """
         uid_hex = uid_hex.upper()
-        with self._lock:
-            last = self._seen.get(uid_hex)
-            if last is not None and counter <= last:
-                return False
-            self._seen[uid_hex] = counter
-            self._flush()
-            return True
 
+        def change(floors, taps, since):
+            last = floors.get(uid_hex)
+            if last is not None and counter <= last:
+                return False, False
+            floors[uid_hex] = counter
+            return True, True
+
+        return self._mutate(change)
+
+    def record(self, uid_hex: str, counter: int) -> None:
+        """Advance the stored counter for a UID (never moves it backwards)."""
+        uid_hex = uid_hex.upper()
+
+        def change(floors, taps, since):
+            if counter > floors.get(uid_hex, -1):
+                floors[uid_hex] = counter
+                return None, True
+            return None, False
+
+        self._mutate(change)
+
+    # -- tap ledger -----------------------------------------------------------------
     def seen(self, uid_hex: str, counter: int) -> bool:
         with self._lock:
             return counter in self._taps.get(uid_hex.upper(), ())
 
     def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
         uid_hex = uid_hex.upper()
-        with self._lock:
-            floor = self._seen.get(uid_hex)
-            if uid_hex not in self._taps:
-                self._taps[uid_hex] = set()
-                self._since[uid_hex] = floor
-            taps = self._taps[uid_hex]
-            record = TapRecord(counter, counter not in taps, floor, self._since[uid_hex])
+
+        def change(floors, taps, since):
+            floor = floors.get(uid_hex)
+            dirty = False
+            if uid_hex not in taps:
+                taps[uid_hex], since[uid_hex] = set(), floor
+                dirty = True
+            record = TapRecord(counter, counter not in taps[uid_hex], floor, since[uid_hex])
             if record.new:
-                taps.add(counter)
+                taps[uid_hex].add(counter)
                 if record.fresh:
-                    self._seen[uid_hex] = counter
-                self._flush()
-            return record
+                    floors[uid_hex] = counter
+                dirty = True
+            return record, dirty
 
-    def record(self, uid_hex: str, counter: int) -> None:
-        """Advance the stored counter for a UID (never moves it backwards)."""
-        uid_hex = uid_hex.upper()
-        with self._lock:
-            if counter > self._seen.get(uid_hex, -1):
-                self._seen[uid_hex] = counter
-                self._flush()
-
-    def _flush(self) -> None:
-        if not self._path:
-            return
-        # Atomic write so a crash cannot corrupt the store.
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent)
-        try:
-            with os.fdopen(fd, "w") as f:
-                if self._taps:
-                    data = {"format": _FORMAT, "floors": self._seen,
-                            "taps": {u: sorted(v) for u, v in self._taps.items()},
-                            "since": self._since}
-                else:                      # keep the bare map until the ledger is used
-                    data = self._seen
-                json.dump(data, f, indent=2, sort_keys=True)
-            os.replace(tmp, self._path)
-        except Exception:
-            os.unlink(tmp)
-            raise
+        return self._mutate(change)

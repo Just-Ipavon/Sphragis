@@ -34,6 +34,13 @@ import time
 
 from .counterstore import TapRecord
 
+
+def secure_db_file(path: str) -> None:
+    """Create the database file readable by its owner only (0600), if new.
+    UIDs and counters are not keys, but they are tracking data."""
+    if path != ":memory:" and not os.path.exists(path):
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS counters (
     uid         TEXT PRIMARY KEY,
@@ -59,6 +66,7 @@ class SqliteCounterStore:
         self._local = threading.local()
         self._all_conns: list[sqlite3.Connection] = []
         self._conns_lock = threading.Lock()
+        secure_db_file(self._path)
         # Create the schema once up front.
         self._connection().executescript(_SCHEMA)
 
@@ -68,7 +76,10 @@ class SqliteCounterStore:
             conn = sqlite3.connect(self._path, isolation_level=None, timeout=30.0)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA synchronous=NORMAL")
+            # FULL: an acknowledged floor advance survives a power loss; with
+            # NORMAL the last transactions of a WAL can roll back, and the
+            # taps they accepted would verify again.
+            conn.execute("PRAGMA synchronous=FULL")
             self._local.conn = conn
             with self._conns_lock:
                 self._all_conns.append(conn)

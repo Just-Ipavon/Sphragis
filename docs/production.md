@@ -17,6 +17,15 @@ a serialized transaction:
 - WAL mode keeps readers non-blocking; `busy_timeout` makes writers wait.
 - One connection per thread (a single connection must not run interleaved
   statements from multiple threads).
+- `synchronous=FULL`: an acknowledged floor advance survives a power loss
+  (with `NORMAL`, the last WAL transactions could roll back and their taps
+  verify again). The database file is created readable by its owner only.
+
+The JSON `CounterStore` used by the command-line tools is safe for a few
+processes on one host: every change re-reads the file under an exclusive
+`flock`, is fsynced (file and directory) before memory moves, and an empty or
+corrupt file is refused rather than read as "no floors". It is not meant for a
+service: use SQLite or Postgres there.
 
 ```python
 from sphragis import Verifier, SqliteCounterStore, build_diversified_keys, EnvSecretsBackend

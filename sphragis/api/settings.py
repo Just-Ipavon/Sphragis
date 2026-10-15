@@ -87,7 +87,7 @@ def parse_reader_tokens(raw: str) -> dict[str, str]:
 @dataclass(frozen=True)
 class ApiSettings:
     db_path: str = "sphragis.db"
-    db_url: str | None = None
+    db_url: str | None = field(default=None, repr=False)   # may embed a password
     key_context: bytes = b""
     reader_tokens: Mapping[str, str] = field(default_factory=dict)
     trusted_proxies: frozenset[str] = frozenset()

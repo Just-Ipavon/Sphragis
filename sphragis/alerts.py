@@ -105,6 +105,8 @@ class SqliteAlertSink:
     def __init__(self, path: str | os.PathLike = "alerts.db") -> None:
         self._path = str(path)
         self._local = threading.local()
+        from .sqlstore import secure_db_file
+        secure_db_file(self._path)
         self._connection().executescript(_SCHEMA)
 
     def _connection(self) -> sqlite3.Connection:

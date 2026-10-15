@@ -85,6 +85,8 @@ class DiversifiedKeys:
             raise ValueError("keys must be AES-128 (16 bytes)")
         if len(context) > 24:
             raise ValueError("context too long (leaves no room for the UID)")
+        if master_file_key == meta_read_key:
+            raise ValueError("master_file and meta_read must be different keys")
         self._master_file = master_file_key
         self._meta = meta_read_key
         self._context = context

@@ -89,6 +89,8 @@ class SqliteObservationStore:
         self._local = threading.local()
         self._all_conns: list[sqlite3.Connection] = []
         self._conns_lock = threading.Lock()
+        from .sqlstore import secure_db_file
+        secure_db_file(self._path)
         self._connection().executescript(_SCHEMA)
 
     def _connection(self) -> sqlite3.Connection:

@@ -120,10 +120,30 @@ interfaccia `SecretsBackend`, così il verificatore non cambia quando passi da
 una variabile d'ambiente di sviluppo a un KMS gestito:
 
 - **`EnvSecretsBackend`** — chiavi hex da variabili d'ambiente (`SPHRAGIS_*`).
-- **`FileSecretsBackend`** — chiavi hex da file; **rifiuta** i file leggibili da
-  gruppo/altri (POSIX).
+- **`FileSecretsBackend`** — chiavi hex da file. Su POSIX **rifiuta** i file di
+  chiave che sono link simbolici, non file regolari, di un altro utente o
+  accessibili a gruppo/altri, e una cartella scrivibile da gruppo/altri o di
+  un altro utente; i controlli avvengono sul descrittore aperto
+  (`O_NOFOLLOW` + `fstat`), quindi il file controllato è quello letto.
+  Altrove emette un avviso: proteggi la cartella con le ACL del sistema.
 - **`KmsSecretsBackend`** — punto di estensione: sottoclassa e implementa
   `get_key` per AWS KMS, GCP KMS, HashiCorp Vault o un HSM PKCS#11.
+
+Ogni backend rifiuta una chiave tutta a zero (la chiave pubblica di fabbrica
+non è un segreto), e gli schemi di chiavi rifiutano master uguali:
+`master_admin`, `master_file` e `meta_read` devono essere tre chiavi diverse,
+altrimenti i server di verifica avrebbero la chiave che riconfigura le tag.
+Gli input di derivazione non hanno bisogno di separatori: l'UID è sempre di 7
+byte (gli altri layout di PICCData vengono rifiutati), quindi `contesto ‖ UID`
+non è ambiguo.
+
+Da riga di comando, `sphragis verify` ed `emulate` prendono le chiavi da
+`--secrets-dir` (diversificate, come l'API), da `SPHRAGIS_CLI_META_KEY` /
+`SPHRAGIS_CLI_FILE_KEY`, oppure le chiedono senza mostrarle; `--meta-key` /
+`--file-key` restano per le chiavi di test e stampano un avviso, perché gli
+argomenti sono visibili agli altri utenti (`ps`, cronologia della shell).
+`tools/provision.py --enc-data-file` tiene fuori dalla riga di comando anche
+il testo in chiaro cifrato.
 
 ```python
 from sphragis import EnvSecretsBackend, build_diversified_keys
