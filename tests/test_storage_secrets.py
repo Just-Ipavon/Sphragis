@@ -1,5 +1,5 @@
 """
-Counter-file durability (#24) and secrets handling (#26).
+Counter-file durability and secrets handling.
 """
 
 import json
@@ -23,7 +23,7 @@ posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
 K1, K2, K3 = bytes([1]) * 16, bytes([2]) * 16, bytes([3]) * 16
 
 
-# --- #24: the JSON counter file ---------------------------------------------------
+# --- The JSON counter file --------------------------------------------------------
 
 @pytest.mark.parametrize("content,why", [
     ("", "empty"), ("   \n", "empty"),            # a truncated write: say so
@@ -113,7 +113,7 @@ def test_sqlite_store_is_owner_only_and_fully_synchronous(tmp_path):
     assert store._connection().execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
 
 
-# --- #26: secrets -------------------------------------------------------------------
+# --- Secrets --------------------------------------------------------------------------
 
 def _secrets(tmp_path, **files):
     d = tmp_path / "keys"

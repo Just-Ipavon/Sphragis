@@ -135,7 +135,7 @@ def test_detailed_response_for_authenticated_reader():
 
 
 def test_detailed_forged_and_error_look_the_same():
-    # #19: even an authenticated reader cannot tell FORGED from ERROR, nor get
+    # Even an authenticated reader cannot tell FORGED from ERROR, nor get
     # the UID and counter of a forged tap (a decryption oracle under MetaRead).
     tag, client, _ = _rig()
     forged = client.get(_path(KeylessAttacker.forge_mac(tag.tap())),
@@ -262,7 +262,7 @@ def test_create_app_from_env_end_to_end(tmp_path, monkeypatch):
     assert [a.event_id for a in stored] == [body["event_id"]]
 
 
-# --- Client address, request guard, logs (#21, #22, #25) -----------------------
+# --- Client address, request guard, logs -----------------------------------
 
 def test_duplicate_forwarded_for_lines_cannot_mint_buckets():
     # HAProxy-style proxies append their own X-Forwarded-For line: the

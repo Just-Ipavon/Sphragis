@@ -141,7 +141,7 @@ would change : file settings (auth with key 0, CommMode.Full)
 **2. Provision** (writes; `--yes` instead of `--dry-run`). In this run the
 122-byte template went out as a single ISOUpdateBinary, i.e. with ISO-DEP
 chaining on the Chameleon Ultra (whose frames are limited to 62 bytes), which
-validated chaining on hardware. Since #27 the template is written in 48-byte
+validated chaining on hardware. Since v1.0 the template is written in 48-byte
 ISOUpdateBinary pieces that each fit one frame, so every piece is written
 atomically; this split still has to be seen on silicon at the next template
 write:

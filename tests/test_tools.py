@@ -46,7 +46,7 @@ def test_provision_offline_dry_run(capsys):
     tool = _load("provision")
     assert tool.main(["--dry-run", "--base-url", "https://example.com/t"]) == 0
     out = capsys.readouterr().out
-    assert "4000E0C1F121" in out and "locked to key 0" in out     # writes locked (#13)
+    assert "4000E0C1F121" in out and "locked to key 0" in out     # writes locked
     assert tool.main(["--dry-run", "--base-url", "https://example.com/t",
                       "--leave-writable"]) == 0
     assert "40E0EEC1F121" in capsys.readouterr().out           # factory access kept
@@ -111,7 +111,7 @@ def test_provision_enc_offline_dry_run(capsys):
     ["--enc-data-hex", "zz" * 16],                             # not hex
     ["--enc-data", "0123456789ABCDEF", "--enc-data-hex", "00" * 16],
     ["--enc-data", "0123456789ABCDEF", "--write-key", "14"],   # not a key
-    ["--write-key", "2"],                                      # verifier-held key (#14)
+    ["--write-key", "2"],                                      # verifier-held key
     ["--write-key", "1"],
     ["--enc-data", "0123456789ABCDEF", "--leave-writable"],
     ["--write-key", "3", "--leave-writable"],
