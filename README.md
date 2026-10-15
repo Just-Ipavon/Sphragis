@@ -83,7 +83,8 @@ Classifications: `GENUINE`, `SUSPICIOUS`, `REPLAY`, `CLONE_LIKELY`, `FORGED`, `E
 ## Install
 
 ```bash
-pip install -r requirements.txt   # pycryptodome
+pip install sphragis               # from PyPI
+pip install -r requirements.txt   # or, from a checkout: pycryptodome
 ```
 
 ## Quick start (no hardware needed)

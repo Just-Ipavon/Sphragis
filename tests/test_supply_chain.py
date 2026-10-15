@@ -57,7 +57,7 @@ def test_ci_installs_only_locked_hashed_dependencies():
     assert lock.count("--hash=sha256:") >= len(pins)
 
 
-@pytest.mark.parametrize("workflow", ["ci.yml", "security.yml"])
+@pytest.mark.parametrize("workflow", ["ci.yml", "security.yml", "release.yml"])
 def test_workflows_pin_actions_and_drop_token_rights(workflow):
     text = _read(".github", "workflows", workflow)
     uses = re.findall(r"uses:\s*(\S+)", text)
@@ -69,3 +69,18 @@ def test_runtime_state_and_secrets_are_ignored():
     ignore = _read(".gitignore")
     for pattern in ("*.db", "*.sqlite", "keys/", "*.lock", "!requirements/*.lock"):
         assert pattern in ignore.splitlines(), pattern
+
+
+def test_release_publishes_without_tokens_from_locked_tools():
+    release = _read(".github", "workflows", "release.yml")
+    assert "--require-hashes -r requirements/release.lock" in release
+    assert "--no-isolation" in release                     # no unpinned backend
+    assert "password" not in release and "secrets." not in release
+    # Only the publish job may mint the OIDC token, behind the pypi environment.
+    assert release.count("id-token: write") == 1
+    publish = release[release.index("  publish:"):]
+    assert "id-token: write" in publish and "name: pypi" in publish
+    lock = _read("requirements", "release.lock")
+    pins = re.findall(r"^([A-Za-z0-9_.-]+)==", lock, re.M)
+    assert {"build", "setuptools", "wheel"} <= set(pins)
+    assert lock.count("--hash=sha256:") >= len(pins)

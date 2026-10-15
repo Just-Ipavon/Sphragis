@@ -58,6 +58,8 @@ after an adversarial self-review and validated on physical tags.
 ### Supply chain
 - Hash-locked CI dependencies, actions pinned by commit, pip-audit and bandit
   in CI, Dependabot, guard against the legacy PyCrypto package.
+- Releases go to PyPI from GitHub through trusted publishing (no token),
+  built with hash-locked tools, behind an approval on the `pypi` environment.
 
 ## 0.4.0 and earlier
 

@@ -64,6 +64,9 @@ irrobustito dopo un auto-audit avversariale e validato su tag fisici.
 - Dipendenze della CI bloccate con hash, action fissate per commit, pip-audit
   e bandit nella CI, Dependabot, protezione contro il vecchio pacchetto
   PyCrypto.
+- Le release vanno su PyPI da GitHub con il trusted publishing (nessun
+  token), costruite con strumenti bloccati con hash, dietro un'approvazione
+  sull'ambiente `pypi`.
 
 ## 0.4.0 e precedenti
 
