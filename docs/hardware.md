@@ -141,10 +141,22 @@ would change : file settings (auth with key 0, CommMode.Full)
 **2. Provision** (writes; `--yes` instead of `--dry-run`). In this run the
 122-byte template went out as a single ISOUpdateBinary, i.e. with ISO-DEP
 chaining on the Chameleon Ultra (whose frames are limited to 62 bytes), which
-validated chaining on hardware. Since #27 the template is written in 48-byte
+validated chaining on hardware. Since v1.0 the template is written in 48-byte
 ISOUpdateBinary pieces that each fit one frame, so every piece is written
-atomically; this split still has to be seen on silicon at the next template
-write:
+atomically. On silicon (UID 04341A82161690) the first such piece, sent in the
+AN12196 Table 16 form with a trailing Le, was refused with `6700`; the same
+48 bytes without Le were written (`9000`, read back identical). Provisioning
+therefore sends ISOUpdateBinary in the datasheet form, without Le; with it the
+85-byte plain SUN template went out in two pieces and the tag verified:
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : UID 04341A82161690, SDMReadCtr 1, CMAC match
+RESULT       : provisioned and verified
+```
+
+The encrypted-mirror run below predates the split:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)
@@ -177,10 +189,10 @@ tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414
 
 `6982` (security status not satisfied) confirms the lock. Note the second
 line: with writes locked, the AN12196 Table 16 form with a trailing Le is
-rejected as a length error (`6700`) **before** the access check, while with
-free write access the same form is accepted (it is how the template was
-written). To test a lock, use the datasheet form without Le; a `6700` proves
-nothing about access rights.
+rejected as a length error (`6700`) **before** the access check. With free
+write access the same form got through only as a chained 122-byte write; as a
+single frame it gets `6700` too (see step 2). To test a lock, use the
+datasheet form without Le; a `6700` proves nothing about access rights.
 
 **5. Authenticated rewrite.** Changing the plaintext of the locked tag to 32
 bytes changes the placeholder too, so one EV2 session carries both plain
@@ -226,7 +238,8 @@ then returned `6982`, and the next tap was still `AUTHENTIC` (counter 16).
 
 ## Real keys: replacing the factory keys
 
-Not yet validated on hardware. `tools/rekey.py` writes per-UID keys (see
+Validated on hardware, both ways (UID 04341A82161690, below).
+`tools/rekey.py` writes per-UID keys (see
 [key management](key-management.md#writing-keys-to-tags)); `--to-factory`
 undoes it, so a bench tag stays reusable.
 
@@ -263,6 +276,52 @@ secrets and back it up with them.
 Once keyed, `tools/provision.py` needs the same `--secrets-dir` and
 `--context`: changing the SDM settings or writing a locked NDEF file then
 authenticates with the tag's real slot 0.
+
+**Hardware run** (UID 04341A82161690, plain SUN layout just provisioned): the
+dry run planned slots 1-4 then 0, `--yes` changed them in that order, every
+new key authenticated and taps verified with the server-side keys. The
+counter skips a few values because the dry run and the rekey each read a SUN
+tap to learn the UID.
+With factory keys the same tag no longer verifies: its PICCData decrypts to
+garbage, not the standard layout, hence `ERROR` rather than `FORGED`.
+
+```
+UID (from tap): 04341A82161690
+UID          : 04341A82161690 (GetCardUID)
+originality  : NXP signature verifies for this UID
+current      : 0=factory, 1=factory, 2=factory, 3=factory, 4=factory
+target       : diversified, version 01, KCV 76E11F 2C0AA4 0D8655 0E2A6A C27F88
+inventory    : unknown UID
+About to change slots 1, 2, 3, 4, 0 of tag 04341A82161690.
+Type the UID to confirm: 04341A82161690
+changed      : slot 1 (factory -> diversified)
+changed      : slot 2 (factory -> diversified)
+changed      : slot 3 (factory -> diversified)
+changed      : slot 4 (factory -> diversified)
+changed      : slot 0 (factory -> diversified)
+check        : all five keys authenticate, versions 01
+RESULT       : keys changed and verified
+
+tap 1: GENUINE      UID 04341A82161690  ctr 7  score 0
+tap 2: GENUINE      UID 04341A82161690  ctr 8  score 0
+tap 3: GENUINE      UID 04341A82161690  ctr 9  score 0
+tap 1: ERROR        UID None  ctr None  score 0      (factory keys)
+```
+
+`--to-factory` then proved possession with the tag's own slot 0 (inventory
+`keyed`), put the five zero keys back (KCV `66E94B`, version 00) and the tag
+verified again with factory keys:
+
+```
+changed      : slot 1 (diversified -> factory)
+changed      : slot 2 (diversified -> factory)
+changed      : slot 3 (diversified -> factory)
+changed      : slot 4 (diversified -> factory)
+changed      : slot 0 (diversified -> factory)
+check        : all five keys authenticate, versions 00
+RESULT       : keys changed and verified
+tap 1: GENUINE      UID 04341A82161690  ctr 14  score 0  (factory keys)
+```
 
 ## Physical clone detection
 

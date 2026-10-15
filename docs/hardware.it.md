@@ -144,10 +144,23 @@ would change : file settings (auth with key 0, CommMode.Full)
 **2. Provisioning** (scrive; `--yes` al posto di `--dry-run`). In questa prova
 il modello da 122 byte è passato con una sola ISOUpdateBinary, cioè con il
 chaining ISO-DEP del Chameleon Ultra (i cui frame sono limitati a 62 byte), e
-questo ha validato il chaining su hardware. Dalla #27 il modello viene scritto
-in pezzi ISOUpdateBinary da 48 byte che stanno ciascuno in un frame, quindi
-ogni pezzo è scritto in modo atomico; questa suddivisione va ancora vista sul
-chip alla prossima scrittura del modello:
+questo ha validato il chaining su hardware. Dalla v1.0 il modello viene
+scritto in pezzi ISOUpdateBinary da 48 byte che stanno ciascuno in un frame,
+quindi ogni pezzo è scritto in modo atomico. Sul chip (UID 04341A82161690) il
+primo pezzo, inviato nella forma di AN12196 Tabella 16 con Le in coda, è stato
+rifiutato con `6700`; gli stessi 48 byte senza Le sono stati scritti (`9000`,
+riletti identici). Per questo il provisioning invia ISOUpdateBinary nella forma
+del datasheet, senza Le; così il modello SUN in chiaro da 85 byte è passato in
+due pezzi e la tag è stata verificata:
+
+```
+wrote        : NDEF template (ISOUpdateBinary)
+changed      : file settings (authenticated with key 0)
+check        : UID 04341A82161690, SDMReadCtr 1, CMAC match
+RESULT       : provisioned and verified
+```
+
+La prova con mirror cifrato qui sotto è precedente alla suddivisione:
 
 ```
 wrote        : NDEF template (ISOUpdateBinary)
@@ -182,9 +195,10 @@ tap 1: AUTHENTIC    UID 04801A82161690  ctr 5  file data 30313233343536373839414
 `6982` (security status not satisfied) conferma il blocco. Attenzione alla
 seconda riga: con la scrittura bloccata, la forma di AN12196 Tabella 16 con Le
 in coda è rifiutata come errore di lunghezza (`6700`) **prima** del controllo
-dei permessi, mentre con la scrittura libera la stessa forma è accettata (è
-così che è stato scritto il modello). Per provare un blocco va usata la forma
-del datasheet senza Le; un `6700` non dimostra nulla sui permessi.
+dei permessi. Con la scrittura libera la stessa forma è passata solo come
+scrittura concatenata da 122 byte; in un solo frame dà anch'essa `6700` (vedi
+il passo 2). Per provare un blocco va usata la forma del datasheet senza Le; un
+`6700` non dimostra nulla sui permessi.
 
 **5. Riscrittura autenticata.** Portare a 32 byte il testo in chiaro della tag
 bloccata cambia anche lo spazio riservato, quindi un'unica sessione EV2 porta
@@ -232,7 +246,8 @@ successivo era ancora `AUTHENTIC` (contatore 16).
 
 ## Chiavi reali: sostituire le chiavi di fabbrica
 
-Non ancora validato su hardware. `tools/rekey.py` scrive chiavi per UID (vedi
+Validato su hardware, in entrambe le direzioni (UID 04341A82161690, qui
+sotto). `tools/rekey.py` scrive chiavi per UID (vedi
 [gestione chiavi](key-management.it.md#scrivere-le-chiavi-sulle-tag));
 `--to-factory` annulla, così una tag di banco resta riutilizzabile.
 
@@ -269,6 +284,52 @@ ai segreti e fanne il backup insieme a loro.
 Dopo il cambio, `tools/provision.py` vuole gli stessi `--secrets-dir` e
 `--context`: modificare le impostazioni SDM o scrivere un file NDEF bloccato
 richiede allora l'autenticazione con il vero slot 0 della tag.
+
+**Prova su hardware** (UID 04341A82161690, layout SUN in chiaro appena
+configurato): il dry run ha pianificato gli slot 1-4 e poi lo 0, `--yes` li ha
+cambiati in quell'ordine, ogni nuova chiave si è autenticata e i tap sono
+stati verificati con le chiavi lato server. Il contatore salta qualche valore
+perché il dry run e il rekey leggono ciascuno un tap SUN per conoscere l'UID. Con le chiavi di
+fabbrica la stessa tag non si verifica più: il suo PICCData si decifra in byte
+casuali, non nel layout standard, quindi `ERROR` e non `FORGED`.
+
+```
+UID (from tap): 04341A82161690
+UID          : 04341A82161690 (GetCardUID)
+originality  : NXP signature verifies for this UID
+current      : 0=factory, 1=factory, 2=factory, 3=factory, 4=factory
+target       : diversified, version 01, KCV 76E11F 2C0AA4 0D8655 0E2A6A C27F88
+inventory    : unknown UID
+About to change slots 1, 2, 3, 4, 0 of tag 04341A82161690.
+Type the UID to confirm: 04341A82161690
+changed      : slot 1 (factory -> diversified)
+changed      : slot 2 (factory -> diversified)
+changed      : slot 3 (factory -> diversified)
+changed      : slot 4 (factory -> diversified)
+changed      : slot 0 (factory -> diversified)
+check        : all five keys authenticate, versions 01
+RESULT       : keys changed and verified
+
+tap 1: GENUINE      UID 04341A82161690  ctr 7  score 0
+tap 2: GENUINE      UID 04341A82161690  ctr 8  score 0
+tap 3: GENUINE      UID 04341A82161690  ctr 9  score 0
+tap 1: ERROR        UID None  ctr None  score 0      (factory keys)
+```
+
+`--to-factory` ha poi dimostrato il possesso con lo slot 0 della tag stessa
+(inventario `keyed`), ha rimesso le cinque chiavi a zero (KCV `66E94B`,
+versione 00) e la tag si è verificata di nuovo con le chiavi di fabbrica:
+
+```
+changed      : slot 1 (diversified -> factory)
+changed      : slot 2 (diversified -> factory)
+changed      : slot 3 (diversified -> factory)
+changed      : slot 4 (diversified -> factory)
+changed      : slot 0 (diversified -> factory)
+check        : all five keys authenticate, versions 00
+RESULT       : keys changed and verified
+tap 1: GENUINE      UID 04341A82161690  ctr 14  score 0  (factory keys)
+```
 
 ## Clone detection su hardware
 

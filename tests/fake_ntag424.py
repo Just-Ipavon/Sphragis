@@ -95,6 +95,7 @@ class FakeNtag424:
         self.keys = list(keys or [bytes(16)] * 5)
         self.key_versions = [0x00] * 5
         self.key_changes = 0
+        self.failed_auths = 0
         self.settings = settings or FileSettings(0x00, FACTORY_ACCESS)
         self.file = bytearray(content.ljust(256, b"\x00"))
         self.counter = 0
@@ -136,14 +137,19 @@ class FakeNtag424:
             le = apdu[4] or 256
             return self._content()[offset:offset + le] + b"\x90\x00"
         if ins == 0xD6:
+            # Observed on silicon: a trailing Le (the AN12196 Table 16 form) is
+            # rejected as a length error on a single-frame write, whatever the
+            # access rights: 6700 on 48 bytes to a free file (UID
+            # 04341A82161690), and before the access check when writes are
+            # locked (UID 04801A82161690). Only a chained 122-byte write with
+            # Le got through. The fake sees APDUs, not frames, so it refuses
+            # Le on every write; the datasheet form without Le is accepted, or
+            # reaches the access check and gets 6982.
+            if len(apdu) == 5 + apdu[4] + 1:
+                return b"\x67\x00"
             access = self.settings.access
             if KEY_FREE not in (access.write, access.read_write):
-                # Observed on silicon (UID 04801A82161690): with writes locked,
-                # a trailing Le (the AN12196 Table 16 form) is rejected as a
-                # length error before the access check; the datasheet form
-                # without Le reaches it and gets 6982.
-                has_le = len(apdu) == 5 + apdu[4] + 1
-                return b"\x67\x00" if has_le else b"\x69\x82"
+                return b"\x69\x82"
             data = apdu[5:5 + apdu[4]]
             self.file[offset:offset + len(data)] = data
             self.writes += 1
@@ -191,6 +197,7 @@ class FakeNtag424:
             plain = AES.new(key, AES.MODE_CBC, ZERO_IV).decrypt(data)
             rnd_a, rnd_b_rot = plain[:16], plain[16:]
             if rnd_b_rot != rnd_b[1:] + rnd_b[:1]:
+                self.failed_auths += 1
                 return b"\x91\xAE"
             ti = os.urandom(4)
             tail = (rnd_a[0:2] + bytes(x ^ y for x, y in zip(rnd_a[2:8], rnd_b[0:6]))

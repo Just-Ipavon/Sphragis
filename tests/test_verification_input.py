@@ -1,5 +1,5 @@
 """
-Unauthenticated input (issues #19, #20).
+Unauthenticated input.
 
 A FORGED verdict must not hand back what was decrypted before the MAC check
 (otherwise anyone can decrypt blocks under the shared MetaRead key), and no
@@ -41,7 +41,7 @@ def _enc_url(picc_hex: str) -> str:
             f"&cmac={'00' * 8}")
 
 
-# --- #19: no decryption oracle ----------------------------------------------------
+# --- No decryption oracle ---------------------------------------------------------
 
 def test_forged_verdict_hides_the_decrypted_uid_and_counter():
     # Audit reproduction: a block chosen by the attacker, any MAC.
@@ -68,7 +68,7 @@ def test_genuine_taps_still_report_uid_and_counter():
     assert r.ok and r.uid == tag.uid.hex().upper() and r.read_counter == 1
 
 
-# --- #20: crafted input is an ERROR, never an exception ----------------------------
+# --- Crafted input is an ERROR, never an exception ---------------------------------
 
 CRAFTED = [
     "http://[::1/t?picc_data=00&cmac=00",          # urlparse raises ValueError

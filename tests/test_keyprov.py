@@ -200,6 +200,17 @@ def test_back_to_factory():
     _rekey(tag, scheme)
     report = _rekey(tag, FactoryKeys(), known=[scheme])
     assert report.verified and tag.keys == [ZERO] * 5 and tag.key_versions == [0] * 5
+    changes = tag.key_changes
+    again = _rekey(tag, FactoryKeys(), known=[scheme])
+    assert again.planned == [] and again.verified and tag.key_changes == changes
+
+
+def test_a_keyed_tag_is_opened_with_its_own_keys_first():
+    tag, scheme = _sun_tag(), _scheme()
+    _rekey(tag, scheme)
+    tag.failed_auths = 0
+    assert _rekey(tag, scheme).verified
+    assert tag.failed_auths == 0
 
 
 class _CutAfter:

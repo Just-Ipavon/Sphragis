@@ -23,7 +23,12 @@ from sphragis.ev2 import (  # noqa: E402
     session_vectors,
 )
 from sphragis.ndef import encode_uri_file, read_uri, sdm_offsets  # noqa: E402
-from sphragis.provision import ProvisionError, provision_tag, update_binary  # noqa: E402
+from sphragis.provision import (  # noqa: E402
+    ProvisionError,
+    provision_tag,
+    update_binary,
+    update_binary_an12196,
+)
 from sphragis.sdmconfig import (  # noqa: E402
     FACTORY_ACCESS,
     AccessRights,
@@ -177,9 +182,17 @@ def test_same_config():
     assert not same_config(FileSettings(0, FACTORY_ACCESS), sun_settings(o))
 
 
-def test_update_binary_matches_an12196_encoding():
+def test_update_binary_an12196_matches_the_application_note():
     data = encode_uri_file(AN_URL)
-    assert update_binary(0, data)[:5] == H("00D6000053") and update_binary(0, data)[-1] == 0
+    apdu = update_binary_an12196(0, data)
+    assert apdu[:5] == H("00D6000053") and apdu[-1] == 0
+
+
+def test_update_binary_sends_no_le():
+    # Silicon (UID 04341A82161690) answers 6700 to the AN12196 form with a
+    # trailing Le and writes the same bytes without it.
+    data = bytes(range(48))
+    assert update_binary(0x30, data) == H("00D6003030") + data
 
 
 # --- Full provisioning flow against the fake PICC ---------------------------
@@ -195,7 +208,7 @@ def test_provision_factory_tag_then_verify():
     assert report.verified, report.log
     assert report.check.uid == tag.uid.hex().upper()
     assert tag.settings.meta_read == 2 and tag.settings.file_read == 1
-    assert tag.settings.access == locked_access(0)          # writes locked (#13)
+    assert tag.settings.access == locked_access(0)          # writes locked
     assert report.uid == tag.uid
 
     # The engine accepts what the provisioned tag now emits, tap after tap.
@@ -239,7 +252,7 @@ def test_provision_fails_closed_with_non_zero_key():
         provision_tag(tag, BASE)
     assert exc.value.__cause__.sw == 0x91AE    # the PICC rejects RndB'
     assert not tag.settings.sdm_enabled
-    assert tag.writes == 0 and bytes(tag.file[:8]) == b"original"   # untouched (#15)
+    assert tag.writes == 0 and bytes(tag.file[:8]) == b"original"   # untouched
 
 
 def test_free_read_write_right_allows_iso_update():
@@ -273,7 +286,7 @@ def test_unwritable_ndef_file_is_refused():
         provision_tag(tag, BASE)
 
 
-# --- Write lock (#13, #14) and authenticate-before-write (#15) -----------------
+# --- Write lock and authenticate-before-write -----------------------------------
 
 def _raw_update(tag, offset, data):
     """An unauthenticated rewrite, as any phone app would send it."""

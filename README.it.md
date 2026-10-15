@@ -14,14 +14,15 @@ Un toolkit essenziale e ben testato che fa una cosa sola, ma in profondità:
 stabilire se una lettura NFC proviene da un tag NXP **NTAG 424 DNA**
 **autentico e unico** — oppure da un **clone**.
 
-> ⚠️ **Stato: progetto di studio / portfolio.** La crittografia è validata
+> ⚠️ **Stato: v1.0, senza audit indipendente.** La crittografia è validata
 > contro i test vector ufficiali NXP e il codice è stato sottoposto a un
 > auto-audit avversariale (vedi il [threat model](THREAT_MODEL.it.md)), ma
-> **non** è stato verificato in modo indipendente. È stato validato end-to-end
-> su tag fisici NTAG 424 DNA con chiavi di fabbrica (vedi
-> [docs/hardware.it.md](docs/hardware.it.md)), ma non con una gestione delle
-> chiavi di produzione. Non usarlo come unica linea di difesa in produzione
-> senza quel lavoro.
+> **non** è stato verificato da terzi. È stato validato end-to-end su tag
+> fisici NTAG 424 DNA (vedi [docs/hardware.it.md](docs/hardware.it.md)):
+> provisioning, blocco della scrittura, dati di file cifrati, chiavi per UID e
+> ritorno alle chiavi di fabbrica. La custodia delle chiavi (HSM/KMS) è lasciata
+> al deployment. Non usarlo come unica linea di difesa in produzione senza una
+> revisione indipendente. Modifiche: [CHANGELOG.it.md](CHANGELOG.it.md).
 
 Chiunque sa verificare un AES-CMAC. La parte difficile e interessante
 dell'anti-contraffazione è ciò che succede *dopo* che il MAC è valido: provare

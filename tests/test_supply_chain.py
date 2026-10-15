@@ -1,5 +1,5 @@
 """
-Supply-chain guards (#28): the engine refuses the abandoned PyCrypto, the CI
+Supply-chain guards: the engine refuses the abandoned PyCrypto, the CI
 installs only hash-locked dependencies and pins its actions by commit.
 """
 

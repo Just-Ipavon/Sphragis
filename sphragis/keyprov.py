@@ -459,7 +459,9 @@ def _open_session(transport, uid: bytes | None, schemes: Sequence[KeyScheme],
         if uid is not None:
             say(f"UID (from tap): {uid.hex().upper()}")
     probe = uid or bytes(7)
-    for scheme in schemes:
+    # Non-factory schemes first: a keyed tag should not see a failed
+    # authentication with the factory key on every run.
+    for scheme in sorted(schemes, key=_is_factory):
         if isinstance(scheme, FactoryKeys) or uid is not None:
             candidates.append((scheme, uid))
     for scheme, known_uid in candidates:
@@ -587,7 +589,8 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
             + ", ".join(map(str, report.proven)))
 
     # 4. Plan: slots 1-4 first, slot 0 (the session key) last.
-    report.planned = [n for n in (1, 2, 3, 4, 0) if current[n] is not target]
+    # By version, not identity: the caller's FactoryKeys is another instance.
+    report.planned = [n for n in (1, 2, 3, 4, 0) if current[n].version != target.version]
     sends_secrets = bool(report.planned) and not _is_factory(target)
     if inventory is not None:
         report.inventory = inventory.state(report.uid)
