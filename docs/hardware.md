@@ -9,7 +9,7 @@ keys is covered in [Real keys](#real-keys-replacing-the-factory-keys) and
 [key management](key-management.md). Only `tools/rekey.py` issues ChangeKey.
 
 ```bash
-pip install -e ".[hw]"         # pyserial (Chameleon Ultra), nfcpy (PN532)
+pip install -e ".[hw]"         # pyserial (Chameleon Ultra)
 ```
 
 ## Readers
@@ -17,7 +17,6 @@ pip install -e ".[hw]"         # pyserial (Chameleon Ultra), nfcpy (PN532)
 | Backend | `--reader` | Status |
 |---------|------------|--------|
 | Chameleon Ultra (USB serial) | `chameleon --port /dev/ttyACM0` | validated on firmware v2.1 |
-| PN532 via nfcpy | `pn532 --port usb` | not yet validated on hardware |
 | Software tag | `emulator` | read-only ISO subset, no hardware |
 
 The Chameleon Ultra is used as a raw ISO 14443-A frame pipe. Sphragis speaks

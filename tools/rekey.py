@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.reader in (None, "emulator"):
-        parser.error("a hardware reader is required (--reader chameleon|pn532)")
+        parser.error("a hardware reader is required (--reader chameleon --port ...)")
     try:
         uid = bytes.fromhex(args.uid) if args.uid else None
     except ValueError:

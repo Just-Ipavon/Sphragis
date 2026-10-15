@@ -550,7 +550,7 @@ class _Wrapped:
 def _tool_args(tmp_path, *extra):
     secrets = tmp_path / "keys"
     secrets.mkdir(exist_ok=True)
-    return ["--reader", "pn532", "--secrets-dir", _secrets_dir(secrets),
+    return ["--reader", "chameleon", "--secrets-dir", _secrets_dir(secrets),
             "--inventory", str(tmp_path / "inventory.db"), "--context", "DEMO", *extra]
 
 
@@ -602,7 +602,7 @@ def test_rekey_tool_refuses_a_clone_of_a_keyed_uid(tmp_path, capsys):
 ])
 # (and --inventory is mandatory: see test_rekey_tool_needs_an_inventory)
 def test_rekey_tool_refuses_unsafe_invocations(tmp_path, extra):
-    argv = ["--reader", "pn532", "--secrets-dir", _secrets_dir(tmp_path),
+    argv = ["--reader", "chameleon", "--secrets-dir", _secrets_dir(tmp_path),
             "--inventory", str(tmp_path / "inv.db"), *extra]
     with pytest.raises(SystemExit):
         _tool().main(argv)
@@ -616,5 +616,5 @@ def test_rekey_tool_refuses_emulator(tmp_path):
 
 def test_rekey_tool_needs_an_inventory(tmp_path):
     with pytest.raises(SystemExit):
-        _tool().main(["--reader", "pn532", "--secrets-dir", _secrets_dir(tmp_path),
+        _tool().main(["--reader", "chameleon", "--secrets-dir", _secrets_dir(tmp_path),
                       "--dry-run"])

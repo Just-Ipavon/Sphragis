@@ -221,7 +221,7 @@ sphragis/
   diagnostics.py   tap inspection (PICCData byte layout, NDEF offsets)
   ndef.py          NDEF URI file encoding + SDM offset arithmetic
   apdu.py          ISO 7816-4 APDU helpers
-  transport/       ApduTransport: scripted / emulated / ISO-DEP / Chameleon Ultra / PN532
+  transport/       ApduTransport: scripted / emulated / ISO-DEP / Chameleon Ultra
   ev2.py           AuthenticateEV2First + secure messaging (AN12196 vectors)
   sdmconfig.py     SDM file settings: build / parse ChangeFileSettings
   provision.py     idempotent SUN provisioning flow (factory or real tag keys)

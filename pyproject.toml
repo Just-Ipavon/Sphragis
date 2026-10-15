@@ -24,9 +24,9 @@ dependencies = ["pycryptodome>=3.20"]
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
-# Reader transports for tools/ on a hardware host (PN532 via nfcpy, Chameleon
+# Reader transport for tools/ on a hardware host (Chameleon Ultra serial
 # serial link). The core engine never imports these.
-hw = ["nfcpy>=1.0.4", "pyserial>=3.5"]
+hw = ["pyserial>=3.5"]
 # Postgres backends (counter floor, detector history, alert audit) for
 # multi-host deployments; see docs/production.md.
 pg = ["psycopg[binary]>=3.1"]

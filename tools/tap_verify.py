@@ -7,7 +7,7 @@ counter floor, scored clone detection), printing verdict, UID, counter and
 signals. Use --wait to swap tags between taps, e.g. genuine tag then a
 Chameleon emulating a clone, within one detector history.
 
-    python tools/tap_verify.py --reader pn532 --taps 3 --wait
+    python tools/tap_verify.py --reader chameleon --port /dev/ttyACM0 --taps 3 --wait
 
 With --enc the taps are SDMENCFileData URLs (picc_data, enc, cmac): each one
 goes through EncFileVerifier instead, printing the decrypted file data.

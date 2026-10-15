@@ -227,7 +227,7 @@ sphragis/
   diagnostics.py   ispezione del tap (layout byte del PICCData, offset NDEF)
   ndef.py          codifica file NDEF URI + calcolo offset SDM
   apdu.py          helper APDU ISO 7816-4
-  transport/       ApduTransport: scriptato / emulato / ISO-DEP / Chameleon Ultra / PN532
+  transport/       ApduTransport: scriptato / emulato / ISO-DEP / Chameleon Ultra
   ev2.py           AuthenticateEV2First + secure messaging (vettori AN12196)
   sdmconfig.py     impostazioni file SDM: build / parse di ChangeFileSettings
   provision.py     provisioning SUN idempotente (chiavi di fabbrica o reali)
