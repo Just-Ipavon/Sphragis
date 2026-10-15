@@ -204,7 +204,7 @@ class FakeNtag424:
         if ins == 0x3C:
             if data != b"\x00" or self.session:
                 return b"\x91\x7E"        # only the plain, unauthenticated form is modelled
-            return self.signature + b"\x91\x00"
+            return self.signature + b"\x91\x90"     # as on silicon
         if ins == 0x5F:
             return self._change_file_settings(data)
         if ins == 0x8D:

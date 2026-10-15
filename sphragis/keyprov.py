@@ -164,6 +164,7 @@ _P224_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF16A2E0B8F03E13DD29455C5C2A3D
 _P224_G = (0xB70E0CBD6BB4BF7F321390B94A03C1D356C21122343280D6115C1D21,
            0xBD376388B5F723FB4C22DFE6CD4375A05A07476444D5819985007E34)
 SIGNATURE_LEN = 56
+SW_READ_SIG_OK = 0x9190
 
 
 def read_signature(transport) -> bytes:
@@ -177,7 +178,9 @@ def read_signature(transport) -> bytes:
         resp = parse_response(transport.transceive(
             bytes([0x90, INS_ADDITIONAL_FRAME, 0x00, 0x00, 0x00])))
         data += resp.data
-    if resp.sw != SW_OK:
+    # Silicon (NTAG 424 DNA, UID 04084582161690) ends Read_Sig with 9190
+    # rather than 9100; the signature check below is what authenticates it.
+    if resp.sw not in (SW_OK, SW_READ_SIG_OK):
         raise ApduError(resp.sw, "Read_Sig failed")
     if len(data) != SIGNATURE_LEN:
         raise KeyProvisionError(f"Read_Sig returned {len(data)} bytes, expected 56")

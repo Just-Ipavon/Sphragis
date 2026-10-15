@@ -353,6 +353,10 @@ def test_read_signature_apdu():
     sig = sign_uid(UID)
     t = ScriptedTransport([(H("903C0000010000"), sig + H("9100"))])
     assert read_signature(t) == sig and t.exhausted
+    silicon = ScriptedTransport([(H("903C0000010000"), sig + H("9190"))])
+    assert read_signature(silicon) == sig                 # status seen on real tags
+    with pytest.raises(ApduError):
+        read_signature(ScriptedTransport([(H("903C0000010000"), H("911C"))]))
     chained = ScriptedTransport([(H("903C0000010000"), sig[:40] + H("91AF")),
                                  (H("90AF000000"), sig[40:] + H("9100"))])
     assert read_signature(chained) == sig
