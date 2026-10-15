@@ -318,3 +318,94 @@ def test_webhook_sink_requires_https_and_real_secret():
         WebhookAlertSink("http://example.com/hook", os.urandom(32))
     with pytest.raises(ValueError):
         WebhookAlertSink("https://example.com/hook", b"short")
+
+
+# --- Webhook hardening (#25) ------------------------------------------------------
+
+def _one_shot_server(status, location=None):
+    hits = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _answer(self):
+            hits.append((self.command, self.path))
+            self.send_response(status)
+            if location:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_POST = do_GET = _answer  # noqa: N815
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, hits
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_webhook_refuses_redirects(status):
+    target, target_hits = _one_shot_server(204)
+    hook, hook_hits = _one_shot_server(status, f"http://127.0.0.1:{target.server_port}/x")
+    alert = Alert("e1", 1.0, "CLONE_LIKELY", 70, "h:x", 3, None, (), "d")
+    sink = WebhookAlertSink(f"http://127.0.0.1:{hook.server_port}/hook", os.urandom(32),
+                            allow_insecure=True)
+    with pytest.raises(Exception):
+        sink.emit(alert)
+    assert dispatch(alert, [sink]) == 0                # not counted as delivered
+    hook.shutdown()
+    target.shutdown()
+    assert hook_hits and not target_hits               # never followed
+
+
+def test_verify_webhook():
+    from sphragis.alerts import verify_webhook
+    secret, body = os.urandom(32), b'{"event_id":"e1"}'
+    sig = sign_webhook(secret, "1000", body)
+    assert verify_webhook(secret, "1000", sig, body, now=1100)
+    assert not verify_webhook(secret, "1000", sig, body + b" ", now=1100)
+    assert not verify_webhook(secret, "1000", sig, body, now=1000 + 301)   # stale
+    assert not verify_webhook(secret, "1000", sig.replace("a", "b"), body, now=1000)
+    assert not verify_webhook(secret, "x", sig, body, now=1000)
+
+
+def test_background_sink_does_not_block_and_delivers():
+    from sphragis.alerts import BackgroundAlertSink
+    gate, got = threading.Event(), []
+
+    class Slow:
+        def emit(self, alert):
+            gate.wait(5)
+            got.append(alert.event_id)
+
+    sink = BackgroundAlertSink(Slow(), maxsize=2)
+    alert = Alert("e1", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d")
+    assert dispatch(alert, [sink]) == 1                # returned before delivery
+    assert got == []
+    gate.set()
+    sink.flush()
+    assert got == ["e1"]
+    sink.close()
+
+
+def test_background_sink_drops_when_full(caplog):
+    from sphragis.alerts import BackgroundAlertSink
+    gate, busy = threading.Event(), threading.Event()
+
+    class Stuck:
+        def emit(self, alert):
+            busy.set()
+            gate.wait(5)
+
+    sink = BackgroundAlertSink(Stuck(), maxsize=1)
+    alerts = [Alert(f"e{i}", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d")
+              for i in range(3)]
+    assert dispatch(alerts[0], [sink]) == 1
+    assert busy.wait(5)                                # worker holds e0
+    assert dispatch(alerts[1], [sink]) == 1            # fills the one slot
+    assert dispatch(alerts[2], [sink]) == 0            # dropped, never blocks
+    assert "queue full" in caplog.text
+    gate.set()
+    sink.flush()
+    sink.close()

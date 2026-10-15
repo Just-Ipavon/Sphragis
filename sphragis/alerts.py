@@ -7,7 +7,10 @@ flagged verification. Sinks are deliberately small and composable:
 
 - `LogAlertSink`     — a CRITICAL structured log event (wire it to your pager).
 - `SqliteAlertSink`  — a durable, queryable audit trail for investigation.
-- `WebhookAlertSink` — an HMAC-signed JSON POST to an incident endpoint.
+- `WebhookAlertSink` — an HMAC-signed JSON POST to an incident endpoint
+                       (redirects refused; `verify_webhook` for receivers).
+- `BackgroundAlertSink` — delivers through another sink on a worker thread, so
+                       a slow endpoint never delays a verification.
 
 Sinks must never break verification: `dispatch` isolates each sink and logs its
 failure instead of raising.
@@ -20,9 +23,11 @@ import hmac
 import json
 import logging
 import os
+import queue
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from typing import Iterable, Protocol, runtime_checkable
@@ -141,6 +146,36 @@ def sign_webhook(secret: bytes, timestamp: str, body: bytes) -> str:
     return "sha256=" + mac.hexdigest()
 
 
+def verify_webhook(secret: bytes, timestamp: str, signature: str, body: bytes,
+                   *, tolerance: float = 300.0, now: float | None = None) -> bool:
+    """
+    Receiver side of `WebhookAlertSink`: constant-time signature check and a
+    freshness window on the timestamp (`tolerance` seconds either way).
+    Remember the event ids already processed to drop duplicates inside it.
+    """
+    try:
+        ts = int(timestamp)
+    except (TypeError, ValueError):
+        return False
+    current = time.time() if now is None else now
+    if abs(current - ts) > tolerance:
+        return False
+    return hmac.compare_digest(sign_webhook(secret, timestamp, body), signature or "")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect would turn the signed POST into a GET elsewhere (possibly
+    over http) carrying the signature headers: refuse it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code,
+                                     f"webhook redirect to {newurl} refused",
+                                     headers, fp)
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
+
+
 class WebhookAlertSink:
     """
     POST the alert as JSON to an incident endpoint, signed with HMAC-SHA256.
@@ -149,8 +184,10 @@ class WebhookAlertSink:
     (`sha256=<hex>` over `timestamp + "." + body`). The receiver should verify
     the signature in constant time and reject stale timestamps.
 
-    Delivery is synchronous with a short timeout and no retries: a durable sink
-    (`SqliteAlertSink`) should run alongside it as the system of record.
+    Delivery is synchronous with a short timeout and no retries (wrap it in
+    `BackgroundAlertSink` to keep it off the request path); a durable sink
+    (`SqliteAlertSink`) should run alongside it as the system of record. Only a
+    2xx answer counts as delivered; redirects are refused.
     """
 
     def __init__(self, url: str, secret: bytes, timeout: float = 2.0,
@@ -175,6 +212,52 @@ class WebhookAlertSink:
                 "X-Sphragis-Signature": sign_webhook(self._secret, ts, body),
             },
         )
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # noqa: S310
-            if resp.status >= 300:
+        with _opener.open(req, timeout=self._timeout) as resp:  # noqa: S310
+            if not 200 <= resp.status < 300:
                 raise RuntimeError(f"webhook answered HTTP {resp.status}")
+
+
+class BackgroundAlertSink:
+    """
+    Hand alerts to `sink` on a daemon worker thread through a bounded queue.
+    `emit` never blocks: when the queue is full the alert is dropped and logged
+    (a durable sink running alongside keeps the record). Failures of `sink`
+    are logged, as `dispatch` would.
+    """
+
+    def __init__(self, sink: AlertSink, maxsize: int = 1000) -> None:
+        self._sink = sink
+        self._queue: queue.Queue[Alert | None] = queue.Queue(maxsize)
+        self._thread = threading.Thread(target=self._run, name="sphragis-alerts",
+                                        daemon=True)
+        self._thread.start()
+
+    def emit(self, alert: Alert) -> None:
+        try:
+            self._queue.put_nowait(alert)
+        except queue.Full:
+            _log.error("alert queue full: alert dropped",
+                       extra={"fields": {"event_id": alert.event_id}})
+            raise RuntimeError("alert queue full") from None
+
+    def _run(self) -> None:
+        while True:
+            alert = self._queue.get()
+            try:
+                if alert is None:
+                    return
+                self._sink.emit(alert)
+            except Exception:
+                _log.exception("background alert delivery failed",
+                               extra={"fields": {"event_id": alert.event_id,
+                                                 "sink": type(self._sink).__name__}})
+            finally:
+                self._queue.task_done()
+
+    def flush(self) -> None:
+        """Wait until every queued alert has been handed to the sink."""
+        self._queue.join()
+
+    def close(self) -> None:
+        self._queue.put(None)
+        self._thread.join(timeout=5)
