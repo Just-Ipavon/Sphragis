@@ -90,7 +90,7 @@ for signed in read_event_file("events.log"):
 `verify_event` controlla struttura, algoritmo, id della chiave e firma,
 decodifica il payload con un decoder CBOR deterministico rigoroso e solleva
 `EventError` per qualunque altra cosa. Qualsiasi libreria COSE può verificare
-gli eventi: i test li confrontano con `pycose` in entrambe le direzioni.
+gli eventi: i test li confrontano con `python-cwt` in entrambe le direzioni.
 
 ## Vettore di test
 

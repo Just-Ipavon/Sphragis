@@ -22,9 +22,9 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   della chiave; nessun materiale di chiave, nessun tap).
 - Chiave di firma derivata dal segreto `event_signing` (con versioni); chiave
   pubblica su `GET /v1/event-key`. Interfaccia `EventSink`, `FileEventSink`,
-  `verify_event`, vettore di test noto; andata e ritorno verificati con pycose.
+  `verify_event`, vettore di test noto; andata e ritorno verificati con python-cwt.
 - Impostazioni API `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`,
-  `SPHRAGIS_EVENT_KEY_VERSION`. L'extra `test` aggiunge pycose e cbor2 < 6.
+  `SPHRAGIS_EVENT_KEY_VERSION`. L'extra `test` aggiunge python-cwt, cbor2 e cryptography.
 
 ### Agilità crittografica (#37)
 - Le chiavi sono indirizzate per (nome, versione): la versione 1 mantiene i

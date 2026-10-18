@@ -88,7 +88,7 @@ for signed in read_event_file("events.log"):
 `verify_event` checks the structure, the algorithm, the key id and the
 signature, decodes the payload with a strict deterministic CBOR decoder and
 raises `EventError` on anything else. Any COSE library can verify the events
-as well: the tests check them against `pycose` in both directions.
+as well: the tests check them against `python-cwt` in both directions.
 
 ## Test vector
 

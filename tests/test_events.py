@@ -1,9 +1,11 @@
 """
 Signed verification events (COSE_Sign1): deterministic CBOR, a known-answer
-vector, round trips with an independent COSE implementation (pycose), and the
+vector, round trips with an independent COSE implementation (python-cwt), and
+the
 wiring through the service and the API.
 """
 
+import base64
 import os
 import sys
 
@@ -137,35 +139,35 @@ def test_payload_holds_no_key_material_or_raw_tap():
     assert event.uid_ref.startswith("h:")
 
 
-# --- Independent implementation (pycose) -------------------------------------------
+# --- Independent implementation (python-cwt) ---------------------------------------
 
-def test_pycose_verifies_our_events():
-    pytest.importorskip("pycose")
-    from pycose.keys import OKPKey
-    from pycose.keys.curves import Ed25519
-    from pycose.messages import CoseMessage
+def test_cwt_verifies_our_events():
+    pytest.importorskip("cwt")
+    from cwt import COSE, COSEKey
 
-    msg = CoseMessage.decode(bytes.fromhex(KAT_SIGNED))
-    msg.key = OKPKey(crv=Ed25519, x=bytes.fromhex(KAT_PUBLIC_KEY))
-    assert msg.verify_signature()
-    assert msg.phdr_encoded and EVENT_CONTENT_TYPE in msg.phdr.values()
-    assert SignedEvent.from_payload(cbor_decode(msg.payload)) == EVENT
+    x = base64.urlsafe_b64encode(bytes.fromhex(KAT_PUBLIC_KEY)).rstrip(b"=").decode()
+    key = COSEKey.from_jwk({"kty": "OKP", "crv": "Ed25519", "x": x, "alg": "EdDSA",
+                            "kid": "event_signing:v1"})
+    payload = COSE.new().decode(bytes.fromhex(KAT_SIGNED), key)
+    assert SignedEvent.from_payload(cbor_decode(payload)) == EVENT
 
 
-def test_we_verify_events_signed_by_pycose():
-    pytest.importorskip("pycose")
-    from pycose.algorithms import EdDSA
-    from pycose.headers import KID, Algorithm, ContentType
-    from pycose.keys import OKPKey
-    from pycose.keys.curves import Ed25519
-    from pycose.messages import Sign1Message
+def test_we_verify_events_signed_by_cwt():
+    pytest.importorskip("cwt")
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cwt import COSE, COSEKey
 
-    key = OKPKey.generate_key(crv=Ed25519)
-    msg = Sign1Message(phdr={Algorithm: EdDSA, ContentType: EVENT_CONTENT_TYPE,
-                             KID: b"other:v1"},
-                       payload=cbor_encode(EVENT.to_payload()))
-    msg.key = key
-    assert verify_event(msg.encode(), key.x, kid=b"other:v1") == EVENT
+    private = ed25519.Ed25519PrivateKey.generate()
+    pem = private.private_bytes(serialization.Encoding.PEM,
+                                serialization.PrivateFormat.PKCS8,
+                                serialization.NoEncryption())
+    key = COSEKey.from_pem(pem, alg="EdDSA", kid="other:v1")
+    signed = COSE.new().encode_and_sign(cbor_encode(EVENT.to_payload()), key,
+                                        protected={"alg": "EdDSA", "kid": "other:v1"})
+    public = private.public_key().public_bytes(serialization.Encoding.Raw,
+                                               serialization.PublicFormat.Raw)
+    assert verify_event(signed, public, kid=b"other:v1") == EVENT
 
 
 # --- Service and sinks --------------------------------------------------------------

@@ -20,9 +20,9 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   names, time, backend, algorithm and key version; no key material, no tap).
 - Signing key derived from the `event_signing` secret (versioned); public key
   at `GET /v1/event-key`. `EventSink` interface, `FileEventSink`,
-  `verify_event`, known-answer vector; round trips checked against pycose.
+  `verify_event`, known-answer vector; round trips checked against python-cwt.
 - API settings `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`,
-  `SPHRAGIS_EVENT_KEY_VERSION`. The `test` extra adds pycose and cbor2 < 6.
+  `SPHRAGIS_EVENT_KEY_VERSION`. The `test` extra adds python-cwt, cbor2 and cryptography.
 
 ### Crypto agility (#37)
 - Keys are addressed by (name, version): version 1 keeps the unsuffixed names,
