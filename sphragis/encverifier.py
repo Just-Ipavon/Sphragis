@@ -34,16 +34,16 @@ from urllib.parse import unquote_plus
 
 from .backends import AuthenticTap, ForgedTap
 from .counterstore import CounterBackend, CounterStore
-from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
+from .sdm import SdmError, compute_sdmmac
 from .sdmenc import decrypt_file_data
+from .keyring import KeyRing
 from .verifier import (
     _ENC_MARKERS,
     KeyProvider,
     Verdict,
     VerificationResult,
-    _consttime_eq,
+    _first_verifying,
     _query_of,
-    _require_standard_picc,
 )
 
 _HEX = re.compile(r"[0-9A-Fa-f]+")
@@ -130,17 +130,20 @@ class Ntag424EncBackend:
     SUN with SDMENCFileData on NTAG 424 DNA: the SDMMAC covers the mirrored
     encrypted file data, which is decrypted once the MAC verifies and returned
     as the tap's payload. The identity is the UID in upper-case hex.
+
+    `keys` is one provider (key version 1) or a `KeyRing`: each version is
+    tried, newest first, and the one that verifies is reported.
     """
 
     name = "ntag424-sun-enc"
     algorithm = "AES-128-CMAC+AES-128-CBC"
 
-    def __init__(self, keys: KeyProvider, *, picc_param: str = "picc_data",
+    def __init__(self, keys: "KeyProvider | KeyRing", *, picc_param: str = "picc_data",
                  enc_param: str = "enc", mac_param: str = "cmac") -> None:
         names = (picc_param, enc_param, mac_param)
         if len({n.lower() for n in names}) != 3:
             raise ValueError("parameter names must be distinct")
-        self._keys = keys
+        self._ring = KeyRing.of(keys)
         self._names = names
 
     def accepts(self, url_or_query: str) -> bool:
@@ -154,30 +157,31 @@ class Ntag424EncBackend:
 
     def authenticate(self, url_or_query: str) -> AuthenticTap:
         tap = _parse_tap(url_or_query, *self._names)
-        picc = decrypt_picc_data(tap.picc_data, self._keys.meta_read_key())
-        if not picc.raw_tag & _PICC_TAG_CTR_MIRROR:
-            raise SdmError("SDMENCFileData requires SDMReadCtr in PICCData")
-        _require_standard_picc(picc)
-        file_key = self._keys.file_read_key(picc.uid)
+
+        def require_counter(picc):
+            if not picc.raw_tag & _PICC_TAG_CTR_MIRROR:
+                raise SdmError("SDMENCFileData requires SDMReadCtr in PICCData")
 
         # Authenticity, over the raw mirrored bytes
-        expected = compute_sdmmac(file_key, picc.uid, picc.read_counter,
-                                  tap.mac_input)
-        if not _consttime_eq(expected, tap.cmac):
-            # Never echo the unauthenticated UID and counter (decryption oracle).
-            raise ForgedTap("SDMMAC mismatch: payload is not from a genuine tag")
+        def mac_of(picc, keys):
+            return compute_sdmmac(keys.file_read_key(picc.uid), picc.uid,
+                                  picc.read_counter, tap.mac_input)
+
+        version, picc = _first_verifying(self._ring, tap.picc_data, tap.cmac,
+                                         mac_of, require_counter)
+        keys = dict(iter(self._ring))[version]
 
         # The ciphertext is authenticated, now it is safe to decrypt
-        file_data = decrypt_file_data(file_key, picc.uid, picc.read_counter,
-                                      tap.enc_file_data)
+        file_data = decrypt_file_data(keys.file_read_key(picc.uid), picc.uid,
+                                      picc.read_counter, tap.enc_file_data)
         return AuthenticTap(picc.uid_hex, picc.read_counter, self.name,
-                            self.algorithm, file_data)
+                            self.algorithm, file_data, key_version=version)
 
 
 class EncFileVerifier:
     """URL in, verdict + decrypted file data out (SDMENCFileData layout)."""
 
-    def __init__(self, keys: KeyProvider, store: CounterBackend | None = None,
+    def __init__(self, keys: "KeyProvider | KeyRing", store: CounterBackend | None = None,
                  *, picc_param: str = "picc_data", enc_param: str = "enc",
                  mac_param: str = "cmac") -> None:
         self._backend = Ntag424EncBackend(keys, picc_param=picc_param,

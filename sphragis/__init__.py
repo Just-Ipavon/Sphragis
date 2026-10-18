@@ -30,10 +30,17 @@ Testing / demos:
 from . import _cryptocheck  # noqa: F401  (must run before any Crypto import)
 from .alerts import Alert, AlertSink, LogAlertSink, SqliteAlertSink, WebhookAlertSink
 from .analyzer import AnalysisResult, TagAnalyzer
-from .backends import AuthenticTap, ForgedTap, VerificationBackend, select_backend
+from .backends import (
+    AuthenticTap,
+    ForgedTap,
+    Provenance,
+    VerificationBackend,
+    select_backend,
+)
 from .counterstore import CounterBackend, CounterStore
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .diversify import DiversifiedKeys, diversify_key
+from .keyring import KeyRing, build_keyring, versioned_name
 from .encverifier import EncFileVerifier, EncVerificationResult, Ntag424EncBackend
 from .logs import JsonFormatter, UidPseudonymizer, configure_logging
 from .observations import (
@@ -77,6 +84,7 @@ __all__ = [
     "VerificationBackend",
     "AuthenticTap",
     "ForgedTap",
+    "Provenance",
     "select_backend",
     "Ntag424SunBackend",
     "Ntag424EncBackend",
@@ -90,6 +98,9 @@ __all__ = [
     # key management
     "DiversifiedKeys",
     "diversify_key",
+    "KeyRing",
+    "build_keyring",
+    "versioned_name",
     # production layer
     "CounterBackend",
     "SqliteCounterStore",

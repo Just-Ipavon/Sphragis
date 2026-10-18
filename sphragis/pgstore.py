@@ -187,16 +187,21 @@ class PostgresObservationStore(_PgBase):
     );
     CREATE INDEX IF NOT EXISTS sphragis_observations_uid
         ON sphragis_observations (uid, id);
+    ALTER TABLE sphragis_observations
+        ADD COLUMN IF NOT EXISTS backend TEXT,
+        ADD COLUMN IF NOT EXISTS algorithm TEXT,
+        ADD COLUMN IF NOT EXISTS key_version INTEGER;
     """
 
     @staticmethod
     def _rows(conn, uid_hex: str) -> list[Observation]:
         rows = conn.execute(
-            "SELECT counter, ts, reader_id FROM sphragis_observations "
-            "WHERE uid = %s ORDER BY id",
+            "SELECT counter, ts, reader_id, backend, algorithm, key_version "
+            "FROM sphragis_observations WHERE uid = %s ORDER BY id",
             (uid_hex,),
         ).fetchall()
-        return [Observation(int(c), float(t), r) for c, t, r in rows]
+        return [Observation(int(c), float(t), r, b, a, None if k is None else int(k))
+                for c, t, r, b, a, k in rows]
 
     def history(self, uid_hex: str) -> list[Observation]:
         return self._rows(self._connection(), uid_hex.upper())
@@ -211,9 +216,10 @@ class PostgresObservationStore(_PgBase):
                          (_LOCK_NS, uid_hex))
             prior = self._rows(conn, uid_hex)
             conn.execute(
-                "INSERT INTO sphragis_observations (uid, counter, ts, reader_id) "
-                "VALUES (%s, %s, %s, %s)",
-                (uid_hex, obs.counter, obs.timestamp, obs.reader_id),
+                "INSERT INTO sphragis_observations (uid, counter, ts, reader_id, "
+                "backend, algorithm, key_version) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (uid_hex, obs.counter, obs.timestamp, obs.reader_id, obs.backend,
+                 obs.algorithm, obs.key_version),
             )
             conn.execute(
                 "DELETE FROM sphragis_observations WHERE uid = %s AND id NOT IN ("
@@ -240,25 +246,34 @@ class PostgresAlertSink(_PgBase):
         detail          TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS sphragis_alerts_uid ON sphragis_alerts (uid_ref, ts);
+    ALTER TABLE sphragis_alerts
+        ADD COLUMN IF NOT EXISTS backend TEXT,
+        ADD COLUMN IF NOT EXISTS algorithm TEXT,
+        ADD COLUMN IF NOT EXISTS key_version INTEGER;
     """
 
     def emit(self, alert: Alert) -> None:
         self._connection().execute(
-            "INSERT INTO sphragis_alerts VALUES "
-            "(%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+            "INSERT INTO sphragis_alerts (event_id, ts, classification, risk_score, "
+            "uid_ref, read_counter, reader_id, signals, detail, backend, algorithm, "
+            "key_version) VALUES "
+            "(%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)",
             (alert.event_id, alert.timestamp, alert.classification,
              alert.risk_score, alert.uid_ref, alert.read_counter,
-             alert.reader_id, json.dumps(list(alert.signals)), alert.detail),
+             alert.reader_id, json.dumps(list(alert.signals)), alert.detail,
+             alert.backend, alert.algorithm, alert.key_version),
         )
 
     def recent(self, limit: int = 100, uid_ref: str | None = None) -> list[Alert]:
         sql = ("SELECT event_id, ts, classification, risk_score, uid_ref, "
-               "read_counter, reader_id, signals, detail FROM sphragis_alerts")
+               "read_counter, reader_id, signals, detail, backend, algorithm, "
+               "key_version FROM sphragis_alerts")
         args: tuple = ()
         if uid_ref is not None:
             sql += " WHERE uid_ref = %s"
             args = (uid_ref,)
         sql += " ORDER BY ts DESC LIMIT %s"
         rows = self._connection().execute(sql, args + (limit,)).fetchall()
-        return [Alert(r[0], r[1], r[2], r[3], r[4], r[5], r[6], tuple(r[7]), r[8])
+        return [Alert(r[0], r[1], r[2], r[3], r[4], r[5], r[6], tuple(r[7]), r[8],
+                      r[9], r[10], r[11])
                 for r in rows]

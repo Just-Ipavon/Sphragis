@@ -196,6 +196,65 @@ def test_concurrent_taps_are_serialized_per_uid(backend):
     assert len(h.history("04CD")) == 12
 
 
+def test_history_keeps_provenance(backend):
+    h = backend["history"]()
+    obs = Observation(1, 1.0, "gate-A", "ntag424-sun", "AES-128-CMAC", 2)
+    h.observe("04EE", obs, limit=5)
+    h.observe("04EE", Observation(2, 2.0), limit=5)
+    assert h.history("04EE") == [obs, Observation(2, 2.0)]
+
+
+_OLD_SCHEMAS = {
+    "sqlite": [
+        "CREATE TABLE observations (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT "
+        "NOT NULL, counter INTEGER NOT NULL, ts REAL NOT NULL, reader_id TEXT)",
+        "INSERT INTO observations (uid, counter, ts, reader_id) VALUES ('04AA', 5, 1.0, 'g')",
+        "CREATE TABLE alerts (event_id TEXT PRIMARY KEY, ts REAL NOT NULL, "
+        "classification TEXT NOT NULL, risk_score INTEGER NOT NULL, uid_ref TEXT, "
+        "read_counter INTEGER, reader_id TEXT, signals TEXT NOT NULL, detail TEXT NOT NULL)",
+        "INSERT INTO alerts VALUES ('old', 1.0, 'CLONE_LIKELY', 70, 'u', 5, 'g', "
+        "'[\"counter_regression\"]', 'd')",
+    ],
+    "pg": [
+        "CREATE TABLE sphragis_observations (id BIGSERIAL PRIMARY KEY, uid TEXT NOT NULL, "
+        "counter BIGINT NOT NULL, ts DOUBLE PRECISION NOT NULL, reader_id TEXT)",
+        "INSERT INTO sphragis_observations (uid, counter, ts, reader_id) "
+        "VALUES ('04AA', 5, 1.0, 'g')",
+        "CREATE TABLE sphragis_alerts (event_id TEXT PRIMARY KEY, ts DOUBLE PRECISION "
+        "NOT NULL, classification TEXT NOT NULL, risk_score INTEGER NOT NULL, uid_ref TEXT, "
+        "read_counter BIGINT, reader_id TEXT, signals JSONB NOT NULL, detail TEXT NOT NULL)",
+        "INSERT INTO sphragis_alerts VALUES ('old', 1.0, 'CLONE_LIKELY', 70, 'u', 5, 'g', "
+        "'[\"counter_regression\"]', 'd')",
+    ],
+}
+
+
+def test_stores_from_before_provenance_are_migrated(backend):
+    kind, target = backend["spec"]
+    if kind == "sqlite":
+        import sqlite3
+        conn = sqlite3.connect(target)
+        for sql in _OLD_SCHEMAS[kind]:
+            conn.execute(sql)
+        conn.commit()
+        conn.close()
+    else:
+        with psycopg.connect(target, autocommit=True) as conn:
+            for sql in _OLD_SCHEMAS[kind]:
+                conn.execute(sql)
+    h, a = backend["history"](), backend["alerts"]()
+    # Old rows read back with unknown provenance; new rows keep theirs.
+    assert h.history("04AA") == [Observation(5, 1.0, "g")]
+    h.observe("04AA", Observation(6, 2.0, "g", "ntag424-sun", "AES-128-CMAC", 1), limit=5)
+    assert h.history("04AA")[-1].key_version == 1
+    assert a.recent()[0].backend is None
+    new = Alert("new", 2.0, "CLONE_LIKELY", 70, "u", 6, "g", ("x",), "d",
+                "ntag424-sun", "AES-128-CMAC", 2)
+    a.emit(new)
+    assert a.recent()[0] == new
+    backend["history"](), backend["alerts"]()            # migrating twice is a no-op
+
+
 # --- Alert audit trail --------------------------------------------------------
 
 def _alert(event_id, ts, uid_ref="u1"):

@@ -41,6 +41,24 @@ def secure_db_file(path: str) -> None:
     if path != ":memory:" and not os.path.exists(path):
         os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
 
+# Provenance columns (crypto agility): which backend, algorithm and key version
+# produced a row. Rows written before they existed read back as NULL: unknown.
+PROVENANCE_COLUMNS = {"backend": "TEXT", "algorithm": "TEXT", "key_version": "INTEGER"}
+
+
+def add_missing_columns(conn: sqlite3.Connection, table: str,
+                        columns: dict[str, str]) -> None:
+    """Migrate `table` in place by adding the `columns` it lacks."""
+    present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, sql_type in columns.items():
+        if name not in present:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+            except sqlite3.OperationalError as exc:   # another process got there first
+                if "duplicate column" not in str(exc):
+                    raise
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS counters (
     uid         TEXT PRIMARY KEY,

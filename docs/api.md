@@ -71,7 +71,8 @@ sharing the link in a chat does not spend the tap and the owner's next open is
 not a `REPLAY`. A forged `User-Agent` only gets the same neutral answer.
 
 **Detailed**: with `Authorization: Bearer <reader token>` the response also
-includes `classification`, `uid`, `read_counter`, `backend`, `reader_id`, `signals`
+includes `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
+`key_version`, `reader_id`, `signals`
 (name, weight, detail), `detail` and `alerted`. Forged and malformed taps get
 the same answer here too (`classification: INVALID`, no UID, no counter):
 telling them apart would be an oracle on the decrypted PICCData. The log keeps
@@ -189,6 +190,7 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` or `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | log level |
+| `SPHRAGIS_KEY_VERSIONS` | `1` | active key versions, current first (e.g. `2,1`), see [key management](key-management.md#key-versions-and-rotation) |
 | `SPHRAGIS_BACKENDS` | `ntag424-sun` | verification backends to enable (`ntag424-sun`, `ntag424-sun-enc`), see [backends](backends.md) |
 
 Every value is validated at startup: rates, bursts and the travel time must

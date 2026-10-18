@@ -43,6 +43,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 
+from .backends import Provenance
 from .observations import MemoryObservationStore, Observation, ObservationStore
 
 
@@ -130,13 +131,14 @@ class CloneDetector:
         counter: int,
         timestamp: float | None = None,
         reader_id: str | None = None,
+        provenance: Provenance | None = None,
     ) -> DetectionResult:
         uid_hex = uid_hex.upper()
         now = time.time() if timestamp is None else timestamp
         # Read the prior history and record this tap in one atomic step, so
         # concurrent taps for the same UID are scored against each other.
         hist = self._store.observe(
-            uid_hex, Observation(counter, now, reader_id), self.history_limit
+            uid_hex, _observation(counter, now, reader_id, provenance), self.history_limit
         )
         signals: list[Signal] = []
 
@@ -168,6 +170,7 @@ class CloneDetector:
         timestamp: float | None = None,
         reader_id: str | None = None,
         floor_before: int | None = None,
+        provenance: Provenance | None = None,
     ) -> DetectionResult:
         """
         Score a tap the caller has already established as fresh (a new counter
@@ -179,7 +182,7 @@ class CloneDetector:
         uid_hex = uid_hex.upper()
         now = time.time() if timestamp is None else timestamp
         hist = self._store.observe(
-            uid_hex, Observation(counter, now, reader_id), self.history_limit
+            uid_hex, _observation(counter, now, reader_id, provenance), self.history_limit
         )
         return self._aggregate(
             self._history_signals(hist, counter, now, reader_id, floor_before))
@@ -191,6 +194,7 @@ class CloneDetector:
         floor: int,
         timestamp: float | None = None,
         reader_id: str | None = None,
+        provenance: Provenance | None = None,
     ) -> DetectionResult:
         """
         Score a tap the caller's tap ledger found below the floor and never
@@ -213,7 +217,7 @@ class CloneDetector:
                 f"delivered out of order",
             )])
         self._store.observe(
-            uid_hex, Observation(counter, now, reader_id), self.history_limit
+            uid_hex, _observation(counter, now, reader_id, provenance), self.history_limit
         )
         return self._aggregate([Signal(
             "counter_regression", 70,
@@ -295,6 +299,12 @@ class CloneDetector:
         else:
             detail = "counter advancing normally; no duplication signals"
         return DetectionResult(level, score, tuple(signals), detail)
+
+
+def _observation(counter: int, now: float, reader_id: str | None,
+                 provenance: Provenance | None) -> Observation:
+    p = provenance or Provenance()
+    return Observation(counter, now, reader_id, p.backend, p.algorithm, p.key_version)
 
 
 def _floor_observation(hist: list[Observation], floor: int | None) -> Observation | None:

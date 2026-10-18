@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .backends import AuthenticTap, ForgedTap
 from .counterstore import CounterBackend, CounterStore
+from .keyring import KeyRing
 from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
 
 
@@ -145,13 +146,16 @@ class Ntag424SunBackend:
 
     It accepts every tap without an encrypted file-data parameter, malformed
     ones included, so that it reports why they cannot be verified.
+
+    `keys` is one provider (key version 1) or a `KeyRing`: each version is
+    tried, newest first, and the one that verifies is reported.
     """
 
     name = "ntag424-sun"
     algorithm = "AES-128-CMAC"
 
-    def __init__(self, keys: KeyProvider) -> None:
-        self._keys = keys
+    def __init__(self, keys: "KeyProvider | KeyRing") -> None:
+        self._ring = KeyRing.of(keys)
 
     def accepts(self, url_or_query: str) -> bool:
         try:
@@ -162,20 +166,49 @@ class Ntag424SunBackend:
 
     def authenticate(self, url_or_query: str) -> AuthenticTap:
         enc_picc, cmac = _extract_params(url_or_query)
-        picc = decrypt_picc_data(enc_picc, self._keys.meta_read_key())
-        _require_standard_picc(picc)
-        expected = compute_sdmmac(
-            self._keys.file_read_key(picc.uid), picc.uid, picc.read_counter
-        )
-        if not _consttime_eq(expected, cmac):
-            # UID and counter come from an unauthenticated decryption: they go
-            # nowhere (decryption oracle).
-            raise ForgedTap("SDMMAC mismatch: payload is not from a genuine tag")
-        return AuthenticTap(picc.uid_hex, picc.read_counter, self.name, self.algorithm)
+
+        def mac_of(picc, keys):
+            return compute_sdmmac(keys.file_read_key(picc.uid), picc.uid,
+                                  picc.read_counter)
+
+        version, picc = _first_verifying(self._ring, enc_picc, cmac, mac_of)
+        return AuthenticTap(picc.uid_hex, picc.read_counter, self.name,
+                            self.algorithm, key_version=version)
+
+
+def _first_verifying(ring: KeyRing, enc_picc: bytes, cmac: bytes, mac_of,
+                     picc_check=None):
+    """
+    Decrypt the PICCData and check the SDMMAC under each key version, newest
+    first; return (version, picc) for the first that verifies. A PICCData that
+    no version decrypts to the standard layout is malformed (SdmError); one
+    that decrypts but never verifies is forged.
+    """
+    error: SdmError | None = None
+    parsed = False
+    for version, keys in ring:
+        try:
+            picc = decrypt_picc_data(enc_picc, keys.meta_read_key())
+            if picc_check is not None:
+                picc_check(picc)
+            _require_standard_picc(picc)
+        except SdmError as exc:
+            error = error or exc
+            continue
+        parsed = True
+        if _consttime_eq(mac_of(picc, keys), cmac):
+            return version, picc
+    if not parsed:
+        assert error is not None
+        raise error
+    # UID and counter come from an unauthenticated decryption: they go nowhere
+    # (decryption oracle).
+    raise ForgedTap("SDMMAC mismatch: payload is not from a genuine tag")
 
 
 class Verifier:
-    def __init__(self, keys: KeyProvider, store: CounterBackend | None = None) -> None:
+    def __init__(self, keys: "KeyProvider | KeyRing",
+                 store: CounterBackend | None = None) -> None:
         self._backend = Ntag424SunBackend(keys)
         self._store: CounterBackend = store or CounterStore()
 

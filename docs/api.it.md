@@ -74,7 +74,8 @@ apertura del proprietario non è un `REPLAY`. Uno `User-Agent` falsificato
 ottiene solo la stessa risposta neutra.
 
 **Dettagliato**: con `Authorization: Bearer <token lettore>` la risposta
-include anche `classification`, `uid`, `read_counter`, `backend`, `reader_id`, `signals`
+include anche `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
+`key_version`, `reader_id`, `signals`
 (nome, peso, dettaglio), `detail` e `alerted`. I tap forgiati e quelli
 malformati ricevono anche qui la stessa risposta (`classification: INVALID`,
 niente UID né contatore): distinguerli sarebbe un oracolo sul PICCData
@@ -198,6 +199,7 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | livello di log |
+| `SPHRAGIS_KEY_VERSIONS` | `1` | versioni di chiave attive, la corrente per prima (es. `2,1`), vedi [gestione delle chiavi](key-management.it.md#versioni-delle-chiavi-e-rotazione) |
 | `SPHRAGIS_BACKENDS` | `ntag424-sun` | backend di verifica da abilitare (`ntag424-sun`, `ntag424-sun-enc`), vedi [backend](backends.it.md) |
 
 Ogni valore viene validato all'avvio: rate, burst e tempo di viaggio devono

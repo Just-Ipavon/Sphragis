@@ -22,7 +22,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
-from .backends import AuthenticTap, ForgedTap, VerificationBackend, select_backend
+from .backends import (
+    AuthenticTap,
+    ForgedTap,
+    Provenance,
+    VerificationBackend,
+    select_backend,
+)
 from .counterstore import CounterStore, TapLedger
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .sdm import SdmError
@@ -41,6 +47,7 @@ class AnalysisResult:
     backend: str | None = None      # backend that verified the tap
     algorithm: str | None = None    # its authenticator algorithm
     payload: bytes | None = None    # authenticated payload, fresh taps only
+    key_version: int | None = None  # version of the key that verified it
 
     @property
     def is_genuine(self) -> bool:
@@ -138,7 +145,7 @@ class TagAnalyzer:
             return AnalysisResult(
                 "THROTTLED", True, uid_hex, counter, 0, (),
                 "verification refused by admission policy (rate limit)",
-                tap.backend, tap.algorithm,
+                tap.backend, tap.algorithm, key_version=tap.key_version,
             )
 
         record = self._store.record_tap(uid_hex, counter)
@@ -152,13 +159,14 @@ class TagAnalyzer:
             det = self._detector.assess_stale(
                 uid_hex, counter, record.floor_before,
                 timestamp=timestamp, reader_id=reader_id,
+                provenance=Provenance.of(tap),
             )
             return self._result(tap, det)
 
         # 5: a fresh counter: score velocity and gap, and keep it in the history.
         det: DetectionResult = self._detector.assess_fresh(
             uid_hex, counter, timestamp=timestamp, reader_id=reader_id,
-            floor_before=record.floor_before,
+            floor_before=record.floor_before, provenance=Provenance.of(tap),
         )
         return self._result(tap, det, tap.payload)
 
@@ -176,6 +184,7 @@ class TagAnalyzer:
             backend=tap.backend,
             algorithm=tap.algorithm,
             payload=payload,
+            key_version=tap.key_version,
         )
 
     @staticmethod
@@ -191,4 +200,4 @@ class TagAnalyzer:
                                                  f"(floor {floor})")
         return AnalysisResult(RiskLevel.REPLAY.value, True, tap.identity, counter,
                               signal.weight, (signal,), signal.detail,
-                              tap.backend, tap.algorithm)
+                              tap.backend, tap.algorithm, key_version=tap.key_version)

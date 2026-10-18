@@ -13,7 +13,8 @@ Contract
 tap; it must not do any cryptography. `authenticate(url_or_query)` parses and
 verifies the tap and either
 
-- returns an `AuthenticTap` (the authenticator verified),
+- returns an `AuthenticTap` (the authenticator verified, under the key
+  version it reports),
 - raises `ForgedTap` (the tap parsed but its authenticator does not verify; the
   decoded identity and counter are unauthenticated and must not leak), or
 - raises `SdmError` / `ValueError` for malformed input.
@@ -44,6 +45,20 @@ class AuthenticTap:
     backend: str               # name of the backend that verified it
     algorithm: str             # authenticator algorithm, e.g. "AES-128-CMAC"
     payload: bytes | None = None   # authenticated payload (e.g. decrypted file data)
+    key_version: int | None = None  # version of the key that verified it
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """What produced a record: kept with observations, alerts and log lines."""
+
+    backend: str | None = None
+    algorithm: str | None = None
+    key_version: int | None = None
+
+    @classmethod
+    def of(cls, tap: AuthenticTap) -> "Provenance":
+        return cls(tap.backend, tap.algorithm, tap.key_version)
 
 
 class ForgedTap(Exception):

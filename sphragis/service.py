@@ -105,6 +105,8 @@ class VerificationService:
                 risk_score=result.risk_score, uid_ref=uid_ref,
                 read_counter=result.read_counter, reader_id=reader_id,
                 signals=signal_names, detail=result.detail,
+                backend=result.backend, algorithm=result.algorithm,
+                key_version=result.key_version,
             )
             alerted = dispatch(alert, self._sinks) > 0
 
@@ -118,6 +120,8 @@ class VerificationService:
             "read_counter": result.read_counter,
             "reader_id": reader_id,
             "backend": result.backend,
+            "algorithm": result.algorithm,
+            "key_version": result.key_version,
             "alerted": alerted,
         }})
         return VerificationOutcome(event_id, now, result, uid_ref, reader_id, alerted)

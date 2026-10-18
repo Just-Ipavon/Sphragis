@@ -22,10 +22,11 @@ from ..analyzer import TagAnalyzer
 from ..backends import VerificationBackend
 from ..detection import CloneDetector
 from ..encverifier import Ntag424EncBackend
+from ..keyring import build_keyring
 from ..logs import UidPseudonymizer, configure_logging
 from ..observations import SqliteObservationStore
 from ..ratelimit import TokenBucketLimiter
-from ..secrets import EnvSecretsBackend, SecretsBackend, build_diversified_keys
+from ..secrets import EnvSecretsBackend, SecretsBackend
 from ..service import VerificationService
 from ..sqlstore import SqliteCounterStore
 from ..verifier import Ntag424SunBackend
@@ -42,7 +43,7 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     secrets = secrets or EnvSecretsBackend()
     configure_logging(getattr(logging, settings.log_level, logging.INFO))
 
-    keys = build_diversified_keys(secrets, context=settings.key_context)
+    keys = build_keyring(secrets, settings.key_versions, context=settings.key_context)
     if settings.db_url:
         # One shared database for every replica, on any number of hosts.
         from ..pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore

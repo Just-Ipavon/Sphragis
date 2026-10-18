@@ -5,6 +5,18 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Agilità crittografica (#37)
+- Le chiavi sono indirizzate per (nome, versione): la versione 1 mantiene i
+  nomi senza suffisso, la versione N è `<nome>_v<N>`. Un `KeyRing` contiene più
+  versioni attive durante una rotazione; i backend NTAG 424 DNA le provano e
+  riportano quella che ha verificato (`build_keyring`, `SPHRAGIS_KEY_VERSIONS`).
+- Risultati, osservazioni del rilevatore, alert, eventi di log e risposta API
+  dettagliata riportano backend, algoritmo e versione della chiave. Le tabelle
+  di osservazioni e alert su SQLite e Postgres ricevono le colonne sul posto al
+  primo avvio; le righe precedenti risultano sconosciute.
+- Procedura di rotazione e cambi di algoritmo documentati nella gestione delle
+  chiavi.
+
 ### Backend di verifica (#35)
 - Nuova interfaccia `VerificationBackend`: un backend legge e verifica un tap e
   restituisce un `AuthenticTap` normalizzato (identità, contatore, backend,

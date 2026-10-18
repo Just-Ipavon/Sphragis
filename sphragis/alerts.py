@@ -47,6 +47,10 @@ class Alert:
     reader_id: str | None
     signals: tuple[str, ...]
     detail: str
+    # Provenance (crypto agility): None when unknown.
+    backend: str | None = None
+    algorithm: str | None = None
+    key_version: int | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -105,9 +109,11 @@ class SqliteAlertSink:
     def __init__(self, path: str | os.PathLike = "alerts.db") -> None:
         self._path = str(path)
         self._local = threading.local()
-        from .sqlstore import secure_db_file
+        from .sqlstore import PROVENANCE_COLUMNS, add_missing_columns, secure_db_file
         secure_db_file(self._path)
-        self._connection().executescript(_SCHEMA)
+        conn = self._connection()
+        conn.executescript(_SCHEMA)
+        add_missing_columns(conn, "alerts", PROVENANCE_COLUMNS)
 
     def _connection(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -120,14 +126,19 @@ class SqliteAlertSink:
 
     def emit(self, alert: Alert) -> None:
         self._connection().execute(
-            "INSERT INTO alerts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO alerts (event_id, ts, classification, risk_score, uid_ref, "
+            "read_counter, reader_id, signals, detail, backend, algorithm, "
+            "key_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (alert.event_id, alert.timestamp, alert.classification,
              alert.risk_score, alert.uid_ref, alert.read_counter,
-             alert.reader_id, json.dumps(list(alert.signals)), alert.detail),
+             alert.reader_id, json.dumps(list(alert.signals)), alert.detail,
+             alert.backend, alert.algorithm, alert.key_version),
         )
 
     def recent(self, limit: int = 100, uid_ref: str | None = None) -> list[Alert]:
-        sql = "SELECT * FROM alerts"
+        sql = ("SELECT event_id, ts, classification, risk_score, uid_ref, "
+               "read_counter, reader_id, signals, detail, backend, algorithm, "
+               "key_version FROM alerts")
         args: tuple = ()
         if uid_ref is not None:
             sql += " WHERE uid_ref = ?"
@@ -136,7 +147,7 @@ class SqliteAlertSink:
         rows = self._connection().execute(sql, args + (limit,)).fetchall()
         return [
             Alert(r[0], r[1], r[2], r[3], r[4], r[5], r[6],
-                  tuple(json.loads(r[7])), r[8])
+                  tuple(json.loads(r[7])), r[8], r[9], r[10], r[11])
             for r in rows
         ]
 

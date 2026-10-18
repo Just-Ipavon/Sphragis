@@ -5,6 +5,17 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Crypto agility (#37)
+- Keys are addressed by (name, version): version 1 keeps the unsuffixed names,
+  version N is `<name>_v<N>`. A `KeyRing` holds several active versions during
+  a rotation; the NTAG 424 DNA backends try each and report the one that
+  verified (`build_keyring`, `SPHRAGIS_KEY_VERSIONS`).
+- Results, detector observations, alerts, log events and the detailed API
+  response carry the backend, algorithm and key version. SQLite and Postgres
+  observation and alert tables gain the columns in place on first start; older
+  rows read back as unknown.
+- Rotation procedure and algorithm changes documented in key management.
+
 ### Verification backends (#35)
 - New `VerificationBackend` interface: a backend parses and verifies a tap and
   returns a normalized `AuthenticTap` (identity, counter, backend, algorithm,

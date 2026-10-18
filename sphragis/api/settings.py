@@ -104,6 +104,7 @@ class ApiSettings:
     log_uid: str = "hmac"
     log_level: str = "INFO"
     backends: tuple[str, ...] = ("ntag424-sun",)
+    key_versions: tuple[int, ...] = (1,)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -143,6 +144,14 @@ class ApiSettings:
                                 if unknown_backends else ""))
         # Most specific first, whatever order they were listed in.
         backends = tuple(b for b in BACKENDS if b in backends)
+        try:
+            key_versions = tuple(int(v) for v in csv("KEY_VERSIONS", "1"))
+        except ValueError:
+            key_versions = ()
+        if (not key_versions or min(key_versions) < 1
+                or len(set(key_versions)) != len(key_versions)):
+            raise ValueError("SPHRAGIS_KEY_VERSIONS must list distinct key versions "
+                             ">= 1, current first (e.g. 2,1)")
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -166,4 +175,5 @@ class ApiSettings:
             log_uid=log_uid,
             log_level=log_level,
             backends=backends,
+            key_versions=key_versions,
         )
