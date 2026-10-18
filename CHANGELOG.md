@@ -5,6 +5,17 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Verification backends (#35)
+- New `VerificationBackend` interface: a backend parses and verifies a tap and
+  returns a normalized `AuthenticTap` (identity, counter, backend, algorithm,
+  payload); the ledger, detector, service and API no longer depend on the chip.
+- `Ntag424SunBackend` and `Ntag424EncBackend` wrap the existing NTAG 424 DNA
+  verifiers with no behaviour change; `TagAnalyzer(backends=[...])` picks the
+  first backend that accepts each tap, so SDMENCFileData taps can now go
+  through the analyzer and the API (`SPHRAGIS_BACKENDS`).
+- Results carry `backend` and `algorithm`; the detailed API response and the
+  log event carry the backend.
+
 ### Clone detection
 - A counter regression stays in the detector's history: later fresh taps on a
   forked UID carry `prior_divergence` (weak alone) instead of reading as

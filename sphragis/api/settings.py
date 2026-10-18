@@ -40,6 +40,8 @@ from typing import Iterable, Mapping
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = frozenset({"GENUINE", "SUSPICIOUS", "REPLAY", "CLONE_LIKELY",
                              "FORGED", "ERROR", "THROTTLED"})
+# Verification backends selectable with SPHRAGIS_BACKENDS.
+BACKENDS = ("ntag424-sun-enc", "ntag424-sun")
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
@@ -101,6 +103,7 @@ class ApiSettings:
     webhook_url: str | None = None
     log_uid: str = "hmac"
     log_level: str = "INFO"
+    backends: tuple[str, ...] = ("ntag424-sun",)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -131,6 +134,15 @@ class ApiSettings:
         log_level = get("LOG_LEVEL", "INFO").upper()
         if log_level not in _LOG_LEVELS:
             raise ValueError(f"SPHRAGIS_LOG_LEVEL must be one of {', '.join(sorted(_LOG_LEVELS))}")
+        backends = tuple(dict.fromkeys(b.lower() for b in csv("BACKENDS", "ntag424-sun")))
+        unknown_backends = [b for b in backends if b not in BACKENDS]
+        if not backends or unknown_backends:
+            raise ValueError("SPHRAGIS_BACKENDS must list backends among "
+                             + ", ".join(BACKENDS)
+                             + (f" (unknown: {', '.join(unknown_backends)})"
+                                if unknown_backends else ""))
+        # Most specific first, whatever order they were listed in.
+        backends = tuple(b for b in BACKENDS if b in backends)
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -153,4 +165,5 @@ class ApiSettings:
             webhook_url=get("WEBHOOK_URL", "") or None,
             log_uid=log_uid,
             log_level=log_level,
+            backends=backends,
         )

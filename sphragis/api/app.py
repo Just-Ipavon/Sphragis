@@ -275,6 +275,7 @@ def _detailed_body(outcome: VerificationOutcome) -> dict:
         "authentic_mac": r.authentic_mac,
         "uid": r.uid,
         "read_counter": r.read_counter,
+        "backend": r.backend,
         "reader_id": outcome.reader_id,
         "signals": [{"name": s.name, "weight": s.weight, "detail": s.detail}
                     for s in r.signals],

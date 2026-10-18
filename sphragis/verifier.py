@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Protocol
 from urllib.parse import parse_qs, urlparse
 
+from .backends import AuthenticTap, ForgedTap
 from .counterstore import CounterBackend, CounterStore
 from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
 
@@ -100,6 +101,8 @@ def _query_of(url_or_query: str) -> str:
     return url_or_query
 
 
+_ENC_MARKERS = frozenset({"enc", "encfiledata", "encdata"})
+
 _HEX_FIELD = {"picc_data": re.compile(r"[0-9A-Fa-f]{32}"),
               "cmac": re.compile(r"[0-9A-Fa-f]{16}")}
 
@@ -110,10 +113,10 @@ def _extract_params(url_or_query: str) -> tuple[bytes, bytes]:
     # fail-closed check below.
     params = parse_qs(_query_of(url_or_query), keep_blank_values=True)
 
-    # Fail-closed: SDMENCFileData is not supported yet. Refuse rather than
-    # verify a partial message and return a misleading verdict.
+    # Fail-closed: SDMENCFileData is verified by its own backend. Refuse rather
+    # than verify a partial message and return a misleading verdict.
     lower = {k.lower() for k in params}
-    if lower & {"enc", "encfiledata", "encdata"}:
+    if lower & _ENC_MARKERS:
         raise SdmError("encrypted file data present but unsupported: refusing")
 
     # Reject duplicated parameters (parameter pollution) instead of silently
@@ -135,45 +138,67 @@ def _extract_params(url_or_query: str) -> tuple[bytes, bytes]:
     return picc, cmac
 
 
-class Verifier:
-    def __init__(self, keys: KeyProvider, store: CounterBackend | None = None) -> None:
+class Ntag424SunBackend:
+    """
+    Plain SUN on NTAG 424 DNA: AES-128 PICCData (UID + SDMReadCtr) and a
+    truncated AES-CMAC (SDMMAC). The identity is the UID in upper-case hex.
+
+    It accepts every tap without an encrypted file-data parameter, malformed
+    ones included, so that it reports why they cannot be verified.
+    """
+
+    name = "ntag424-sun"
+    algorithm = "AES-128-CMAC"
+
+    def __init__(self, keys: KeyProvider) -> None:
         self._keys = keys
-        self._store: CounterBackend = store or CounterStore()
 
-    def verify(self, url_or_query: str) -> VerificationResult:
-        # 1 + 2: parse and decrypt
+    def accepts(self, url_or_query: str) -> bool:
         try:
-            enc_picc, cmac = _extract_params(url_or_query)
-            picc = decrypt_picc_data(enc_picc, self._keys.meta_read_key())
-            _require_standard_picc(picc)
-        except SdmError as exc:
-            return VerificationResult(Verdict.ERROR, detail=str(exc))
+            params = parse_qs(_query_of(url_or_query), keep_blank_values=True)
+        except SdmError:
+            return True
+        return not {k.lower() for k in params} & _ENC_MARKERS
 
-        uid_hex = picc.uid_hex
-
-        # 3: authenticity
+    def authenticate(self, url_or_query: str) -> AuthenticTap:
+        enc_picc, cmac = _extract_params(url_or_query)
+        picc = decrypt_picc_data(enc_picc, self._keys.meta_read_key())
+        _require_standard_picc(picc)
         expected = compute_sdmmac(
             self._keys.file_read_key(picc.uid), picc.uid, picc.read_counter
         )
         if not _consttime_eq(expected, cmac):
-            # UID and counter come from an unauthenticated decryption: echoing
-            # them would let anyone decrypt arbitrary blocks under MetaRead.
-            return VerificationResult(
-                Verdict.FORGED,
-                detail="SDMMAC mismatch: payload is not from a genuine tag",
-            )
+            # UID and counter come from an unauthenticated decryption: they go
+            # nowhere (decryption oracle).
+            raise ForgedTap("SDMMAC mismatch: payload is not from a genuine tag")
+        return AuthenticTap(picc.uid_hex, picc.read_counter, self.name, self.algorithm)
+
+
+class Verifier:
+    def __init__(self, keys: KeyProvider, store: CounterBackend | None = None) -> None:
+        self._backend = Ntag424SunBackend(keys)
+        self._store: CounterBackend = store or CounterStore()
+
+    def verify(self, url_or_query: str) -> VerificationResult:
+        # 1-3: parse, decrypt, check the SDMMAC
+        try:
+            tap = self._backend.authenticate(url_or_query)
+        except SdmError as exc:
+            return VerificationResult(Verdict.ERROR, detail=str(exc))
+        except ForgedTap as exc:
+            return VerificationResult(Verdict.FORGED, detail=str(exc))
 
         # 4: freshness (replay / clone). Atomic check-and-advance closes the
         # TOCTOU window between "is it fresh?" and "record it".
-        if not self._store.check_and_advance(uid_hex, picc.read_counter):
-            last = self._store.last_counter(uid_hex)
+        if not self._store.check_and_advance(tap.identity, tap.counter):
+            last = self._store.last_counter(tap.identity)
             return VerificationResult(
-                Verdict.REPLAY, uid=uid_hex, read_counter=picc.read_counter,
-                detail=f"counter {picc.read_counter} <= last seen {last}: "
+                Verdict.REPLAY, uid=tap.identity, read_counter=tap.counter,
+                detail=f"counter {tap.counter} <= last seen {last}: "
                        f"replayed URL or cloned tag",
             )
 
         return VerificationResult(
-            Verdict.AUTHENTIC, uid=uid_hex, read_counter=picc.read_counter,
+            Verdict.AUTHENTIC, uid=tap.identity, read_counter=tap.counter,
             detail="genuine tag, fresh tap",
         )

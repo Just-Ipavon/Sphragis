@@ -7,6 +7,9 @@ Cryptographic layer:
 Encrypted file-data mirror (SDMENCFileData):
     from sphragis import EncFileVerifier, decrypt_file_data
 
+Verification backends (chip-specific half of the pipeline):
+    from sphragis import VerificationBackend, Ntag424SunBackend, Ntag424EncBackend
+
 Intelligence layer (scored clone detection):
     from sphragis import TagAnalyzer, CloneDetector, RiskLevel
 
@@ -27,10 +30,11 @@ Testing / demos:
 from . import _cryptocheck  # noqa: F401  (must run before any Crypto import)
 from .alerts import Alert, AlertSink, LogAlertSink, SqliteAlertSink, WebhookAlertSink
 from .analyzer import AnalysisResult, TagAnalyzer
+from .backends import AuthenticTap, ForgedTap, VerificationBackend, select_backend
 from .counterstore import CounterBackend, CounterStore
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .diversify import DiversifiedKeys, diversify_key
-from .encverifier import EncFileVerifier, EncVerificationResult
+from .encverifier import EncFileVerifier, EncVerificationResult, Ntag424EncBackend
 from .logs import JsonFormatter, UidPseudonymizer, configure_logging
 from .observations import (
     MemoryObservationStore,
@@ -52,7 +56,7 @@ from .secrets import (
 )
 from .service import VerificationOutcome, VerificationService
 from .sqlstore import SqliteCounterStore
-from .verifier import StaticKeys, Verdict, VerificationResult, Verifier
+from .verifier import Ntag424SunBackend, StaticKeys, Verdict, VerificationResult, Verifier
 
 __all__ = [
     # crypto
@@ -69,6 +73,13 @@ __all__ = [
     "EncVerificationResult",
     "decrypt_file_data",
     "encrypt_file_data",
+    # verification backends
+    "VerificationBackend",
+    "AuthenticTap",
+    "ForgedTap",
+    "select_backend",
+    "Ntag424SunBackend",
+    "Ntag424EncBackend",
     # intelligence
     "TagAnalyzer",
     "AnalysisResult",

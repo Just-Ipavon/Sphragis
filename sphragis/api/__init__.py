@@ -19,13 +19,16 @@ from ..alerts import (
     WebhookAlertSink,
 )
 from ..analyzer import TagAnalyzer
+from ..backends import VerificationBackend
 from ..detection import CloneDetector
+from ..encverifier import Ntag424EncBackend
 from ..logs import UidPseudonymizer, configure_logging
 from ..observations import SqliteObservationStore
 from ..ratelimit import TokenBucketLimiter
 from ..secrets import EnvSecretsBackend, SecretsBackend, build_diversified_keys
 from ..service import VerificationService
 from ..sqlstore import SqliteCounterStore
+from ..verifier import Ntag424SunBackend
 from .app import create_app
 from .settings import ApiSettings, parse_reader_tokens
 
@@ -51,7 +54,9 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
                           SqliteCounterStore(settings.db_path))
         audit = SqliteAlertSink(settings.db_path)
     detector = CloneDetector(min_travel_seconds=settings.min_travel_seconds, store=history)
-    analyzer = TagAnalyzer(keys, detector=detector, store=floor)
+    factories = {"ntag424-sun-enc": Ntag424EncBackend, "ntag424-sun": Ntag424SunBackend}
+    backends: list[VerificationBackend] = [factories[n](keys) for n in settings.backends]
+    analyzer = TagAnalyzer(backends=backends, detector=detector, store=floor)
 
     sinks: list[AlertSink] = [LogAlertSink(), audit]
     if settings.webhook_url:

@@ -5,6 +5,18 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Backend di verifica (#35)
+- Nuova interfaccia `VerificationBackend`: un backend legge e verifica un tap e
+  restituisce un `AuthenticTap` normalizzato (identità, contatore, backend,
+  algoritmo, payload); registro, rilevatore, servizio e API non dipendono più
+  dal chip.
+- `Ntag424SunBackend` e `Ntag424EncBackend` incapsulano i verificatori NTAG 424
+  DNA esistenti senza cambiarne il comportamento; `TagAnalyzer(backends=[...])`
+  sceglie il primo backend che accetta ogni tap, quindi i tap con
+  SDMENCFileData passano ora anche per l'analyzer e la API (`SPHRAGIS_BACKENDS`).
+- I risultati portano `backend` e `algorithm`; la risposta API dettagliata e
+  l'evento di log riportano il backend.
+
 ### Rilevamento dei cloni
 - Una regressione del contatore resta nella cronologia del rilevatore: i tap
   nuovi successivi su un UID biforcato portano `prior_divergence` (debole da

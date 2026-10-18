@@ -117,6 +117,7 @@ class VerificationService:
             "uid_ref": uid_ref,
             "read_counter": result.read_counter,
             "reader_id": reader_id,
+            "backend": result.backend,
             "alerted": alerted,
         }})
         return VerificationOutcome(event_id, now, result, uid_ref, reader_id, alerted)
