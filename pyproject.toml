@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sphragis"
-version = "1.0.0"
+version = "2.0.0"
 description = "Cryptographic clone-detection engine for NXP NTAG 424 DNA (SUN/SDM)"
 readme = "README.md"
 requires-python = ">=3.10"

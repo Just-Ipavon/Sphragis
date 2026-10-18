@@ -8,7 +8,7 @@
 
 ### Status
 
-Sphragis 1.0 has its cryptography validated against the official NXP test
+Sphragis 2.0 has its cryptography validated against the official NXP test
 vectors and its code adversarially self-reviewed (see
 [THREAT_MODEL.md](THREAT_MODEL.md)), but it has **not** been independently
 audited. It has been validated end to end on physical NTAG 424 DNA tags,
@@ -20,7 +20,7 @@ Treat it accordingly.
 
 ### Supported versions
 
-Only the latest release (1.0.x) and `main` are supported. There are no
+Only the latest release (2.0.x) and `main` are supported. There are no
 backported fixes to earlier versions.
 
 ### Reporting a vulnerability
@@ -50,7 +50,7 @@ this engine.
 
 ### Stato
 
-Sphragis 1.0 ha la crittografia validata contro i test vector ufficiali NXP e
+Sphragis 2.0 ha la crittografia validata contro i test vector ufficiali NXP e
 il codice sottoposto a un auto-audit avversariale (vedi
 [THREAT_MODEL.it.md](THREAT_MODEL.it.md)), ma **non** è stato verificato in
 modo indipendente. È stato validato end to end su tag NTAG 424 DNA fisici,
@@ -62,7 +62,7 @@ Regolati di conseguenza.
 
 ### Versioni supportate
 
-Sono supportati solo l'ultima release (1.0.x) e `main`. Non ci sono fix
+Sono supportati solo l'ultima release (2.0.x) e `main`. Non ci sono fix
 retroportati alle versioni precedenti.
 
 ### Segnalare una vulnerabilità

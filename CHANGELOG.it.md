@@ -3,7 +3,31 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
-## Non rilasciato
+## 2.0.0 — 2026-10-18
+
+Il motore si apre a più famiglie di chip dietro un'unica interfaccia di
+verifica, con risultati che dicono cosa li ha prodotti e possono essere firmati
+per registri a lungo termine. Il rilevamento dei cloni tiene sotto
+osservazione un UID biforcato.
+
+### Aggiornare dalla 1.0
+- La API pubblica resta compatibile: `TagAnalyzer(keys)`, `Verifier`,
+  `EncFileVerifier`, gli storage e gli endpoint REST funzionano come prima.
+- Alcuni verdetti cambiano di proposito: i tap nuovi su un UID la cui
+  cronologia contiene una regressione del contatore sono `SUSPICIOUS`
+  (`prior_divergence`) invece di `GENUINE`; un contatore che corre più veloce
+  di qualsiasi lettore aggiunge `counter_rate`; due tap rapidi dallo stesso
+  lettore consegnati in ordine inverso sono `SUSPICIOUS` (`counter_reordered`)
+  invece di `CLONE_LIKELY`.
+- Le tabelle di osservazioni e alert su SQLite e Postgres ricevono le colonne
+  `backend`, `algorithm` e `key_version` sul posto al primo avvio; nessuna
+  migrazione manuale. Le righe scritte dalla 1.0 risultano con provenienza
+  sconosciuta.
+- Nuove impostazioni facoltative: `SPHRAGIS_BACKENDS`, `SPHRAGIS_KEY_VERSIONS`,
+  `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`, `SPHRAGIS_EVENT_KEY_VERSION`. I
+  valori di default mantengono il comportamento della 1.0.
+- Il backend FIDO2/WebAuthn è validato solo con un autenticatore software; la
+  validazione su una carta fisica è seguita in #39.
 
 ### Contatori di firma FIDO2 / WebAuthn (#39)
 - `WebAuthnBackend` verifica asserzioni WebAuthn (ES256, EdDSA) di credenziali
