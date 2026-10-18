@@ -5,6 +5,17 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Eventi di verifica firmati (#38)
+- Dichiarazione COSE_Sign1 opzionale per ogni verifica (EdDSA/Ed25519, payload
+  CBOR deterministico: riferimento pseudonimo alla tag, contatore,
+  classificazione, nomi dei segnali, tempo, backend, algoritmo e versione
+  della chiave; nessun materiale di chiave, nessun tap).
+- Chiave di firma derivata dal segreto `event_signing` (con versioni); chiave
+  pubblica su `GET /v1/event-key`. Interfaccia `EventSink`, `FileEventSink`,
+  `verify_event`, vettore di test noto; andata e ritorno verificati con pycose.
+- Impostazioni API `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`,
+  `SPHRAGIS_EVENT_KEY_VERSION`. L'extra `test` aggiunge pycose e cbor2 < 6.
+
 ### Agilità crittografica (#37)
 - Le chiavi sono indirizzate per (nome, versione): la versione 1 mantiene i
   nomi senza suffisso, la versione N è `<nome>_v<N>`. Un `KeyRing` contiene più

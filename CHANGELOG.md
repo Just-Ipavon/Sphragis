@@ -5,6 +5,16 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Signed verification events (#38)
+- Optional COSE_Sign1 statement per verification (EdDSA/Ed25519, deterministic
+  CBOR payload: pseudonymous tag reference, counter, classification, signal
+  names, time, backend, algorithm and key version; no key material, no tap).
+- Signing key derived from the `event_signing` secret (versioned); public key
+  at `GET /v1/event-key`. `EventSink` interface, `FileEventSink`,
+  `verify_event`, known-answer vector; round trips checked against pycose.
+- API settings `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`,
+  `SPHRAGIS_EVENT_KEY_VERSION`. The `test` extra adds pycose and cbor2 < 6.
+
 ### Crypto agility (#37)
 - Keys are addressed by (name, version): version 1 keeps the unsuffixed names,
   version N is `<name>_v<N>`. A `KeyRing` holds several active versions during

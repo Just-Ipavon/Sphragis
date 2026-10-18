@@ -43,6 +43,7 @@ so it can be tested without HTTP. `sphragis/api/` is a thin adapter on top of it
 | `GET`  | `/t?picc_data=…&cmac=…` | The URL a tag points to: a phone opens it on tap |
 | `POST` | `/v1/verify` `{"url": "…"}` | An app or backend forwards a tapped URL |
 | `GET`  | `/healthz` | Liveness probe (not rate limited) |
+| `GET`  | `/v1/event-key` | Public key of the [signed events](events.md), when they are enabled |
 
 Verdicts are always returned as `200`. The other status codes are `401` (bad
 credentials), `422` (malformed body or unknown fields) and `429` (rate limited,
@@ -190,6 +191,9 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` or `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | log level |
+| `SPHRAGIS_EVENTS_FILE` | none | write [signed events](events.md) to this file (needs the `event_signing` secret) |
+| `SPHRAGIS_EVENTS_ON` | all | classifications to sign |
+| `SPHRAGIS_EVENT_KEY_VERSION` | `1` | version of the event signing key |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | active key versions, current first (e.g. `2,1`), see [key management](key-management.md#key-versions-and-rotation) |
 | `SPHRAGIS_BACKENDS` | `ntag424-sun` | verification backends to enable (`ntag424-sun`, `ntag424-sun-enc`), see [backends](backends.md) |
 
@@ -199,8 +203,9 @@ A typo stops the service instead of silently disabling a limit or an alert.
 
 Secrets are read through a `SecretsBackend` (`EnvSecretsBackend` by default,
 which expects `SPHRAGIS_<NAME>` as hex): `master_file` and `meta_read` are
-required, `log_pseudonym` is required in `hmac` mode, and `webhook` is
-required when a webhook URL is set. To use a KMS, pass your own backend to
+required (each active version of them, see `SPHRAGIS_KEY_VERSIONS`),
+`log_pseudonym` is required in `hmac` mode, `webhook` is required when a
+webhook URL is set, and `event_signing` when signed events are enabled. To use a KMS, pass your own backend to
 `create_app_from_env(secrets=…)`.
 
 ## Known limitations

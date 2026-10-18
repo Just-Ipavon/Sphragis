@@ -117,8 +117,10 @@ stream. See [the API docs](api.md#horizontal-scale-shared-detector-history).
   Python 3.10–3.13. CI installs only from it (`pip install --require-hashes
   -r requirements/ci.lock`, then `pip install --no-deps -e .`); deploy the
   same way. After changing `pyproject.toml`, regenerate it with
-  `uv pip compile pyproject.toml --universal --extra api --extra test
-  --extra pg --generate-hashes -o requirements/ci.lock`.
+  `uv pip compile pyproject.toml --universal --python-version 3.10 --extra
+  api --extra test --extra pg --generate-hashes -o requirements/ci.lock`
+  (`--python-version 3.10` keeps the markers for the oldest supported
+  Python).
 - **Actions pinned by commit SHA**, workflows run with `contents: read`.
   Dependabot proposes updates to both the Python dependencies and the pins.
 - **Security workflow:** `pip-audit` on the lock and `bandit` on the code, on

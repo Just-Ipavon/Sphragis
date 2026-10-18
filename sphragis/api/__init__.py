@@ -22,6 +22,7 @@ from ..analyzer import TagAnalyzer
 from ..backends import VerificationBackend
 from ..detection import CloneDetector
 from ..encverifier import Ntag424EncBackend
+from ..events import EventSigner, FileEventSink
 from ..keyring import build_keyring
 from ..logs import UidPseudonymizer, configure_logging
 from ..observations import SqliteObservationStore
@@ -68,12 +69,19 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     pseudo = UidPseudonymizer(
         None if settings.log_uid == "plain" else secrets.get_key("log_pseudonym")
     )
+    signer = sinks_for_events = None
+    if settings.events_file:
+        signer = EventSigner(secrets, version=settings.event_key_version)
+        sinks_for_events = [FileEventSink(settings.events_file)]
     service = VerificationService(
         analyzer,
         alert_sinks=sinks,
         pseudonymizer=pseudo,
         alert_on=settings.alert_on,
         uid_limiter=TokenBucketLimiter(settings.uid_rate, settings.uid_burst),
+        event_signer=signer,
+        event_sinks=sinks_for_events or (),
+        events_on=settings.events_on,
     )
     return create_app(
         service,
@@ -82,4 +90,5 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         trusted_proxies=settings.trusted_proxies,
         throttle_retry_after=1.0 / settings.uid_rate,
         max_body_bytes=settings.max_body_bytes,
+        event_signer=signer,
     )

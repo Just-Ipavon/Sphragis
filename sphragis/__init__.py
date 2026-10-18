@@ -19,6 +19,9 @@ Key management:
 Service layer (logging, alerting, rate limiting):
     from sphragis import VerificationService, SqliteAlertSink, TokenBucketLimiter
 
+Signed verification events (COSE_Sign1):
+    from sphragis import EventSigner, FileEventSink, verify_event
+
 REST API (optional extra `sphragis[api]`):
     uvicorn --factory sphragis.api:create_app_from_env
 
@@ -42,6 +45,15 @@ from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .diversify import DiversifiedKeys, diversify_key
 from .keyring import KeyRing, build_keyring, versioned_name
 from .encverifier import EncFileVerifier, EncVerificationResult, Ntag424EncBackend
+from .events import (
+    EventError,
+    EventSigner,
+    EventSink,
+    FileEventSink,
+    SignedEvent,
+    read_event_file,
+    verify_event,
+)
 from .logs import JsonFormatter, UidPseudonymizer, configure_logging
 from .observations import (
     MemoryObservationStore,
@@ -131,6 +143,14 @@ __all__ = [
     "JsonFormatter",
     "UidPseudonymizer",
     "configure_logging",
+    # signed events
+    "SignedEvent",
+    "EventSigner",
+    "EventSink",
+    "FileEventSink",
+    "EventError",
+    "verify_event",
+    "read_event_file",
 ]
 
 __version__ = "1.0.0"
