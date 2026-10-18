@@ -120,15 +120,17 @@ def test_every_stale_counter_is_replay_or_clone(ledger):
     analyzer = _analyzer(tag, ledger)
     urls = [tag.tap() for _ in range(30)]
     order = urls[::3] + urls[1::3] + urls[2::3] + urls     # out of order, then again
-    floor = 0
+    floor, forked = 0, False
     for i, url in enumerate(order):
         counter = urls.index(url) + 1
         r = analyzer.analyze(url, timestamp=1000 + i)
         if counter > floor:
-            assert r.classification == "GENUINE"
+            # Once the stream has forked, fresh taps carry the doubt (weakly).
+            assert r.classification == ("SUSPICIOUS" if forked else "GENUINE")
             floor = counter
         else:
             assert r.classification in STALE, (counter, floor, r)
+            forked = True
 
 
 # --- Replays and anonymous taps cannot hide a clone ------------------------------
@@ -240,3 +242,94 @@ def test_a_store_upgraded_from_a_bare_floor_raises_no_false_clone(tmp_path):
     assert analyzer.analyze(tag.tap()).classification == "GENUINE"
     clone = KeyCloner.clone(tag, start_counter=109)       # 110: after the ledger began
     assert analyzer.analyze(clone.tap()).classification == "CLONE_LIKELY"
+
+
+# --- A forked counter stream taints the UID ----------------------------------------
+
+def test_fresh_taps_after_a_regression_carry_prior_divergence(ledger):
+    # Pre-play: the clone ran ahead (15), the genuine tag then shows 11. The
+    # clone's next tap (16) is monotonic but must not read as GENUINE.
+    tag = _tag(counter=9)
+    analyzer = _analyzer(tag, ledger)
+    assert analyzer.analyze(tag.tap(), timestamp=1000).classification == "GENUINE"
+    clone = KeyCloner.clone(tag, start_counter=14)
+    assert analyzer.analyze(clone.tap(), timestamp=2000).classification == "GENUINE"
+    r = analyzer.analyze(tag.tap(), timestamp=3000)                  # 11 < 15
+    assert r.classification == "CLONE_LIKELY"
+    r = analyzer.analyze(clone.tap(), timestamp=4000)                # 16
+    assert r.classification == "SUSPICIOUS"
+    assert [s.name for s in r.signals] == ["prior_divergence"]
+
+
+def test_prior_divergence_decays_with_the_history_window(ledger):
+    tag = _tag(counter=10)
+    analyzer = _analyzer(tag, ledger, history_limit=5)
+    analyzer.analyze(tag.tap(), timestamp=1000)
+    analyzer.analyze(KeyCloner.clone(tag, start_counter=1).tap(), timestamp=1100)
+    levels = [analyzer.analyze(tag.tap(), timestamp=1200 + 100 * i).classification
+              for i in range(6)]
+    # The fork shows while the counter it regressed from is still in the window.
+    assert levels == ["SUSPICIOUS"] * 4 + ["GENUINE"] * 2
+
+
+def test_replays_do_not_taint_the_uid(ledger):
+    tag = _tag()
+    analyzer = _analyzer(tag, ledger)
+    first = tag.tap()
+    analyzer.analyze(first, timestamp=1000)
+    analyzer.analyze(tag.tap(), timestamp=1100)
+    assert analyzer.analyze(first, timestamp=1200).classification == "REPLAY"
+    assert analyzer.analyze(tag.tap(), timestamp=1300).classification == "GENUINE"
+
+
+# --- Out-of-order delivery of two quick taps ------------------------------------
+
+def test_two_quick_taps_delivered_out_of_order_are_not_a_clone(ledger):
+    tag = _tag()
+    analyzer = _analyzer(tag, ledger)
+    analyzer.analyze(tag.tap(), timestamp=1000, reader_id="gate-A")
+    first, second = tag.tap(), tag.tap()
+    assert analyzer.analyze(second, timestamp=1100.0,
+                            reader_id="gate-A").classification == "GENUINE"
+    r = analyzer.analyze(first, timestamp=1100.3, reader_id="gate-A")
+    assert r.classification == "SUSPICIOUS"
+    assert [s.name for s in r.signals] == ["counter_reordered"]
+    # Not a fork: the next tap is clean, and the late URL is now a replay.
+    assert analyzer.analyze(tag.tap(), timestamp=1200,
+                            reader_id="gate-A").classification == "GENUINE"
+    assert analyzer.analyze(first, timestamp=1201).classification == "REPLAY"
+
+
+@pytest.mark.parametrize("delay, reader, behind", [
+    (5.0, "gate-A", 1),      # too late
+    (0.3, "gate-B", 1),      # another reader
+    (0.3, None, 1),          # anonymous: nothing ties it to the floor tap
+    (0.3, "gate-A", 3),      # too far below the floor
+])
+def test_reorder_tolerance_is_narrow(ledger, delay, reader, behind):
+    tag = _tag()
+    analyzer = _analyzer(tag, ledger)
+    urls = [tag.tap() for _ in range(4)]
+    analyzer.analyze(urls[3], timestamp=1000.0, reader_id="gate-A")   # floor 4
+    r = analyzer.analyze(urls[3 - behind], timestamp=1000.0 + delay, reader_id=reader)
+    assert r.classification == "CLONE_LIKELY"
+
+
+# --- Counter advancing faster than a tag can be read ------------------------------
+
+def test_counter_racing_ahead_of_any_reader_is_flagged(ledger):
+    tag = _tag()
+    analyzer = _analyzer(tag, ledger)
+    analyzer.analyze(tag.tap(), timestamp=1000)
+    tag.read_counter += 500                               # +500 in 10 s
+    r = analyzer.analyze(tag.tap(), timestamp=1010)
+    assert r.classification == "SUSPICIOUS"
+    assert [s.name for s in r.signals] == ["counter_rate"]
+
+
+def test_offline_taps_over_time_are_not_a_rate_anomaly(ledger):
+    tag = _tag()
+    analyzer = _analyzer(tag, ledger)
+    analyzer.analyze(tag.tap(), timestamp=1000)
+    tag.read_counter += 500                               # +500 over an hour
+    assert analyzer.analyze(tag.tap(), timestamp=4600).classification == "GENUINE"

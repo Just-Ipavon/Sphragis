@@ -74,9 +74,12 @@ class TagAnalyzer:
         admit: Callable[[str], bool] | None = None,
     ) -> AnalysisResult:
         """
-        Stale counters are decided by the tap ledger alone and touch no other
-        state: one already submitted is REPLAY; one below the floor and never
-        submitted is CLONE_LIKELY, once (submitting it again is REPLAY).
+        Stale counters are decided by the tap ledger: one already submitted
+        is REPLAY and touches no other state; one below the floor and never
+        submitted is CLONE_LIKELY, once (submitting it again is REPLAY), and
+        enters the detector's history so later taps carry `prior_divergence`.
+        Two quick taps from one reader arriving out of order are SUSPICIOUS
+        (`counter_reordered`) instead.
 
         `admit`, if given, is called with the UID once the SDMMAC has been
         verified and only for a counter above the floor, before any state is
@@ -129,13 +132,21 @@ class TagAnalyzer:
                 return self._replay(uid_hex, counter, record.floor_before,
                                     "below the floor the UID had when its tap "
                                     "ledger began: treated as a replay")
-            return self._regression(uid_hex, counter, record.floor_before)
+            det = self._detector.assess_stale(
+                uid_hex, counter, record.floor_before,
+                timestamp=timestamp, reader_id=reader_id,
+            )
+            return self._result(uid_hex, counter, det)
 
         # 5: a fresh counter: score velocity and gap, and keep it in the history.
         det: DetectionResult = self._detector.assess_fresh(
             uid_hex, counter, timestamp=timestamp, reader_id=reader_id,
             floor_before=record.floor_before,
         )
+        return self._result(uid_hex, counter, det)
+
+    @staticmethod
+    def _result(uid_hex: str, counter: int, det: DetectionResult) -> AnalysisResult:
         return AnalysisResult(
             classification=det.risk_level.value,
             authentic_mac=True,
@@ -157,14 +168,4 @@ class TagAnalyzer:
             signal = Signal("stale_counter", 65, f"read counter {counter} is {why} "
                                                  f"(floor {floor})")
         return AnalysisResult(RiskLevel.REPLAY.value, True, uid_hex, counter,
-                              signal.weight, (signal,), signal.detail)
-
-    @staticmethod
-    def _regression(uid_hex: str, counter: int, floor: int | None) -> AnalysisResult:
-        signal = Signal("counter_regression", 70,
-                        f"read counter {counter} is below the floor ({floor}) and was "
-                        f"never submitted before: a second device emitting its own "
-                        f"counter stream (clone), or a genuine tap that was read and "
-                        f"withheld (pre-play)")
-        return AnalysisResult(RiskLevel.CLONE_LIKELY.value, True, uid_hex, counter,
                               signal.weight, (signal,), signal.detail)

@@ -3,6 +3,18 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Clone detection
+- A counter regression stays in the detector's history: later fresh taps on a
+  forked UID carry `prior_divergence` (weak alone) instead of reading as
+  `GENUINE`.
+- New `counter_rate` signal: a counter advancing faster than a tag can be read
+  since the floor was set (`max_tap_rate`, `rate_slack_seconds`).
+- Two quick taps from one reader whose requests arrive out of order are
+  `SUSPICIOUS` (`counter_reordered`) rather than `CLONE_LIKELY`
+  (`reorder_counters`, `reorder_seconds`).
+
 ## 1.0.0 — 2026-10-15
 
 First stable release: the generic NTAG 424 DNA verification engine, hardened

@@ -3,6 +3,19 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Rilevamento dei cloni
+- Una regressione del contatore resta nella cronologia del rilevatore: i tap
+  nuovi successivi su un UID biforcato portano `prior_divergence` (debole da
+  solo) invece di risultare `GENUINE`.
+- Nuovo segnale `counter_rate`: un contatore che avanza più in fretta di quanto
+  una tag possa essere letta dal momento del floor (`max_tap_rate`,
+  `rate_slack_seconds`).
+- Due tap rapidi dallo stesso lettore le cui richieste arrivano in ordine
+  inverso sono `SUSPICIOUS` (`counter_reordered`) anziché `CLONE_LIKELY`
+  (`reorder_counters`, `reorder_seconds`).
+
 ## 1.0.0 — 2026-10-15
 
 Prima release stabile: il motore generico di verifica per NTAG 424 DNA,
