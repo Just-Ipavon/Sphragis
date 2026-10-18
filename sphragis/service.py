@@ -10,7 +10,9 @@ It wraps a `TagAnalyzer` with what a deployed verifier needs around the crypto:
   verified, through the analyzer's `admit` hook;
 - **one structured log event per verification**, with a pseudonymized UID;
 - **alert dispatch** for the classifications that warrant it (`CLONE_LIKELY`
-  by default).
+  by default);
+- optional **signed events** (COSE_Sign1, see `sphragis.events`) pushed to
+  event sinks, e.g. a transparency log.
 
 `reader_id` is taken as given: deciding *who* the reader is (e.g. from an
 authenticated API key) is the caller's job — see `sphragis.api`.
@@ -26,6 +28,7 @@ from typing import Callable, Iterable
 
 from .alerts import Alert, AlertSink, dispatch
 from .analyzer import AnalysisResult, TagAnalyzer
+from .events import EventSigner, EventSink, SignedEvent, publish
 from .logs import UidPseudonymizer
 from .ratelimit import RateLimiter
 
@@ -57,7 +60,14 @@ class VerificationService:
         uid_limiter: RateLimiter | None = None,
         clock: Callable[[], float] = time.time,
         logger: logging.Logger | None = None,
+        event_signer: EventSigner | None = None,
+        event_sinks: Iterable[EventSink] = (),
+        events_on: Iterable[str] | None = None,
     ) -> None:
+        """
+        With an `event_signer`, every verification whose classification is in
+        `events_on` (all of them when None) is signed and sent to `event_sinks`.
+        """
         self._analyzer = analyzer
         self._sinks = tuple(alert_sinks)
         # Pseudonymize by default: a random per-process key keeps raw UIDs out
@@ -68,6 +78,11 @@ class VerificationService:
         self._uid_limiter = uid_limiter
         self._clock = clock
         self._log = logger or _log
+        self._signer = event_signer
+        self._event_sinks = tuple(event_sinks)
+        self._events_on = None if events_on is None else frozenset(events_on)
+        if self._event_sinks and self._signer is None:
+            raise ValueError("event sinks need an event signer")
 
     def _admit(self, uid_hex: str) -> bool:
         assert self._uid_limiter is not None
@@ -105,8 +120,25 @@ class VerificationService:
                 risk_score=result.risk_score, uid_ref=uid_ref,
                 read_counter=result.read_counter, reader_id=reader_id,
                 signals=signal_names, detail=result.detail,
+                backend=result.backend, algorithm=result.algorithm,
+                key_version=result.key_version,
             )
             alerted = dispatch(alert, self._sinks) > 0
+
+        if self._signer is not None and (self._events_on is None
+                                         or result.classification in self._events_on):
+            event = SignedEvent(
+                event_id=event_id, timestamp_ms=int(round(now * 1000)),
+                classification=result.classification, risk_score=result.risk_score,
+                uid_ref=uid_ref, read_counter=result.read_counter, reader_id=reader_id,
+                signals=signal_names, alerted=alerted, backend=result.backend,
+                algorithm=result.algorithm, key_version=result.key_version,
+            )
+            try:
+                publish(self._signer.sign(event), event, self._event_sinks, self._log)
+            except Exception:  # noqa: BLE001 - signing must never break verification
+                self._log.exception("event_signing_failed",
+                                    extra={"fields": {"event_id": event_id}})
 
         level = logging.WARNING if result.classification != "GENUINE" else logging.INFO
         self._log.log(level, "verification", extra={"fields": {
@@ -117,6 +149,9 @@ class VerificationService:
             "uid_ref": uid_ref,
             "read_counter": result.read_counter,
             "reader_id": reader_id,
+            "backend": result.backend,
+            "algorithm": result.algorithm,
+            "key_version": result.key_version,
             "alerted": alerted,
         }})
         return VerificationOutcome(event_id, now, result, uid_ref, reader_id, alerted)

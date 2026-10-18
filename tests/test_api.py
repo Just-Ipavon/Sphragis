@@ -391,7 +391,8 @@ def test_declared_oversized_body_is_refused_without_reading_it():
 # --- Public score and link previewers ---------------------------------------------
 
 def test_public_score_is_fixed_per_verdict():
-    # The analyzer scores this jump 15; the public tier must not reveal that.
+    # The analyzer scores this jump 55 (large_counter_gap 15 + counter_rate 40);
+    # the public tier must not reveal that.
     tag, client, _ = _rig()
     client.get(_path(tag.tap()))
     tag.read_counter = 5000
@@ -399,7 +400,7 @@ def test_public_score_is_fixed_per_verdict():
     assert pub["verdict"] == "SUSPICIOUS" and pub["risk_score"] == 50
     tag.read_counter = 10000
     det = client.post("/v1/verify", json={"url": tag.tap()}, headers=_auth(TOKEN_A)).json()
-    assert det["classification"] == "SUSPICIOUS" and det["risk_score"] == 15
+    assert det["classification"] == "SUSPICIOUS" and det["risk_score"] == 55
 
 
 @pytest.mark.parametrize("agent", [

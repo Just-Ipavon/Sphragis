@@ -7,6 +7,10 @@ Cryptographic layer:
 Encrypted file-data mirror (SDMENCFileData):
     from sphragis import EncFileVerifier, decrypt_file_data
 
+Verification backends (chip-specific half of the pipeline):
+    from sphragis import VerificationBackend, Ntag424SunBackend, Ntag424EncBackend
+    from sphragis import WebAuthnBackend   # FIDO2 signature counters
+
 Intelligence layer (scored clone detection):
     from sphragis import TagAnalyzer, CloneDetector, RiskLevel
 
@@ -15,6 +19,9 @@ Key management:
 
 Service layer (logging, alerting, rate limiting):
     from sphragis import VerificationService, SqliteAlertSink, TokenBucketLimiter
+
+Signed verification events (COSE_Sign1):
+    from sphragis import EventSigner, FileEventSink, verify_event
 
 REST API (optional extra `sphragis[api]`):
     uvicorn --factory sphragis.api:create_app_from_env
@@ -27,10 +34,27 @@ Testing / demos:
 from . import _cryptocheck  # noqa: F401  (must run before any Crypto import)
 from .alerts import Alert, AlertSink, LogAlertSink, SqliteAlertSink, WebhookAlertSink
 from .analyzer import AnalysisResult, TagAnalyzer
+from .backends import (
+    AuthenticTap,
+    ForgedTap,
+    Provenance,
+    VerificationBackend,
+    select_backend,
+)
 from .counterstore import CounterBackend, CounterStore
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .diversify import DiversifiedKeys, diversify_key
-from .encverifier import EncFileVerifier, EncVerificationResult
+from .keyring import KeyRing, build_keyring, versioned_name
+from .encverifier import EncFileVerifier, EncVerificationResult, Ntag424EncBackend
+from .events import (
+    EventError,
+    EventSigner,
+    EventSink,
+    FileEventSink,
+    SignedEvent,
+    read_event_file,
+    verify_event,
+)
 from .logs import JsonFormatter, UidPseudonymizer, configure_logging
 from .observations import (
     MemoryObservationStore,
@@ -52,7 +76,13 @@ from .secrets import (
 )
 from .service import VerificationOutcome, VerificationService
 from .sqlstore import SqliteCounterStore
-from .verifier import StaticKeys, Verdict, VerificationResult, Verifier
+from .webauthn import (
+    MemoryChallengeStore,
+    MemoryCredentialStore,
+    RegisteredCredential,
+    WebAuthnBackend,
+)
+from .verifier import Ntag424SunBackend, StaticKeys, Verdict, VerificationResult, Verifier
 
 __all__ = [
     # crypto
@@ -69,6 +99,18 @@ __all__ = [
     "EncVerificationResult",
     "decrypt_file_data",
     "encrypt_file_data",
+    # verification backends
+    "VerificationBackend",
+    "AuthenticTap",
+    "ForgedTap",
+    "Provenance",
+    "select_backend",
+    "Ntag424SunBackend",
+    "Ntag424EncBackend",
+    "WebAuthnBackend",
+    "RegisteredCredential",
+    "MemoryCredentialStore",
+    "MemoryChallengeStore",
     # intelligence
     "TagAnalyzer",
     "AnalysisResult",
@@ -79,6 +121,9 @@ __all__ = [
     # key management
     "DiversifiedKeys",
     "diversify_key",
+    "KeyRing",
+    "build_keyring",
+    "versioned_name",
     # production layer
     "CounterBackend",
     "SqliteCounterStore",
@@ -109,6 +154,14 @@ __all__ = [
     "JsonFormatter",
     "UidPseudonymizer",
     "configure_logging",
+    # signed events
+    "SignedEvent",
+    "EventSigner",
+    "EventSink",
+    "FileEventSink",
+    "EventError",
+    "verify_event",
+    "read_event_file",
 ]
 
 __version__ = "1.0.0"

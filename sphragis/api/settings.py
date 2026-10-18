@@ -40,6 +40,8 @@ from typing import Iterable, Mapping
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = frozenset({"GENUINE", "SUSPICIOUS", "REPLAY", "CLONE_LIKELY",
                              "FORGED", "ERROR", "THROTTLED"})
+# Verification backends selectable with SPHRAGIS_BACKENDS.
+BACKENDS = ("ntag424-sun-enc", "ntag424-sun")
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
@@ -101,6 +103,11 @@ class ApiSettings:
     webhook_url: str | None = None
     log_uid: str = "hmac"
     log_level: str = "INFO"
+    backends: tuple[str, ...] = ("ntag424-sun",)
+    key_versions: tuple[int, ...] = (1,)
+    events_file: str | None = None
+    events_on: frozenset[str] | None = None        # None: every verification
+    event_key_version: int = 1
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -131,6 +138,34 @@ class ApiSettings:
         log_level = get("LOG_LEVEL", "INFO").upper()
         if log_level not in _LOG_LEVELS:
             raise ValueError(f"SPHRAGIS_LOG_LEVEL must be one of {', '.join(sorted(_LOG_LEVELS))}")
+        backends = tuple(dict.fromkeys(b.lower() for b in csv("BACKENDS", "ntag424-sun")))
+        unknown_backends = [b for b in backends if b not in BACKENDS]
+        if not backends or unknown_backends:
+            raise ValueError("SPHRAGIS_BACKENDS must list backends among "
+                             + ", ".join(BACKENDS)
+                             + (f" (unknown: {', '.join(unknown_backends)})"
+                                if unknown_backends else ""))
+        # Most specific first, whatever order they were listed in.
+        backends = tuple(b for b in BACKENDS if b in backends)
+        try:
+            key_versions = tuple(int(v) for v in csv("KEY_VERSIONS", "1"))
+        except ValueError:
+            key_versions = ()
+        if (not key_versions or min(key_versions) < 1
+                or len(set(key_versions)) != len(key_versions)):
+            raise ValueError("SPHRAGIS_KEY_VERSIONS must list distinct key versions "
+                             ">= 1, current first (e.g. 2,1)")
+        events_on_raw = csv("EVENTS_ON")
+        events_on = frozenset(c.upper() for c in events_on_raw) or None
+        if events_on is not None and events_on - CLASSIFICATIONS:
+            raise ValueError("SPHRAGIS_EVENTS_ON must list classifications among "
+                             + ", ".join(sorted(CLASSIFICATIONS)))
+        try:
+            event_key_version = int(get("EVENT_KEY_VERSION", "1"))
+        except ValueError:
+            event_key_version = 0
+        if event_key_version < 1:
+            raise ValueError("SPHRAGIS_EVENT_KEY_VERSION must be a key version >= 1")
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -153,4 +188,9 @@ class ApiSettings:
             webhook_url=get("WEBHOOK_URL", "") or None,
             log_uid=log_uid,
             log_level=log_level,
+            backends=backends,
+            key_versions=key_versions,
+            events_file=get("EVENTS_FILE", "") or None,
+            events_on=events_on,
+            event_key_version=event_key_version,
         )

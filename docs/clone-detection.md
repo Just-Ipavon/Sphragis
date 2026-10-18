@@ -16,13 +16,18 @@ decides stale taps exactly, whatever happened in between:
 
 - a counter value **already submitted** → `REPLAY`;
 - a counter **below the floor, never submitted** → `CLONE_LIKELY`, **once**:
-  submitting the same URL again is a `REPLAY` and raises no new alert;
+  submitting the same URL again is a `REPLAY` and raises no new alert. The
+  only exception is a counter at most `reorder_counters` (2) below the floor,
+  from the same authenticated reader that set the floor less than
+  `reorder_seconds` (2 s) earlier: two quick taps whose requests arrived out
+  of order, reported as `SUSPICIOUS` (`counter_reordered`);
 - a counter **above the floor** → fresh: the floor advances and the detector
   scores it.
 
-Stale taps touch nothing else: they never enter the detector's history and are
-never charged to the per-UID rate limit, so replaying a captured URL can
-neither hide a clone nor throttle the genuine tag. Two copies of the same tap
+Replays touch nothing else: they never enter the detector's history, and no
+stale tap is charged to the per-UID rate limit, so replaying a captured URL can
+neither hide a clone nor throttle the genuine tag. A regression does enter the
+history, as evidence that the UID's counter stream has forked (see below). Two copies of the same tap
 submitted at once yield one `GENUINE` and one `REPLAY`. A store upgraded from a
 bare floor records where each UID's ledger began; counters at or below that
 point are reported as `REPLAY` (`stale_counter`), since whether they were
@@ -37,6 +42,28 @@ submitted before is unknown.
 | `impossible_velocity` | 60 | a fresh tap at one reader while another reader saw the tag less than `min_travel_seconds` before → two tags. Every authenticated reader observation in that window counts, so an anonymous tap in between hides nothing |
 | `large_counter_gap` | 15 | an unusually large jump above the floor; weak / informational |
 | `stale_counter` | 65 | below the floor the UID had when its ledger began (upgraded stores) |
+| `counter_rate` | 40 | more unseen reads since the floor was set than a tag can produce (`max_tap_rate`, 25/s, after `rate_slack_seconds`, 2 s, of jitter allowance): e.g. +500 in 10 s. An emulator or a clone with a set counter, or a URL delivered long after its tap |
+| `prior_divergence` | 35 | a fresh tap on a UID whose history already holds a regression: the counter stream has forked, so either device may be tapping |
+| `counter_reordered` | 30 | just below the floor, same reader, moments later: out-of-order delivery of two quick taps |
+
+## A forked UID stays suspect
+
+After a regression, a stateless check would see the clone's next tap (say 16
+after a floor of 15) as monotonic and `GENUINE`. A regression therefore stays
+in the detector's history and every later fresh tap carries
+`prior_divergence`: `CLONE_LIKELY` does not mean *this tap is the fake*, it
+means *this UID's counter stream has forked*. The signal is weak on its own,
+since anyone who reads a tag without submitting the URL and submits it after
+the owner's next tap can cause a regression; combined with another signal
+(velocity, rate) it reaches `CLONE_LIKELY`. It fades once the counter the
+regression fell below leaves the `history_limit` window.
+
+## Counter exhaustion
+
+Reading a tag many times without submitting the URLs moves its counter far
+ahead. That costs the owner nothing: the next genuine tap is fresh, and the
+jump raises at most `large_counter_gap` and, if fast, `counter_rate` —
+`SUSPICIOUS`, never a lasting block.
 
 ## Scoring
 

@@ -3,6 +3,59 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### FIDO2 / WebAuthn signature counters (#39)
+- `WebAuthnBackend` verifies WebAuthn assertions (ES256, EdDSA) from
+  registered credentials against single-use, server-issued challenges and
+  feeds the signature counter to the ledger and detector: counter regressions
+  raise the same signals as SUN taps.
+- A counter fixed at 0 (synced passkeys) is *no counter* (`no_counter`,
+  `GENUINE`), not a clone signal; a drop to 0 after a non-zero counter is a
+  regression. RP ID binding trade-off documented.
+
+### Signed verification events (#38)
+- Optional COSE_Sign1 statement per verification (EdDSA/Ed25519, deterministic
+  CBOR payload: pseudonymous tag reference, counter, classification, signal
+  names, time, backend, algorithm and key version; no key material, no tap).
+- Signing key derived from the `event_signing` secret (versioned); public key
+  at `GET /v1/event-key`. `EventSink` interface, `FileEventSink`,
+  `verify_event`, known-answer vector; round trips checked against python-cwt.
+- API settings `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`,
+  `SPHRAGIS_EVENT_KEY_VERSION`. The `test` extra adds python-cwt, cbor2 and cryptography.
+
+### Crypto agility (#37)
+- Keys are addressed by (name, version): version 1 keeps the unsuffixed names,
+  version N is `<name>_v<N>`. A `KeyRing` holds several active versions during
+  a rotation; the NTAG 424 DNA backends try each and report the one that
+  verified (`build_keyring`, `SPHRAGIS_KEY_VERSIONS`).
+- Results, detector observations, alerts, log events and the detailed API
+  response carry the backend, algorithm and key version. SQLite and Postgres
+  observation and alert tables gain the columns in place on first start; older
+  rows read back as unknown.
+- Rotation procedure and algorithm changes documented in key management.
+
+### Verification backends (#35)
+- New `VerificationBackend` interface: a backend parses and verifies a tap and
+  returns a normalized `AuthenticTap` (identity, counter, backend, algorithm,
+  payload); the ledger, detector, service and API no longer depend on the chip.
+- `Ntag424SunBackend` and `Ntag424EncBackend` wrap the existing NTAG 424 DNA
+  verifiers with no behaviour change; `TagAnalyzer(backends=[...])` picks the
+  first backend that accepts each tap, so SDMENCFileData taps can now go
+  through the analyzer and the API (`SPHRAGIS_BACKENDS`).
+- Results carry `backend` and `algorithm`; the detailed API response and the
+  log event carry the backend.
+
+### Clone detection
+- A counter regression stays in the detector's history: later fresh taps on a
+  forked UID carry `prior_divergence` (weak alone) instead of reading as
+  `GENUINE`.
+- New `counter_rate` signal: a counter advancing faster than a tag can be read
+  since the floor was set (`max_tap_rate`, `rate_slack_seconds`).
+- Two quick taps from one reader whose requests arrive out of order are
+  `SUSPICIOUS` (`counter_reordered`) rather than `CLONE_LIKELY`
+  (`reorder_counters`, `reorder_seconds`).
+
 ## 1.0.0 — 2026-10-15
 
 First stable release: the generic NTAG 424 DNA verification engine, hardened

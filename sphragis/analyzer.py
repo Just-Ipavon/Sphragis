@@ -19,13 +19,20 @@ Classification:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, replace
+from typing import Callable, Sequence
 
+from .backends import (
+    AuthenticTap,
+    ForgedTap,
+    Provenance,
+    VerificationBackend,
+    select_backend,
+)
 from .counterstore import CounterStore, TapLedger
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
-from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
-from .verifier import KeyProvider, _consttime_eq, _extract_params, _require_standard_picc
+from .sdm import SdmError
+from .verifier import KeyProvider, Ntag424SunBackend
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,10 @@ class AnalysisResult:
     risk_score: int
     signals: tuple[Signal, ...]
     detail: str
+    backend: str | None = None      # backend that verified the tap
+    algorithm: str | None = None    # its authenticator algorithm
+    payload: bytes | None = None    # authenticated payload, fresh taps only
+    key_version: int | None = None  # version of the key that verified it
 
     @property
     def is_genuine(self) -> bool:
@@ -44,13 +55,28 @@ class AnalysisResult:
 
 
 class TagAnalyzer:
+    """
+    `keys` sets up the plain NTAG 424 DNA SUN backend. To verify other tap
+    shapes or chips, pass `backends` instead: each tap goes to the first
+    backend that accepts it (most specific first), and everything after the
+    cryptographic check is the same for all of them. Identities from backends
+    sharing the stores must not collide (see `sphragis.backends`).
+    """
+
     def __init__(
         self,
-        keys: KeyProvider,
+        keys: KeyProvider | None = None,
         detector: CloneDetector | None = None,
         store: TapLedger | None = None,
+        *,
+        backends: Sequence[VerificationBackend] | None = None,
     ) -> None:
-        self._keys = keys
+        if (keys is None) == (backends is None):
+            raise TypeError("TagAnalyzer needs either keys or backends")
+        self._backends: tuple[VerificationBackend, ...] = (
+            (Ntag424SunBackend(keys),) if backends is None else tuple(backends))
+        if not self._backends:
+            raise TypeError("TagAnalyzer needs at least one backend")
         self._detector = detector or CloneDetector()
         # Persistent tap ledger: the monotonic floor plus every counter value
         # submitted per UID, updated atomically. It decides replay and
@@ -74,9 +100,12 @@ class TagAnalyzer:
         admit: Callable[[str], bool] | None = None,
     ) -> AnalysisResult:
         """
-        Stale counters are decided by the tap ledger alone and touch no other
-        state: one already submitted is REPLAY; one below the floor and never
-        submitted is CLONE_LIKELY, once (submitting it again is REPLAY).
+        Stale counters are decided by the tap ledger: one already submitted
+        is REPLAY and touches no other state; one below the floor and never
+        submitted is CLONE_LIKELY, once (submitting it again is REPLAY), and
+        enters the detector's history so later taps carry `prior_divergence`.
+        Two quick taps from one reader arriving out of order are SUSPICIOUS
+        (`counter_reordered`) instead.
 
         `admit`, if given, is called with the UID once the SDMMAC has been
         verified and only for a counter above the floor, before any state is
@@ -85,32 +114,35 @@ class TagAnalyzer:
         Gating only authentic, fresh taps means neither forged junk nor
         replays of a captured URL can drain a specific tag's budget.
         """
-        # 1-3: parse, decrypt, derive the tag key and check the MAC. Everything
-        #    here runs on unauthenticated input, so any failure is an ERROR,
-        #    never an exception reaching the caller.
+        # 1-3: pick the backend and verify the tap. Everything here runs on
+        #    unauthenticated input, so any failure is an ERROR, never an
+        #    exception reaching the caller.
+        backend = select_backend(self._backends, url_or_query)
+        if backend is None:
+            return AnalysisResult("ERROR", False, None, None, 0, (),
+                                  "no verification backend accepts this tap")
         try:
-            enc_picc, cmac = _extract_params(url_or_query)
-            picc = decrypt_picc_data(enc_picc, self._keys.meta_read_key())
-            _require_standard_picc(picc)
-            expected = compute_sdmmac(
-                self._keys.file_read_key(picc.uid), picc.uid, picc.read_counter
-            )
+            tap = backend.authenticate(url_or_query)
+        except ForgedTap as exc:
+            # The identity and counter are unauthenticated: they are neither
+            # returned (decryption oracle) nor fed to the detector.
+            return AnalysisResult("FORGED", False, None, None, 100, (), str(exc),
+                                  backend.name)
         except (SdmError, ValueError) as exc:
-            return AnalysisResult("ERROR", False, None, None, 0, (), str(exc))
+            return AnalysisResult("ERROR", False, None, None, 0, (), str(exc),
+                                  backend.name)
 
-        uid_hex = picc.uid_hex
-
-        # A bad MAC means UID and counter are unauthenticated: they are neither
-        # returned (decryption oracle) nor fed to the detector.
-        if not _consttime_eq(expected, cmac):
-            return AnalysisResult(
-                "FORGED", False, None, None, 100, (),
-                "SDMMAC mismatch: payload is not from a genuine tag",
-            )
+        uid_hex = tap.identity
 
         # 4: classify against the tap ledger (floor + every counter submitted).
-        counter = picc.read_counter
+        counter = tap.counter
         floor = self._store.last_counter(uid_hex)
+        if counter is None:
+            if floor is None:
+                return self._no_counter(tap, admit)
+            # It counted before: a drop to "no counter" (0) is a regression.
+            tap = replace(tap, counter=0)
+            counter = 0
         stale = floor is not None and counter <= floor
 
         # Only a fresh counter, which needs the physical tag, is charged to the
@@ -119,36 +151,69 @@ class TagAnalyzer:
             return AnalysisResult(
                 "THROTTLED", True, uid_hex, counter, 0, (),
                 "verification refused by admission policy (rate limit)",
+                tap.backend, tap.algorithm, key_version=tap.key_version,
             )
 
         record = self._store.record_tap(uid_hex, counter)
         if not record.new:                       # already submitted (or a racing copy)
-            return self._replay(uid_hex, counter, record.floor_before)
+            return self._replay(tap, record.floor_before)
         if not record.fresh:
             if record.predates_ledger:          # store upgraded from a bare floor
-                return self._replay(uid_hex, counter, record.floor_before,
+                return self._replay(tap, record.floor_before,
                                     "below the floor the UID had when its tap "
                                     "ledger began: treated as a replay")
-            return self._regression(uid_hex, counter, record.floor_before)
+            det = self._detector.assess_stale(
+                uid_hex, counter, record.floor_before,
+                timestamp=timestamp, reader_id=reader_id,
+                provenance=Provenance.of(tap),
+            )
+            return self._result(tap, det)
 
         # 5: a fresh counter: score velocity and gap, and keep it in the history.
         det: DetectionResult = self._detector.assess_fresh(
             uid_hex, counter, timestamp=timestamp, reader_id=reader_id,
-            floor_before=record.floor_before,
+            floor_before=record.floor_before, provenance=Provenance.of(tap),
         )
+        return self._result(tap, det, tap.payload)
+
+    @staticmethod
+    def _result(tap: AuthenticTap, det: DetectionResult,
+                payload: bytes | None = None) -> AnalysisResult:
         return AnalysisResult(
             classification=det.risk_level.value,
             authentic_mac=True,
-            uid=uid_hex,
-            read_counter=counter,
+            uid=tap.identity,
+            read_counter=tap.counter,
             risk_score=det.risk_score,
             signals=det.signals,
             detail=det.detail,
+            backend=tap.backend,
+            algorithm=tap.algorithm,
+            payload=payload,
+            key_version=tap.key_version,
         )
 
     @staticmethod
-    def _replay(uid_hex: str, counter: int, floor: int | None,
+    def _no_counter(tap: AuthenticTap,
+                    admit: Callable[[str], bool] | None) -> AnalysisResult:
+        """An authentic tap from a chip that keeps no counter (e.g. a synced
+        passkey): nothing to score, so no clone detection either."""
+        if admit is not None and not admit(tap.identity):
+            return AnalysisResult(
+                "THROTTLED", True, tap.identity, None, 0, (),
+                "verification refused by admission policy (rate limit)",
+                tap.backend, tap.algorithm, key_version=tap.key_version)
+        signal = Signal("no_counter", 0,
+                        "the authenticator keeps no signature counter: authentic, "
+                        "but counter-based clone detection is not available")
+        return AnalysisResult(RiskLevel.GENUINE.value, True, tap.identity, None, 0,
+                              (signal,), signal.detail, tap.backend, tap.algorithm,
+                              tap.payload, tap.key_version)
+
+    @staticmethod
+    def _replay(tap: AuthenticTap, floor: int | None,
                 why: str | None = None) -> AnalysisResult:
+        counter = tap.counter
         if why is None:
             signal = Signal("exact_replay", 65,
                             f"read counter {counter} was already submitted for this "
@@ -156,15 +221,6 @@ class TagAnalyzer:
         else:
             signal = Signal("stale_counter", 65, f"read counter {counter} is {why} "
                                                  f"(floor {floor})")
-        return AnalysisResult(RiskLevel.REPLAY.value, True, uid_hex, counter,
-                              signal.weight, (signal,), signal.detail)
-
-    @staticmethod
-    def _regression(uid_hex: str, counter: int, floor: int | None) -> AnalysisResult:
-        signal = Signal("counter_regression", 70,
-                        f"read counter {counter} is below the floor ({floor}) and was "
-                        f"never submitted before: a second device emitting its own "
-                        f"counter stream (clone), or a genuine tap that was read and "
-                        f"withheld (pre-play)")
-        return AnalysisResult(RiskLevel.CLONE_LIKELY.value, True, uid_hex, counter,
-                              signal.weight, (signal,), signal.detail)
+        return AnalysisResult(RiskLevel.REPLAY.value, True, tap.identity, counter,
+                              signal.weight, (signal,), signal.detail,
+                              tap.backend, tap.algorithm, key_version=tap.key_version)

@@ -45,6 +45,7 @@ di esso.
 | `GET`  | `/t?picc_data=…&cmac=…` | L'URL a cui punta il tag: il telefono lo apre al tap |
 | `POST` | `/v1/verify` `{"url": "…"}` | Un'app o un backend inoltra l'URL letto |
 | `GET`  | `/healthz` | Sonda di liveness (senza rate limit) |
+| `GET`  | `/v1/event-key` | Chiave pubblica degli [eventi firmati](events.it.md), quando sono abilitati |
 
 I verdetti tornano sempre con `200`. Gli altri codici sono `401` (credenziali
 non valide), `422` (body malformato o campi sconosciuti) e `429` (rate limit,
@@ -74,7 +75,8 @@ apertura del proprietario non è un `REPLAY`. Uno `User-Agent` falsificato
 ottiene solo la stessa risposta neutra.
 
 **Dettagliato**: con `Authorization: Bearer <token lettore>` la risposta
-include anche `classification`, `uid`, `read_counter`, `reader_id`, `signals`
+include anche `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
+`key_version`, `reader_id`, `signals`
 (nome, peso, dettaglio), `detail` e `alerted`. I tap forgiati e quelli
 malformati ricevono anche qui la stessa risposta (`classification: INVALID`,
 niente UID né contatore): distinguerli sarebbe un oracolo sul PICCData
@@ -198,6 +200,11 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | livello di log |
+| `SPHRAGIS_EVENTS_FILE` | nessuno | scrive gli [eventi firmati](events.it.md) in questo file (richiede il segreto `event_signing`) |
+| `SPHRAGIS_EVENTS_ON` | tutte | classificazioni da firmare |
+| `SPHRAGIS_EVENT_KEY_VERSION` | `1` | versione della chiave di firma degli eventi |
+| `SPHRAGIS_KEY_VERSIONS` | `1` | versioni di chiave attive, la corrente per prima (es. `2,1`), vedi [gestione delle chiavi](key-management.it.md#versioni-delle-chiavi-e-rotazione) |
+| `SPHRAGIS_BACKENDS` | `ntag424-sun` | backend di verifica da abilitare (`ntag424-sun`, `ntag424-sun-enc`), vedi [backend](backends.it.md) |
 
 Ogni valore viene validato all'avvio: rate, burst e tempo di viaggio devono
 essere finiti e positivi, `SPHRAGIS_ALERT_ON` deve elencare classificazioni
@@ -207,7 +214,9 @@ silenzio un limite o un alert.
 I segreti si leggono tramite un `SecretsBackend` (di default
 `EnvSecretsBackend`, che si aspetta `SPHRAGIS_<NOME>` in esadecimale):
 `master_file` e `meta_read` sono obbligatori, `log_pseudonym` è obbligatorio
-in modalità `hmac` e `webhook` è obbligatorio se è impostato l'URL del webhook.
+in modalità `hmac`, `webhook` è obbligatorio se è impostato l'URL del webhook
+ed `event_signing` se gli eventi firmati sono abilitati. Servono tutte le
+versioni attive di `master_file` e `meta_read` (vedi `SPHRAGIS_KEY_VERSIONS`).
 Per usare un KMS, passa il tuo backend a `create_app_from_env(secrets=…)`.
 
 ## Limiti noti

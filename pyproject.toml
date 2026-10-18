@@ -30,7 +30,10 @@ hw = ["pyserial>=3.5"]
 # Postgres backends (counter floor, detector history, alert audit) for
 # multi-host deployments; see docs/production.md.
 pg = ["psycopg[binary]>=3.1"]
-test = ["pytest>=7", "httpx>=0.27"]
+# cwt (python-cwt) is an independent COSE implementation the signed-event
+# tests check against; cbor2 and cryptography drive the WebAuthn test
+# authenticator.
+test = ["pytest>=7", "httpx>=0.27", "cwt>=3.0", "cbor2>=5.6", "cryptography>=42"]
 
 [project.urls]
 Homepage = "https://github.com/Just-Ipavon/Sphragis"

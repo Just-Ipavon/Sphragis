@@ -275,6 +275,9 @@ def _detailed_body(outcome: VerificationOutcome) -> dict:
         "authentic_mac": r.authentic_mac,
         "uid": r.uid,
         "read_counter": r.read_counter,
+        "backend": r.backend,
+        "algorithm": r.algorithm,
+        "key_version": r.key_version,
         "reader_id": outcome.reader_id,
         "signals": [{"name": s.name, "weight": s.weight, "detail": s.detail}
                     for s in r.signals],
@@ -293,6 +296,7 @@ def create_app(
     throttle_retry_after: float = 5.0,
     enable_docs: bool = False,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    event_signer=None,
 ) -> FastAPI:
     """
     Build the API around an already-configured service.
@@ -355,6 +359,15 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok"}
+
+    if event_signer is not None:
+        public_key = {"kid": event_signer.kid.decode(), "alg": "EdDSA", "crv": "Ed25519",
+                      "x": event_signer.public_key.hex()}
+
+        @app.get("/v1/event-key")
+        def event_key() -> dict:
+            # Public: anyone may verify the signed events.
+            return dict(public_key)
 
     @app.get("/t")
     def tap(request: Request, reader: str | None = Depends(reader_identity)) -> dict:

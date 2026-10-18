@@ -126,8 +126,10 @@ coerente. Vedi [la documentazione API](api.it.md#scalabilità-orizzontale-cronol
   per Python 3.10–3.13. La CI installa solo da lì (`pip install
   --require-hashes -r requirements/ci.lock`, poi `pip install --no-deps -e
   .`); fai il deploy allo stesso modo. Dopo aver cambiato `pyproject.toml`,
-  rigeneralo con `uv pip compile pyproject.toml --universal --extra api
-  --extra test --extra pg --generate-hashes -o requirements/ci.lock`.
+  rigeneralo con `uv pip compile pyproject.toml --universal --python-version
+  3.10 --extra api --extra test --extra pg --generate-hashes -o
+  requirements/ci.lock` (`--python-version 3.10` mantiene i marker per il
+  Python più vecchio supportato).
 - **Actions fissate per SHA del commit**, workflow con `contents: read`.
   Dependabot propone gli aggiornamenti sia delle dipendenze Python sia delle
   fissature.

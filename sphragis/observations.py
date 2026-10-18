@@ -34,6 +34,11 @@ class Observation:
     counter: int
     timestamp: float
     reader_id: str | None = None
+    # Provenance (crypto agility): None when unknown, e.g. rows written before
+    # these fields existed.
+    backend: str | None = None
+    algorithm: str | None = None
+    key_version: int | None = None
 
 
 @runtime_checkable
@@ -89,9 +94,11 @@ class SqliteObservationStore:
         self._local = threading.local()
         self._all_conns: list[sqlite3.Connection] = []
         self._conns_lock = threading.Lock()
-        from .sqlstore import secure_db_file
+        from .sqlstore import PROVENANCE_COLUMNS, add_missing_columns, secure_db_file
         secure_db_file(self._path)
-        self._connection().executescript(_SCHEMA)
+        conn = self._connection()
+        conn.executescript(_SCHEMA)
+        add_missing_columns(conn, "observations", PROVENANCE_COLUMNS)
 
     def _connection(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -108,11 +115,12 @@ class SqliteObservationStore:
     @staticmethod
     def _rows(conn: sqlite3.Connection, uid_hex: str) -> list[Observation]:
         rows = conn.execute(
-            "SELECT counter, ts, reader_id FROM observations "
-            "WHERE uid = ? ORDER BY id",
+            "SELECT counter, ts, reader_id, backend, algorithm, key_version "
+            "FROM observations WHERE uid = ? ORDER BY id",
             (uid_hex,),
         ).fetchall()
-        return [Observation(int(c), float(t), r) for c, t, r in rows]
+        return [Observation(int(c), float(t), r, b, a, None if k is None else int(k))
+                for c, t, r, b, a, k in rows]
 
     def history(self, uid_hex: str) -> list[Observation]:
         return self._rows(self._connection(), uid_hex.upper())
@@ -124,9 +132,10 @@ class SqliteObservationStore:
         try:
             prior = self._rows(conn, uid_hex)
             conn.execute(
-                "INSERT INTO observations (uid, counter, ts, reader_id) "
-                "VALUES (?, ?, ?, ?)",
-                (uid_hex, obs.counter, obs.timestamp, obs.reader_id),
+                "INSERT INTO observations (uid, counter, ts, reader_id, backend, "
+                "algorithm, key_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (uid_hex, obs.counter, obs.timestamp, obs.reader_id, obs.backend,
+                 obs.algorithm, obs.key_version),
             )
             # Keep only the newest `limit` rows for this UID.
             conn.execute(

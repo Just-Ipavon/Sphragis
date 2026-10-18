@@ -195,6 +195,8 @@ verifier = Verifier(keys, SqliteCounterStore("counters.db"))  # durevole, atomic
 | Argomento | English | Italiano |
 |-----------|---------|----------|
 | Protocollo (SDM/SUN) | [protocol.md](docs/protocol.md) | [protocol.it.md](docs/protocol.it.md) |
+| Eventi firmati (COSE) | [events.md](docs/events.md) | [events.it.md](docs/events.it.md) |
+| Backend di verifica | [backends.md](docs/backends.md) | [backends.it.md](docs/backends.it.md) |
 | Clone detection | [clone-detection.md](docs/clone-detection.md) | [clone-detection.it.md](docs/clone-detection.it.md) |
 | Gestione chiavi | [key-management.md](docs/key-management.md) | [key-management.it.md](docs/key-management.it.md) |
 | API REST | [api.md](docs/api.md) | [api.it.md](docs/api.it.md) |

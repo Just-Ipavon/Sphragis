@@ -150,6 +150,63 @@ from sphragis import EnvSecretsBackend, build_diversified_keys
 keys = build_diversified_keys(EnvSecretsBackend())   # nessuna chiave nel codice
 ```
 
+## Versioni delle chiavi e rotazione
+
+Le chiavi sono indirizzate per **(nome, versione)**. La versione 1 è il nome
+senza suffisso che ogni installazione ha già (`master_file`, `meta_read`); la
+versione N > 1 è `<nome>_v<N>` (`master_file_v2`, variabile
+`SPHRAGIS_MASTER_FILE_V2`, file `master_file_v2`), quindi nessun backend cambia
+e nessun segreto esistente va rinominato.
+
+Un `KeyRing` contiene tutte le versioni attive, dalla più recente. I backend
+NTAG 424 DNA provano ogni versione e riportano quella che ha verificato; un tap
+che si decifra con qualche versione ma non si verifica con nessuna è `FORGED`,
+uno che non si decifra con nessuna è `ERROR`, come prima.
+
+```python
+from sphragis import EnvSecretsBackend, build_keyring, Ntag424SunBackend
+ring = build_keyring(EnvSecretsBackend(), versions=(2, 1))
+backend = Ntag424SunBackend(ring)
+```
+
+Con la API: `SPHRAGIS_KEY_VERSIONS=2,1` (default `1`).
+
+Ogni risultato, osservazione del rilevatore, alert e riga di log registra il
+**backend**, l'**algoritmo** e la **versione della chiave** che l'hanno
+prodotto. Gli storage SQLite e Postgres aggiungono queste colonne sul posto al
+primo avvio (`ALTER TABLE ... ADD COLUMN`); le righe scritte prima risultano
+sconosciute (`None`). L'UID non dipende dalla versione della chiave, quindi il
+floor anti-replay e la cronologia di una tag passano la rotazione invariati.
+
+### Procedura di rotazione
+
+1. Genera i nuovi segreti come versione N (`master_admin_vN`,
+   `master_file_vN`, `meta_read_vN`) accanto agli attuali; fanne un backup.
+2. Distribuisci i verificatori con `SPHRAGIS_KEY_VERSIONS=N,<attuale>`: da qui
+   in poi verificano entrambe le versioni.
+3. Cambia le chiavi delle tag. Oggi `tools/rekey.py` porta una tag tra le
+   chiavi di fabbrica e un solo set di chiavi: riporta la tag con
+   `--to-factory` e i segreti attuali, poi assegnale le chiavi con una
+   directory dei segreti che contiene le nuove chiavi con i nomi senza
+   suffisso. Il suo contatore prosegue, quindi nient'altro cambia.
+4. Controlla il campo `key_version` degli eventi di log. Quando nessuna tag
+   risponde più con la vecchia versione, toglila da `SPHRAGIS_KEY_VERSIONS`; i
+   suoi tap da quel momento falliscono. Un tap conservato da prima della
+   rotazione e inviato dopo viene comunque confrontato con il floor e il
+   registro.
+
+### Cambi di algoritmo
+
+Un algoritmo è un backend: una famiglia di chip o un firmware con un nuovo
+autenticatore (es. firme post-quantum, SUN firmato ECDSA) si aggiunge come
+nuovo backend accanto al vecchio (vedi [backend](backends.it.md)). Finché
+l'identità di un chip resta la stessa, il suo floor e la sua cronologia
+proseguono; ogni record indica l'algoritmo con cui è stato verificato. Un
+registro a valle che conserva i record di verifica a lungo termine può
+rifirmarli o rimarcarli temporalmente con un nuovo algoritmo (es. ML-DSA)
+usando questi campi, mentre le vecchie tag continuano a verificarsi con la
+versione con cui sono state configurate.
+
 ## Limite onesto
 
 Un backend software porta la chiave nella memoria del processo, dove i `bytes`

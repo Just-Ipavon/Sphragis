@@ -140,6 +140,59 @@ from sphragis import EnvSecretsBackend, build_diversified_keys
 keys = build_diversified_keys(EnvSecretsBackend())   # no raw keys in code
 ```
 
+## Key versions and rotation
+
+Keys are addressed by **(name, version)**. Version 1 is the unsuffixed name
+every deployment already has (`master_file`, `meta_read`); version N > 1 is
+`<name>_v<N>` (`master_file_v2`, env `SPHRAGIS_MASTER_FILE_V2`, file
+`master_file_v2`), so no backend changes and no existing secret is renamed.
+
+A `KeyRing` holds every active version, newest first. The NTAG 424 DNA
+backends try each version in turn and report the one that verified; a tap
+that decrypts under some version but verifies under none is `FORGED`, one
+that decrypts under none is `ERROR`, as before.
+
+```python
+from sphragis import EnvSecretsBackend, build_keyring, Ntag424SunBackend
+ring = build_keyring(EnvSecretsBackend(), versions=(2, 1))
+backend = Ntag424SunBackend(ring)
+```
+
+With the API: `SPHRAGIS_KEY_VERSIONS=2,1` (default `1`).
+
+Every result, detector observation, alert and log line records the
+**backend**, the **algorithm** and the **key version** that produced it. The
+SQLite and Postgres stores gain these columns in place on first start
+(`ALTER TABLE ... ADD COLUMN`); rows written before read back as unknown
+(`None`). The UID does not depend on the key version, so a tag's anti-replay
+floor and history carry over a rotation unchanged.
+
+### Rotation procedure
+
+1. Generate the new secrets as version N (`master_admin_vN`, `master_file_vN`,
+   `meta_read_vN`) next to the current ones; back them up.
+2. Deploy verifiers with `SPHRAGIS_KEY_VERSIONS=N,<current>`: both versions
+   verify from now on.
+3. Rekey the tags. Today `tools/rekey.py` moves a tag between factory keys and
+   one key set: bring a tag back with `--to-factory` and the current secrets,
+   then key it with a secrets directory holding the new keys under the
+   unsuffixed names. Its counter carries on, so nothing else changes.
+4. Watch the `key_version` field of the log events. Once no tag answers under
+   the old version, drop it from `SPHRAGIS_KEY_VERSIONS`; its taps then fail.
+   A tap kept from before the rotation and submitted later is still checked
+   against the floor and the ledger.
+
+### Algorithm changes
+
+An algorithm is a backend: a chip family or firmware with a new authenticator
+(e.g. post-quantum signatures, ECDSA-signed SUN) is added as a new backend
+next to the old one (see [backends](backends.md)). As long as the identity of
+a chip stays the same, its floor and history carry over; each record names the
+algorithm it was verified with. A downstream registry that keeps verification
+records for the long term can re-sign or re-timestamp them with a new
+algorithm (e.g. ML-DSA) using these fields, while old tags keep verifying
+under the version they were keyed with.
+
 ## Honest limitation
 
 A software backend fetches the key into process memory, where Python `bytes`

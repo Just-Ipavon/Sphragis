@@ -19,13 +19,18 @@ from ..alerts import (
     WebhookAlertSink,
 )
 from ..analyzer import TagAnalyzer
+from ..backends import VerificationBackend
 from ..detection import CloneDetector
+from ..encverifier import Ntag424EncBackend
+from ..events import EventSigner, FileEventSink
+from ..keyring import build_keyring
 from ..logs import UidPseudonymizer, configure_logging
 from ..observations import SqliteObservationStore
 from ..ratelimit import TokenBucketLimiter
-from ..secrets import EnvSecretsBackend, SecretsBackend, build_diversified_keys
+from ..secrets import EnvSecretsBackend, SecretsBackend
 from ..service import VerificationService
 from ..sqlstore import SqliteCounterStore
+from ..verifier import Ntag424SunBackend
 from .app import create_app
 from .settings import ApiSettings, parse_reader_tokens
 
@@ -39,7 +44,7 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     secrets = secrets or EnvSecretsBackend()
     configure_logging(getattr(logging, settings.log_level, logging.INFO))
 
-    keys = build_diversified_keys(secrets, context=settings.key_context)
+    keys = build_keyring(secrets, settings.key_versions, context=settings.key_context)
     if settings.db_url:
         # One shared database for every replica, on any number of hosts.
         from ..pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore
@@ -51,7 +56,9 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
                           SqliteCounterStore(settings.db_path))
         audit = SqliteAlertSink(settings.db_path)
     detector = CloneDetector(min_travel_seconds=settings.min_travel_seconds, store=history)
-    analyzer = TagAnalyzer(keys, detector=detector, store=floor)
+    factories = {"ntag424-sun-enc": Ntag424EncBackend, "ntag424-sun": Ntag424SunBackend}
+    backends: list[VerificationBackend] = [factories[n](keys) for n in settings.backends]
+    analyzer = TagAnalyzer(backends=backends, detector=detector, store=floor)
 
     sinks: list[AlertSink] = [LogAlertSink(), audit]
     if settings.webhook_url:
@@ -62,12 +69,19 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     pseudo = UidPseudonymizer(
         None if settings.log_uid == "plain" else secrets.get_key("log_pseudonym")
     )
+    signer = sinks_for_events = None
+    if settings.events_file:
+        signer = EventSigner(secrets, version=settings.event_key_version)
+        sinks_for_events = [FileEventSink(settings.events_file)]
     service = VerificationService(
         analyzer,
         alert_sinks=sinks,
         pseudonymizer=pseudo,
         alert_on=settings.alert_on,
         uid_limiter=TokenBucketLimiter(settings.uid_rate, settings.uid_burst),
+        event_signer=signer,
+        event_sinks=sinks_for_events or (),
+        events_on=settings.events_on,
     )
     return create_app(
         service,
@@ -76,4 +90,5 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         trusted_proxies=settings.trusted_proxies,
         throttle_retry_after=1.0 / settings.uid_rate,
         max_body_bytes=settings.max_body_bytes,
+        event_signer=signer,
     )
