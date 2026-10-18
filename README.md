@@ -14,13 +14,14 @@ A focused, well-tested toolkit that does one thing deeply: decide whether an
 NFC tap came from a **genuine, unique** NXP **NTAG 424 DNA** tag — or from a
 **clone**.
 
-> ⚠️ **Status: v1.0, not independently audited.** The cryptography is
+> ⚠️ **Status: v2.0, not independently audited.** The cryptography is
 > validated against the official NXP test vectors and the code was
 > adversarially self-reviewed (see the [threat model](THREAT_MODEL.md)), but it
 > has **not** been audited by a third party. It has been validated end to end
 > on physical NTAG 424 DNA tags (see [docs/hardware.md](docs/hardware.md)):
 > provisioning, write lock, encrypted file data, per-UID keys and the way back
-> to factory keys. Key custody (HSM/KMS) is left to the deployment. Do not use
+> to factory keys. The FIDO2/WebAuthn backend is validated with a software
+> authenticator only. Key custody (HSM/KMS) is left to the deployment. Do not use
 > it as the sole line of defense in production without an independent review.
 > Changes: [CHANGELOG.md](CHANGELOG.md).
 

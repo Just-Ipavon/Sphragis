@@ -92,7 +92,25 @@ first-class, scored detector rather than a simple freshness flag.
   URLs can present them later, once each. Above the floor they verify as
   genuine (a one-time window that only a verifier challenge closes); below it
   each raises one `CLONE_LIKELY`, never more, since the tap ledger remembers
-  every counter submitted.
+  every counter submitted. The regression also marks the UID as forked: its
+  next fresh taps are `SUSPICIOUS` (`prior_divergence`) until the fork leaves
+  the detector's history window. A passer-by who reads a tag and submits the
+  URL late can cause this, which is why the signal alone stays weak.
+- **Two quick taps out of order**: a counter at most two below the floor, from
+  the same authenticated reader within two seconds, is treated as reordered
+  delivery (`SUSPICIOUS`). Whoever controls that reader could hide one
+  regression this way; anonymous taps never qualify.
+- **FIDO2/WebAuthn** (`WebAuthnBackend`): trust rests on the credential
+  registry and on single-use, server-issued challenges; a replayed assertion
+  is refused (`FORGED`). Credentials are bound to the RP ID, and a counter
+  fixed at 0 gives no clone detection at all. Validated with a software
+  authenticator only.
+- **Key versions**: during a rotation every active version verifies, so a tag
+  keyed under a version that leaked keeps verifying until that version is
+  dropped from `SPHRAGIS_KEY_VERSIONS`.
+- **Signed events**: they are as trustworthy as the `event_signing` secret; a
+  leak lets anyone sign statements under that key id until it is rotated and
+  the old public key is withdrawn from the log's trust list.
 - **Public taps carry no location**: impossible-velocity needs authenticated
   readers; anonymous phone taps feed only the counter-based signals.
 - The in-process rate limiter is per replica; a global limit needs a shared

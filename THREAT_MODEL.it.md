@@ -97,7 +97,28 @@ freschezza.
   presentarli più tardi, una volta ciascuno. Sopra il floor verificano come
   autentici (una finestra monouso che chiude solo una sfida del verificatore);
   sotto il floor ognuno genera un `CLONE_LIKELY`, mai di più, perché il
-  registro dei tap ricorda ogni contatore inviato.
+  registro dei tap ricorda ogni contatore inviato. La regressione segna anche
+  l'UID come biforcato: i suoi tap nuovi successivi sono `SUSPICIOUS`
+  (`prior_divergence`) finché la biforcazione non esce dalla finestra della
+  cronologia del rilevatore. Un passante che legge una tag e invia l'URL in
+  ritardo può provocarlo, ed è per questo che da solo il segnale resta debole.
+- **Due tap rapidi in ordine inverso**: un contatore al massimo due sotto il
+  floor, dallo stesso lettore autenticato entro due secondi, è trattato come
+  consegna fuori ordine (`SUSPICIOUS`). Chi controlla quel lettore potrebbe
+  nascondere così una regressione; i tap anonimi non rientrano mai nel caso.
+- **FIDO2/WebAuthn** (`WebAuthnBackend`): la fiducia poggia sul registro delle
+  credenziali e su challenge monouso emesse dal server; un'asserzione
+  rigiocata è rifiutata (`FORGED`). Le credenziali sono legate al RP ID, e un
+  contatore fermo a 0 non dà alcun rilevamento dei cloni. Validato solo con un
+  autenticatore software.
+- **Versioni delle chiavi**: durante una rotazione si verifica con ogni
+  versione attiva, quindi una tag configurata con una versione compromessa
+  continua a verificarsi finché quella versione non viene tolta da
+  `SPHRAGIS_KEY_VERSIONS`.
+- **Eventi firmati**: valgono quanto il segreto `event_signing`; se trapela,
+  chiunque può firmare dichiarazioni con quell'id di chiave finché non viene
+  ruotato e la vecchia chiave pubblica non viene tolta dall'elenco di fiducia
+  del log.
 - **I tap pubblici non portano posizione**: la velocità impossibile richiede
   lettori autenticati; i tap anonimi da telefono alimentano solo i segnali
   basati sul contatore.

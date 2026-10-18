@@ -3,7 +3,28 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.0.0 — 2026-10-18
+
+The engine opens to several chip families behind one verification interface,
+with results that say what produced them and can be signed for long-term
+records. Clone detection keeps a forked UID suspect.
+
+### Upgrading from 1.0
+- The public API stays compatible: `TagAnalyzer(keys)`, `Verifier`,
+  `EncFileVerifier`, the stores and the REST endpoints work as before.
+- Some verdicts change on purpose: fresh taps on a UID whose history holds a
+  counter regression are `SUSPICIOUS` (`prior_divergence`) instead of
+  `GENUINE`; a counter racing ahead of any reader adds `counter_rate`; two
+  quick taps from one reader delivered out of order are `SUSPICIOUS`
+  (`counter_reordered`) instead of `CLONE_LIKELY`.
+- SQLite and Postgres observation and alert tables gain the `backend`,
+  `algorithm` and `key_version` columns in place on first start; no manual
+  migration. Rows written by 1.0 read back with unknown provenance.
+- New optional settings: `SPHRAGIS_BACKENDS`, `SPHRAGIS_KEY_VERSIONS`,
+  `SPHRAGIS_EVENTS_FILE`, `SPHRAGIS_EVENTS_ON`, `SPHRAGIS_EVENT_KEY_VERSION`.
+  The defaults keep 1.0 behaviour.
+- The FIDO2/WebAuthn backend is validated with a software authenticator only;
+  hardware card validation is tracked in #39.
 
 ### FIDO2 / WebAuthn signature counters (#39)
 - `WebAuthnBackend` verifies WebAuthn assertions (ES256, EdDSA) from
