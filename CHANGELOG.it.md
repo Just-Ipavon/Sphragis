@@ -5,6 +5,16 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Contatori di firma FIDO2 / WebAuthn (#39)
+- `WebAuthnBackend` verifica asserzioni WebAuthn (ES256, EdDSA) di credenziali
+  registrate, con challenge monouso emesse dal server, e passa il contatore di
+  firma al registro e al rilevatore: le regressioni del contatore generano gli
+  stessi segnali dei tap SUN.
+- Un contatore fermo a 0 (passkey sincronizzate) è *nessun contatore*
+  (`no_counter`, `GENUINE`), non un segnale di clone; un calo a 0 dopo un
+  contatore diverso da zero è una regressione. Documentato il compromesso del
+  legame con il RP ID.
+
 ### Eventi di verifica firmati (#38)
 - Dichiarazione COSE_Sign1 opzionale per ogni verifica (EdDSA/Ed25519, payload
   CBOR deterministico: riferimento pseudonimo alla tag, contatore,

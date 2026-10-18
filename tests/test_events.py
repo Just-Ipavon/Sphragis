@@ -140,7 +140,7 @@ def test_payload_holds_no_key_material_or_raw_tap():
 # --- Independent implementation (pycose) -------------------------------------------
 
 def test_pycose_verifies_our_events():
-    pycose = pytest.importorskip("pycose")  # noqa: F841
+    pytest.importorskip("pycose")
     from pycose.keys import OKPKey
     from pycose.keys.curves import Ed25519
     from pycose.messages import CoseMessage

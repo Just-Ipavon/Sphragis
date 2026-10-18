@@ -41,7 +41,8 @@ class AuthenticTap:
     """A tap whose authenticator verified, normalized across chip families."""
 
     identity: str              # stable chip identity: the key of every per-tag store
-    counter: int               # monotonic counter emitted by the chip
+    counter: int | None        # monotonic counter emitted by the chip; None if
+                               # it keeps none (e.g. a synced passkey)
     backend: str               # name of the backend that verified it
     algorithm: str             # authenticator algorithm, e.g. "AES-128-CMAC"
     payload: bytes | None = None   # authenticated payload (e.g. decrypted file data)

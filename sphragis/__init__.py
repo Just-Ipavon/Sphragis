@@ -9,6 +9,7 @@ Encrypted file-data mirror (SDMENCFileData):
 
 Verification backends (chip-specific half of the pipeline):
     from sphragis import VerificationBackend, Ntag424SunBackend, Ntag424EncBackend
+    from sphragis import WebAuthnBackend   # FIDO2 signature counters
 
 Intelligence layer (scored clone detection):
     from sphragis import TagAnalyzer, CloneDetector, RiskLevel
@@ -75,6 +76,12 @@ from .secrets import (
 )
 from .service import VerificationOutcome, VerificationService
 from .sqlstore import SqliteCounterStore
+from .webauthn import (
+    MemoryChallengeStore,
+    MemoryCredentialStore,
+    RegisteredCredential,
+    WebAuthnBackend,
+)
 from .verifier import Ntag424SunBackend, StaticKeys, Verdict, VerificationResult, Verifier
 
 __all__ = [
@@ -100,6 +107,10 @@ __all__ = [
     "select_backend",
     "Ntag424SunBackend",
     "Ntag424EncBackend",
+    "WebAuthnBackend",
+    "RegisteredCredential",
+    "MemoryCredentialStore",
+    "MemoryChallengeStore",
     # intelligence
     "TagAnalyzer",
     "AnalysisResult",

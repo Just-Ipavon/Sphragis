@@ -42,6 +42,8 @@ never for a replay or a stale counter.
 | `ntag424-sun` | `Ntag424SunBackend` | `?picc_data=…&cmac=…`: plain SUN, AES-128 PICCData + SDMMAC. Accepts every tap without an encrypted file-data parameter, malformed ones included, and fails closed on the rest |
 | `ntag424-sun-enc` | `Ntag424EncBackend` | `?picc_data=…&enc=…&cmac=…`: SUN with `SDMENCFileData`; the decrypted file data is the payload |
 
+| `fido2-webauthn` | `WebAuthnBackend` | a WebAuthn assertion as JSON (`PublicKeyCredential.toJSON()` shape): FIDO2 signature counters, see below |
+
 `Verifier` and `EncFileVerifier` are thin wrappers around these two backends
 and a counter floor; their behaviour is unchanged.
 
@@ -63,6 +65,50 @@ readers see it in the detailed API response.
 With the REST API, `SPHRAGIS_BACKENDS` lists the backends to enable
 (`ntag424-sun` by default, e.g. `ntag424-sun,ntag424-sun-enc`); they are
 always tried most specific first.
+
+## FIDO2 / WebAuthn signature counters
+
+A FIDO2 card answers a fresh challenge from the browser (Safari on iOS
+included, over NFC) with a signed assertion carrying a signature counter.
+`WebAuthnBackend` verifies it against a credential the relying party
+registered and feeds the counter to the same ledger and detector: a counter
+regression raises `counter_regression` exactly as for a SUN tap.
+
+```python
+from sphragis import (WebAuthnBackend, MemoryCredentialStore,
+                      MemoryChallengeStore, RegisteredCredential)
+
+creds, challenges = MemoryCredentialStore(), MemoryChallengeStore(ttl_seconds=120)
+creds.add(RegisteredCredential.from_cose_key(credential_id, cose_public_key))
+backend = WebAuthnBackend("verify.example.com", ["https://verify.example.com"],
+                          creds, challenges)
+challenge = challenges.issue()          # send to the browser's navigator.credentials.get()
+```
+
+The tap is the assertion as JSON, binary fields base64url. The backend checks
+the credential, `clientDataJSON` (`webauthn.get`, allowed origin), the RP ID
+hash, user presence (and user verification with
+`require_user_verification=True`) and the ES256 or EdDSA signature; only then
+does it consume the challenge, which must have been issued here, be unexpired
+and unused, so junk input cannot burn a challenge issued to someone else. A
+replayed assertion is `FORGED` (its challenge is spent). The identity is
+`fido2:<credential id>`.
+
+- **Counter fixed at 0.** Synced passkeys often keep no counter. A 0 is
+  reported as *no counter*: the tap is `GENUINE` with the zero-weight signal
+  `no_counter`, and no counter-based clone detection applies. If the credential
+  reported a non-zero counter before, a 0 is scored as a regression.
+- **Registration** (attestation) is the relying party's job; implement
+  `CredentialStore.get(credential_id)` over your registry, and
+  `ChallengeStore` over a shared store when several processes verify.
+- **RP ID binding.** A credential only works for the relying party ID (domain)
+  it was registered under. If the verifying domain changes, existing cards
+  stop working: choose the RP ID as carefully as a key, for the whole life of
+  the cards.
+
+The REST API does not wire this backend from settings yet (it needs a
+credential registry and a challenge endpoint); build the service with
+`create_app(VerificationService(TagAnalyzer(backends=[...])))`.
 
 ## Writing a backend
 

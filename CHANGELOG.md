@@ -5,6 +5,15 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### FIDO2 / WebAuthn signature counters (#39)
+- `WebAuthnBackend` verifies WebAuthn assertions (ES256, EdDSA) from
+  registered credentials against single-use, server-issued challenges and
+  feeds the signature counter to the ledger and detector: counter regressions
+  raise the same signals as SUN taps.
+- A counter fixed at 0 (synced passkeys) is *no counter* (`no_counter`,
+  `GENUINE`), not a clone signal; a drop to 0 after a non-zero counter is a
+  regression. RP ID binding trade-off documented.
+
 ### Signed verification events (#38)
 - Optional COSE_Sign1 statement per verification (EdDSA/Ed25519, deterministic
   CBOR payload: pseudonymous tag reference, counter, classification, signal

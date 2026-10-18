@@ -19,7 +19,7 @@ Classification:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Sequence
 
 from .backends import (
@@ -137,6 +137,12 @@ class TagAnalyzer:
         # 4: classify against the tap ledger (floor + every counter submitted).
         counter = tap.counter
         floor = self._store.last_counter(uid_hex)
+        if counter is None:
+            if floor is None:
+                return self._no_counter(tap, admit)
+            # It counted before: a drop to "no counter" (0) is a regression.
+            tap = replace(tap, counter=0)
+            counter = 0
         stale = floor is not None and counter <= floor
 
         # Only a fresh counter, which needs the physical tag, is charged to the
@@ -186,6 +192,23 @@ class TagAnalyzer:
             payload=payload,
             key_version=tap.key_version,
         )
+
+    @staticmethod
+    def _no_counter(tap: AuthenticTap,
+                    admit: Callable[[str], bool] | None) -> AnalysisResult:
+        """An authentic tap from a chip that keeps no counter (e.g. a synced
+        passkey): nothing to score, so no clone detection either."""
+        if admit is not None and not admit(tap.identity):
+            return AnalysisResult(
+                "THROTTLED", True, tap.identity, None, 0, (),
+                "verification refused by admission policy (rate limit)",
+                tap.backend, tap.algorithm, key_version=tap.key_version)
+        signal = Signal("no_counter", 0,
+                        "the authenticator keeps no signature counter: authentic, "
+                        "but counter-based clone detection is not available")
+        return AnalysisResult(RiskLevel.GENUINE.value, True, tap.identity, None, 0,
+                              (signal,), signal.detail, tap.backend, tap.algorithm,
+                              tap.payload, tap.key_version)
 
     @staticmethod
     def _replay(tap: AuthenticTap, floor: int | None,
