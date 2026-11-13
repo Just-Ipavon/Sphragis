@@ -14,6 +14,13 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   cambiano. Le righe che la 2.0.0 ha salvato per un'identità non esadecimale
   erano in maiuscolo; una credenziale con lettere minuscole nell'id inizia una
   nuova cronologia con il suo id reale.
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
 
 ## 2.0.0 — 2026-10-18
 
