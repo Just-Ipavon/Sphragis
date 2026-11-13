@@ -149,7 +149,7 @@ coerente. Vedi [la documentazione API](api.it.md#scalabilità-orizzontale-cronol
 - [x] Floor Postgres con update condizionale atomico, cronologia e audit trail condivisi
 - [x] Rate limiting sull'endpoint di verifica (per IP + per UID autentico; in-process, vedi [API](api.it.md#rate-limiting))
 - [x] Log strutturati + alert su `CLONE_LIKELY`
-- [ ] Rate limiter condiviso (es. Redis) per deployment multi-replica
+- [x] Rate limiter condiviso per deployment multi-replica (`SPHRAGIS_RATE_LIMIT_STORE=db`, Postgres o SQLite)
 - [ ] Gestione del rollover del `SDMReadCtr` a 24 bit
 - [x] Verifica e provisioning `SDMENCFileData` (validati su un tag fisico)
 - [x] Validazione end-to-end su tag fisici

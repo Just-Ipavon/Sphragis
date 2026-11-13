@@ -158,9 +158,16 @@ record.
   before the request is parsed: oversized bodies get `413` without being read
   in full, and invalid JSON counts against the limit like any other request.
 
-The `TokenBucketLimiter` works within a single process. With N replicas the
-effective limit is N times higher. For a global limit, implement the
-`RateLimiter` protocol on a shared store such as Redis.
+The default `TokenBucketLimiter` works within a single process: with N
+replicas the effective limit is N times higher. With
+`SPHRAGIS_RATE_LIMIT_STORE=db` both limits use buckets in the database every
+replica already shares (`PostgresRateLimiter` with `SPHRAGIS_DB_URL`,
+`SqliteRateLimiter` on `SPHRAGIS_DB_PATH` for several workers on one host),
+one atomic upsert per check timed by the database clock. That costs one write
+per request. `SPHRAGIS_IPV6_PREFIX` (default 64) sets the IPv6 bucket size:
+48 keeps the holder of a /48 from minting 65,536 buckets. WebAuthn challenges
+can be shared the same way (`PostgresChallengeStore`, `SqliteChallengeStore`):
+one replica issues, any replica consumes, exactly once.
 
 ## Horizontal scale: shared detector history
 
@@ -186,6 +193,8 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | per-IP bucket |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | per-tag bucket |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | impossible-velocity threshold |
+| `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: per-IP and per-UID buckets in the shared database ([rate limiting](#rate-limiting)) |
+| `SPHRAGIS_IPV6_PREFIX` | `64` | IPv6 prefix length one rate-limit bucket covers (16-128) |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classifications that raise an alert |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | largest accepted request body |
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |

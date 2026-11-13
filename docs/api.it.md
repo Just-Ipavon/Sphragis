@@ -166,9 +166,17 @@ Tieni il sink SQLite o Postgres come archivio di riferimento.
   `413` senza essere letti per intero, e un JSON non valido conta nel limite
   come ogni altra richiesta.
 
-`TokenBucketLimiter` lavora all'interno di un singolo processo. Con N repliche
-il limite effettivo diventa N volte più alto. Per un limite globale, implementa
-il protocollo `RateLimiter` su uno store condiviso come Redis.
+Il `TokenBucketLimiter` di default lavora all'interno di un singolo processo:
+con N repliche il limite effettivo diventa N volte più alto. Con
+`SPHRAGIS_RATE_LIMIT_STORE=db` entrambi i limiti usano bucket nel database che
+le repliche già condividono (`PostgresRateLimiter` con `SPHRAGIS_DB_URL`,
+`SqliteRateLimiter` su `SPHRAGIS_DB_PATH` per più worker sullo stesso host),
+un upsert atomico per controllo, cronometrato dall'orologio del database.
+Costa una scrittura per richiesta. `SPHRAGIS_IPV6_PREFIX` (default 64) fissa
+la dimensione del bucket IPv6: con 48 chi possiede un /48 non può creare
+65.536 bucket. Le challenge WebAuthn si condividono allo stesso modo
+(`PostgresChallengeStore`, `SqliteChallengeStore`): una replica le emette,
+qualsiasi replica le consuma, una sola volta.
 
 ## Scalabilità orizzontale: cronologia condivisa del rilevatore
 
@@ -195,6 +203,8 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | bucket per IP |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | bucket per tag |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | soglia di velocità impossibile |
+| `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: bucket per IP e per UID nel database condiviso ([rate limiting](#rate-limiting)) |
+| `SPHRAGIS_IPV6_PREFIX` | `64` | lunghezza del prefisso IPv6 coperto da un bucket (16-128) |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classificazioni che generano un alert |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | body di richiesta più grande accettato |
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |

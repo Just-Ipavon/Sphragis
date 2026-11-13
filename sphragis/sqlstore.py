@@ -225,3 +225,106 @@ class SqliteCounterStore:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+# --- Shared rate limiting and challenges (#72) ------------------------------------
+
+_LIMITER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS rate_buckets (
+    key      TEXT PRIMARY KEY,
+    tokens   REAL NOT NULL,
+    updated  REAL NOT NULL,
+    allowed  INTEGER NOT NULL
+);
+"""
+
+_CHALLENGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+    challenge  BLOB PRIMARY KEY,
+    expires    REAL NOT NULL
+);
+"""
+
+# Token bucket in one statement: refill since `updated`, cap at the burst,
+# take a token if one is there, and report whether it was taken.
+_BUCKET_UPSERT = (
+    "INSERT INTO rate_buckets (key, tokens, updated, allowed) VALUES (?, ? - 1, ?, 1) "
+    "ON CONFLICT (key) DO UPDATE SET "
+    "tokens = CASE WHEN MIN(?, tokens + (excluded.updated - updated) * ?) >= 1 "
+    "         THEN MIN(?, tokens + (excluded.updated - updated) * ?) - 1 "
+    "         ELSE MIN(?, tokens + (excluded.updated - updated) * ?) END, "
+    "allowed = MIN(?, tokens + (excluded.updated - updated) * ?) >= 1, "
+    "updated = excluded.updated "
+    "RETURNING tokens, allowed"
+)
+
+
+class SqliteRateLimiter:
+    """
+    Token buckets shared by every process using the same database file: the
+    budget holds across workers on one host (Postgres: `PostgresRateLimiter`
+    for several hosts). Same semantics as `TokenBucketLimiter`; idle buckets
+    are dropped once full again.
+    """
+
+    def __init__(self, path: str | os.PathLike, rate: float, burst: int,
+                 clock=time.time) -> None:
+        if rate <= 0 or burst < 1:
+            raise ValueError("rate must be > 0 and burst >= 1")
+        self.rate, self.burst, self._clock = rate, burst, clock
+        self._path = str(path)
+        secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, ("PRAGMA journal_mode=WAL",
+                                                     "PRAGMA busy_timeout=5000"))
+        self._conns.get().executescript(_LIMITER_SCHEMA)
+        self._checks = 0
+
+    def check(self, key: str):
+        from .ratelimit import RateDecision
+        now = self._clock()
+        b, r = float(self.burst), self.rate
+        conn = self._conns.get()
+        tokens, allowed = conn.execute(
+            _BUCKET_UPSERT, (key, b, now, b, r, b, r, b, r, b, r)).fetchone()
+        self._checks += 1
+        if self._checks % 1000 == 0:      # buckets idle long enough to be full again
+            conn.execute("DELETE FROM rate_buckets WHERE updated < ?", (now - b / r,))
+        if allowed:
+            return RateDecision(True, 0.0)
+        return RateDecision(False, (1.0 - tokens) / r)
+
+    def close(self) -> None:
+        self._conns.close()
+
+
+class SqliteChallengeStore:
+    """Single-use WebAuthn challenges shared by every process on one database."""
+
+    def __init__(self, path: str | os.PathLike, ttl_seconds: float = 120.0,
+                 size: int = 32, clock=time.time) -> None:
+        self._ttl, self._size, self._clock = ttl_seconds, size, clock
+        self._path = str(path)
+        secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, ("PRAGMA journal_mode=WAL",
+                                                     "PRAGMA busy_timeout=5000"))
+        self._conns.get().executescript(_CHALLENGE_SCHEMA)
+
+    def issue(self) -> bytes:
+        import secrets
+        challenge = secrets.token_bytes(self._size)
+        now = self._clock()
+        conn = self._conns.get()
+        conn.execute("DELETE FROM webauthn_challenges WHERE expires < ?", (now,))
+        conn.execute("INSERT INTO webauthn_challenges (challenge, expires) VALUES (?, ?)",
+                     (challenge, now + self._ttl))
+        return challenge
+
+    def consume(self, challenge: bytes) -> bool:
+        """True once for an issued, unexpired challenge, whichever process asks."""
+        row = self._conns.get().execute(
+            "DELETE FROM webauthn_challenges WHERE challenge = ? AND expires >= ? "
+            "RETURNING 1", (bytes(challenge), self._clock())).fetchone()
+        return row is not None
+
+    def close(self) -> None:
+        self._conns.close()

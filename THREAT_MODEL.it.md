@@ -122,8 +122,9 @@ freschezza.
 - **I tap pubblici non portano posizione**: la velocità impossibile richiede
   lettori autenticati; i tap anonimi da telefono alimentano solo i segnali
   basati sul contatore.
-- Il rate limiter in-process vale per singola replica; un limite globale
-  richiede un backend `RateLimiter` condiviso.
+- Il rate limiter in-process di default vale per singola replica; un limite
+  globale richiede `SPHRAGIS_RATE_LIMIT_STORE=db` (bucket nel database
+  condiviso).
 
 ## Rischio residuo
 

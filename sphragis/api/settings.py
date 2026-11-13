@@ -108,6 +108,8 @@ class ApiSettings:
     events_file: str | None = None
     events_on: frozenset[str] | None = None        # None: every verification
     event_key_version: int = 1
+    rate_limit_store: str = "memory"                # or "db": shared by every replica
+    ipv6_prefix: int = 64
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -166,6 +168,15 @@ class ApiSettings:
             event_key_version = 0
         if event_key_version < 1:
             raise ValueError("SPHRAGIS_EVENT_KEY_VERSION must be a key version >= 1")
+        rate_limit_store = get("RATE_LIMIT_STORE", "memory").lower()
+        if rate_limit_store not in ("memory", "db"):
+            raise ValueError("SPHRAGIS_RATE_LIMIT_STORE must be 'memory' or 'db'")
+        try:
+            ipv6_prefix = int(get("IPV6_PREFIX", "64"))
+        except ValueError:
+            ipv6_prefix = 0
+        if not 16 <= ipv6_prefix <= 128:
+            raise ValueError("SPHRAGIS_IPV6_PREFIX must be between 16 and 128")
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -193,4 +204,6 @@ class ApiSettings:
             events_file=get("EVENTS_FILE", "") or None,
             events_on=events_on,
             event_key_version=event_key_version,
+            rate_limit_store=rate_limit_store,
+            ipv6_prefix=ipv6_prefix,
         )
