@@ -20,6 +20,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from .identity import store_key
+
 _RESERVED = {"ts", "level", "logger", "event"}
 
 
@@ -78,7 +80,7 @@ class UidPseudonymizer:
     def ref(self, uid_hex: str | None) -> str | None:
         if uid_hex is None:
             return None
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         if self._key is None:
             return uid_hex
         digest = hmac.new(self._key, uid_hex.encode(), hashlib.sha256).hexdigest()

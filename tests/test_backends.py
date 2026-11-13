@@ -389,3 +389,79 @@ def test_same_tap_from_many_processes_is_new_once(backend):
             start.set()
             results = [p.get(timeout=60) for p in pending]
     assert results.count(True) == 1, results
+
+
+# --- Shared JSON file, and a ledger kept complete by the floor-only API ------
+
+def test_json_store_reads_see_other_instances(tmp_path):
+    from sphragis.counterstore import CounterStore
+    path = str(tmp_path / "counters.json")
+    a, b = CounterStore(path), CounterStore(path)
+    assert a.check_and_advance("AA", 5)
+    assert b.last_counter("AA") == 5
+    assert not b.is_fresh("AA", 3)
+    a.record_tap("AA", 6)
+    assert b.seen("AA", 6)
+
+
+def _floor_api_then_replay(store):
+    assert store.record_tap("04CC", 1).fresh             # the ledger starts
+    assert store.check_and_advance("04CC", 2)            # Verifier path
+    replay = store.record_tap("04CC", 2)                 # TagAnalyzer path
+    assert not replay.new and not replay.fresh
+
+
+def test_floor_only_api_keeps_a_started_ledger_complete(backend):
+    _floor_api_then_replay(backend["counters"]())
+
+
+@pytest.mark.parametrize("kind", ["memory", "json"])
+def test_floor_only_api_keeps_a_started_ledger_complete_locally(kind, tmp_path):
+    from sphragis.counterstore import CounterStore
+    _floor_api_then_replay(CounterStore(str(tmp_path / "c.json")) if kind == "json"
+                           else CounterStore())
+
+
+# --- Identities are opaque, except bare hex UIDs ------------------------------
+
+def _memory_or_json(kind, tmp_path):
+    from sphragis.counterstore import CounterStore
+    from sphragis.observations import MemoryObservationStore
+    return (CounterStore(str(tmp_path / "counters.json")) if kind == "json"
+            else CounterStore()), MemoryObservationStore()
+
+
+def _case_distinct_credentials(counters, history):
+    # base64url credential ids are case-sensitive: two different credentials.
+    assert counters.record_tap("fido2:abcd", 10).fresh
+    second = counters.record_tap("fido2:ABCD", 3)
+    assert second.fresh and second.floor_before is None
+    assert counters.last_counter("fido2:abcd") == 10
+    assert counters.last_counter("fido2:ABCD") == 3
+    assert counters.check_and_advance("fido2:Ab_-", 1)
+    assert counters.last_counter("fido2:aB_-") is None
+    history.observe("fido2:abcd", Observation(10, 1.0), limit=5)
+    assert history.history("fido2:ABCD") == []
+    # Bare hex UIDs still match whatever their case.
+    assert counters.check_and_advance("04aabb", 7)
+    assert counters.last_counter("04AABB") == 7
+
+
+def test_prefixed_identities_keep_their_case(backend):
+    _case_distinct_credentials(backend["counters"](), backend["history"]())
+
+
+@pytest.mark.parametrize("kind", ["memory", "json"])
+def test_prefixed_identities_keep_their_case_in_local_stores(kind, tmp_path):
+    _case_distinct_credentials(*_memory_or_json(kind, tmp_path))
+
+
+def test_detector_and_pseudonyms_keep_the_case_of_prefixed_identities():
+    from sphragis.detection import CloneDetector
+    from sphragis.logs import UidPseudonymizer
+    detector = CloneDetector()
+    assert detector.analyze("fido2:abcd", 10, timestamp=1.0).risk_level.name == "GENUINE"
+    assert detector.analyze("fido2:ABCD", 3, timestamp=2.0).risk_level.name == "GENUINE"
+    plain = UidPseudonymizer(None)
+    assert plain.ref("fido2:abcd") != plain.ref("fido2:ABCD")
+    assert plain.ref("04aa") == "04AA"

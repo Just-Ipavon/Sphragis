@@ -33,6 +33,7 @@ import threading
 import time
 
 from .counterstore import TapRecord
+from .identity import store_key
 
 
 def secure_db_file(path: str) -> None:
@@ -105,7 +106,7 @@ class SqliteCounterStore:
 
     def last_counter(self, uid_hex: str) -> int | None:
         row = self._connection().execute(
-            "SELECT counter FROM counters WHERE uid = ?", (uid_hex.upper(),)
+            "SELECT counter FROM counters WHERE uid = ?", (store_key(uid_hex),)
         ).fetchone()
         return None if row is None else int(row[0])
 
@@ -116,7 +117,7 @@ class SqliteCounterStore:
         rollback. Safe under concurrent threads and processes: the IMMEDIATE
         transaction serializes writers via SQLite's write lock.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time()
         conn = self._connection()
         conn.execute("BEGIN IMMEDIATE")
@@ -138,6 +139,13 @@ class SqliteCounterStore:
                 accepted = True
             else:
                 accepted = False
+            if accepted:
+                # A UID whose tap ledger has started keeps it complete, so a
+                # later replay of this tap reads as a replay, not a rollback.
+                conn.execute(
+                    "INSERT OR IGNORE INTO tap_counters (uid, counter, first_seen) "
+                    "SELECT uid, ?, ? FROM tap_ledgers WHERE uid = ?",
+                    (counter, now, uid_hex))
             conn.execute("COMMIT")
             return accepted
         except Exception:
@@ -147,7 +155,7 @@ class SqliteCounterStore:
     def seen(self, uid_hex: str, counter: int) -> bool:
         return self._connection().execute(
             "SELECT 1 FROM tap_counters WHERE uid = ? AND counter = ?",
-            (uid_hex.upper(), counter),
+            (store_key(uid_hex), counter),
         ).fetchone() is not None
 
     def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
@@ -155,7 +163,7 @@ class SqliteCounterStore:
         Tap ledger (`counterstore.TapLedger`): record `counter` for the UID and
         advance the floor if it is new and higher, in one IMMEDIATE transaction.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time()
         conn = self._connection()
         conn.execute("BEGIN IMMEDIATE")

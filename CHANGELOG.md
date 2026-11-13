@@ -12,6 +12,40 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   `[v6]` or `[v6]:port`, `unix` in `SPHRAGIS_TRUSTED_PROXIES` trusts the
   proxy in front of a Unix socket, and the API logs a warning when the peer
   has no address and nothing tells it the client's (#66).
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
+### Fixed
+
+- Malformed input no longer escapes as an unexpected exception type
+  (#64): a WebAuthn `clientDataJSON` whose `origin` or `type` is not a
+  string is `ERROR` instead of a `TypeError` reaching the caller;
+  `cbor_decode` raises `EventError` for a map key that is not an integer,
+  text or bytes, and for nesting deeper than 8 levels (it used to hit
+  `RecursionError` before the signature check); `verify_webhook` returns
+  `False` for a non-ASCII or missing signature header.
+- A genuine tap with an extra query parameter containing `?` or `:`
+  (`&next=/a?b=1`, `v:1&…`) was read as a URL and became `ERROR`. A bare
+  query is now recognised by a `=` before its first `?` or `#`, and `/t`
+  passes its query explicitly (#67).
+- The JSON `CounterStore` re-reads the shared file for `last_counter`,
+  `is_fresh` and `seen` too, so an instance no longer reports a floor
+  another process has already moved past (#67).
+- `check_and_advance` also records the counter in a UID's tap ledger once
+  that ledger has started, so a store used by both `Verifier` and
+  `TagAnalyzer` scores an exact replay as `REPLAY`, not as a counter
+  regression (#67).
+- Stores no longer upper-case every identity: only bare hex UIDs (NTAG 424
+  DNA) are, and prefixed identities such as `fido2:<base64url>` keep their
+  case, so two WebAuthn credentials whose ids differ only by case no longer
+  share one counter and one history (#63). Upgrading: NTAG data is
+  unaffected. Rows that 2.0.0 stored for a non-hex identity were stored
+  upper-cased; a credential whose id has lower-case letters starts a new
+  history under its real id.
 
 ## 2.0.0 — 2026-10-18
 

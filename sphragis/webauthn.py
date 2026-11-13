@@ -201,6 +201,8 @@ class WebAuthnBackend:
             client_data = json.loads(client_data_raw)
             challenge = b64url_decode(client_data["challenge"])
             origin, kind = client_data["origin"], client_data["type"]
+            if not isinstance(origin, str) or not isinstance(kind, str):
+                raise SdmError("clientDataJSON origin and type must be strings")
         except (ValueError, KeyError, TypeError) as exc:
             raise SdmError(f"malformed WebAuthn assertion: {exc}") from exc
         if len(auth_data) < 37:
