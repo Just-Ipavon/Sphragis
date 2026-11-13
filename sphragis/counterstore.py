@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .identity import store_key
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows: no cross-process lock
@@ -130,12 +132,12 @@ class CounterStore:
             if not isinstance(data, dict):
                 raise ValueError("not a JSON object")
             if data.get("format") == _FORMAT:
-                floors = {u.upper(): int(c) for u, c in data["floors"].items()}
-                taps = {u.upper(): {int(c) for c in v} for u, v in data["taps"].items()}
-                since = {u.upper(): (None if c is None else int(c))
+                floors = {store_key(u): int(c) for u, c in data["floors"].items()}
+                taps = {store_key(u): {int(c) for c in v} for u, v in data["taps"].items()}
+                since = {store_key(u): (None if c is None else int(c))
                          for u, c in data["since"].items()}
             else:                                    # bare floor map (older files)
-                floors = {u.upper(): int(c) for u, c in data.items()}
+                floors = {store_key(u): int(c) for u, c in data.items()}
                 taps, since = {}, {}
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise CounterStoreError(f"{self._path} is not a valid counter store: "
@@ -204,7 +206,7 @@ class CounterStore:
     # -- floor ---------------------------------------------------------------------
     def last_counter(self, uid_hex: str) -> int | None:
         with self._lock:
-            return self._seen.get(uid_hex.upper())
+            return self._seen.get(store_key(uid_hex))
 
     def is_fresh(self, uid_hex: str, counter: int) -> bool:
         """True if this counter is strictly greater than the last one seen."""
@@ -217,7 +219,7 @@ class CounterStore:
         last one seen, advancing the floor in the same critical section.
         Returns True if accepted (fresh), False if it is a replay/rollback.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
 
         def change(floors, taps, since):
             last = floors.get(uid_hex)
@@ -230,7 +232,7 @@ class CounterStore:
 
     def record(self, uid_hex: str, counter: int) -> None:
         """Advance the stored counter for a UID (never moves it backwards)."""
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
 
         def change(floors, taps, since):
             if counter > floors.get(uid_hex, -1):
@@ -243,10 +245,10 @@ class CounterStore:
     # -- tap ledger -----------------------------------------------------------------
     def seen(self, uid_hex: str, counter: int) -> bool:
         with self._lock:
-            return counter in self._taps.get(uid_hex.upper(), ())
+            return counter in self._taps.get(store_key(uid_hex), ())
 
     def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
 
         def change(floors, taps, since):
             floor = floors.get(uid_hex)
