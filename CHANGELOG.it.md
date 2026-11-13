@@ -15,6 +15,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- Limiti di frequenza e challenge condivisi tra repliche (#72):
+  `SPHRAGIS_RATE_LIMIT_STORE=db` tiene i token bucket per IP e per UID nel
+  database condiviso (`PostgresRateLimiter`, o `SqliteRateLimiter` per più
+  worker sullo stesso host), un upsert atomico per controllo cronometrato
+  dall'orologio del database. `PostgresChallengeStore` e
+  `SqliteChallengeStore` permettono a una replica di emettere una challenge
+  WebAuthn che qualsiasi replica consuma una sola volta.
+  `SPHRAGIS_IPV6_PREFIX` (default 64) fissa l'ampiezza di un bucket IPv6.
 - Conservazione del registro dei tap (#56): con `SPHRAGIS_LEDGER_WINDOW=N`
   (o `ledger_window=N` sugli storage dei contatori JSON, SQLite e Postgres) il
   registro conserva i contatori entro N dal floor e riassume quelli più

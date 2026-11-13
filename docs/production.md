@@ -145,7 +145,7 @@ stream. See [the API docs](api.md#horizontal-scale-shared-detector-history).
 - [x] Postgres floor with atomic conditional update, shared history and audit trail
 - [x] Rate limiting on the verification endpoint (per IP + per authentic UID; in-process, see [API](api.md#rate-limiting))
 - [x] Structured logging + alerting on `CLONE_LIKELY`
-- [ ] Shared (e.g. Redis) rate limiter for multi-replica deployments
+- [x] Shared rate limiter for multi-replica deployments (`SPHRAGIS_RATE_LIMIT_STORE=db`, Postgres or SQLite)
 - [ ] Handling for 24-bit `SDMReadCtr` rollover
 - [x] `SDMENCFileData` verification and provisioning (validated on a physical tag)
 - [x] End-to-end validation against physical tags

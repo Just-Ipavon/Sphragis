@@ -135,16 +135,17 @@ def _hop_address(text: str) -> Address | None:
     return _address(text)
 
 
-def bucket_key(addr: Address) -> str:
+def bucket_key(addr: Address, ipv6_prefix: int = 64) -> str:
     """Rate-limit key: the IPv4 address, or the /64 of an IPv6 address (one
-    host usually controls a whole /64)."""
+    host usually controls a whole /64). A coarser `ipv6_prefix` (e.g. 48)
+    keeps the holder of a whole /48 from minting 65,536 buckets."""
     if isinstance(addr, ipaddress.IPv6Address):
-        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+        return str(ipaddress.ip_network(f"{addr}/{ipv6_prefix}", strict=False))
     return str(addr)
 
 
 def client_address(peer: str | None, forwarded: list[str],
-                   trusted: Iterable[Network]) -> str:
+                   trusted: Iterable[Network], ipv6_prefix: int = 64) -> str:
     """
     The client address used for rate limiting. `X-Forwarded-For` (every
     header line, in order) is honoured only when the direct peer is a trusted
@@ -164,16 +165,16 @@ def client_address(peer: str | None, forwarded: list[str],
             return peer or "unknown"
         fallback = peer or "unknown"
     elif not is_trusted(peer_addr):
-        return bucket_key(peer_addr)
+        return bucket_key(peer_addr, ipv6_prefix)
     else:
-        fallback = bucket_key(peer_addr)
+        fallback = bucket_key(peer_addr, ipv6_prefix)
     hops = [h for line in forwarded for h in line.split(",") if h.strip()]
     for hop in reversed(hops):
         addr = _hop_address(hop)
         if addr is None:          # garbage where our proxy should have written
             break                 # an address: fall back to the proxy itself
         if not is_trusted(addr):
-            return bucket_key(addr)
+            return bucket_key(addr, ipv6_prefix)
     return fallback
 
 
@@ -208,8 +209,10 @@ class RequestGuard:
     """
 
     def __init__(self, app, *, ip_limiter: RateLimiter | None,
-                 trusted_proxies: tuple[Network, ...], max_body_bytes: int) -> None:
+                 trusted_proxies: tuple[Network, ...], max_body_bytes: int,
+                 ipv6_prefix: int = 64) -> None:
         self.app = app
+        self._ipv6_prefix = ipv6_prefix
         self._limiter = ip_limiter
         self._trusted = trusted_proxies
         self._max = max_body_bytes
@@ -230,7 +233,7 @@ class RequestGuard:
                     "so the proxy's X-Forwarded-For is used")
             ip = client_address(peer[0] if peer else None,
                                 [v for k, v in headers if k == "x-forwarded-for"],
-                                self._trusted)
+                                self._trusted, self._ipv6_prefix)
             decision = self._limiter.check("ip:" + ip)
             if not decision.allowed:
                 retry = str(max(1, math.ceil(decision.retry_after)))
@@ -328,6 +331,7 @@ def create_app(
     enable_docs: bool = False,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     event_signer=None,
+    ipv6_prefix: int = 64,
     ready_checks: Mapping[str, Callable[[], object]] | None = None,
     on_shutdown: Sequence[Callable[[], object]] = (),
 ) -> FastAPI:
@@ -376,7 +380,7 @@ def create_app(
         return response
 
     app.add_middleware(RequestGuard, ip_limiter=ip_limiter, trusted_proxies=trusted,
-                       max_body_bytes=max_body_bytes)
+                       max_body_bytes=max_body_bytes, ipv6_prefix=ipv6_prefix)
 
     @app.exception_handler(RateLimited)
     async def on_rate_limited(_: Request, exc: RateLimited):

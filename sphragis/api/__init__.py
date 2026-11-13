@@ -85,7 +85,7 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         alert_sinks=sinks,
         pseudonymizer=pseudo,
         alert_on=settings.alert_on,
-        uid_limiter=TokenBucketLimiter(settings.uid_rate, settings.uid_burst),
+        uid_limiter=_limiter(settings, settings.uid_rate, settings.uid_burst),
         event_signer=signer,
         event_sinks=sinks_for_events or (),
         events_on=settings.events_on,
@@ -93,7 +93,8 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     )
     return create_app(
         service,
-        ip_limiter=TokenBucketLimiter(settings.ip_rate, settings.ip_burst),
+        ip_limiter=_limiter(settings, settings.ip_rate, settings.ip_burst),
+        ipv6_prefix=settings.ipv6_prefix,
         reader_tokens=settings.reader_tokens,
         trusted_proxies=settings.trusted_proxies,
         throttle_retry_after=1.0 / settings.uid_rate,
@@ -106,6 +107,17 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
                        if background is not None else []),
                      floor.close, history.close, audit.close],
     )
+
+
+def _limiter(settings: ApiSettings, rate: float, burst: int):
+    """In-process buckets, or buckets in the database every replica shares."""
+    if settings.rate_limit_store != "db":
+        return TokenBucketLimiter(rate, burst)
+    if settings.db_url:
+        from ..pgstore import PostgresRateLimiter
+        return PostgresRateLimiter(settings.db_url, rate, burst)
+    from ..sqlstore import SqliteRateLimiter
+    return SqliteRateLimiter(settings.db_path, rate, burst)
 
 
 SHUTDOWN_DRAIN_SECONDS = 10.0

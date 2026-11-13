@@ -14,6 +14,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- Shared rate limits and challenges for several replicas (#72):
+  `SPHRAGIS_RATE_LIMIT_STORE=db` keeps the per-IP and per-UID token buckets
+  in the shared database (`PostgresRateLimiter`, or `SqliteRateLimiter` for
+  several workers on one host), one atomic upsert per check timed by the
+  database clock. `PostgresChallengeStore` and `SqliteChallengeStore` let one
+  replica issue a WebAuthn challenge that any replica consumes exactly once.
+  `SPHRAGIS_IPV6_PREFIX` (default 64) sets how wide an IPv6 bucket is.
 - Tap ledger retention (#56): with `SPHRAGIS_LEDGER_WINDOW=N` (or
   `ledger_window=N` on the JSON, SQLite and Postgres counter stores) the
   ledger keeps the counters within N of the floor and summarises older ones

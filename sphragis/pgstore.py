@@ -314,3 +314,88 @@ class PostgresAlertSink(_PgBase):
         return [Alert(r[0], r[1], r[2], r[3], r[4], r[5], r[6], tuple(r[7]), r[8],
                       r[9], r[10], r[11])
                 for r in rows]
+
+
+# --- Shared rate limiting and challenges (#72) ------------------------------------
+
+class PostgresRateLimiter(_PgBase):
+    """
+    Token buckets shared by every replica: one atomic upsert per check, timed
+    by the database clock, so replicas with skewed clocks still agree. Same
+    semantics as `TokenBucketLimiter`; idle buckets are dropped once full.
+    """
+
+    _SCHEMA = """
+    CREATE TABLE IF NOT EXISTS sphragis_rate_buckets (
+        key      TEXT PRIMARY KEY,
+        tokens   DOUBLE PRECISION NOT NULL,
+        updated  DOUBLE PRECISION NOT NULL,
+        allowed  BOOLEAN NOT NULL
+    );
+    """
+
+    _UPSERT = (
+        "INSERT INTO sphragis_rate_buckets AS b (key, tokens, updated, allowed) "
+        "VALUES (%(k)s, %(b)s - 1, extract(epoch FROM clock_timestamp()), TRUE) "
+        "ON CONFLICT (key) DO UPDATE SET "
+        "tokens = CASE WHEN LEAST(%(b)s, b.tokens + (EXCLUDED.updated - b.updated) * %(r)s) >= 1 "
+        "         THEN LEAST(%(b)s, b.tokens + (EXCLUDED.updated - b.updated) * %(r)s) - 1 "
+        "         ELSE LEAST(%(b)s, b.tokens + (EXCLUDED.updated - b.updated) * %(r)s) END, "
+        "allowed = LEAST(%(b)s, b.tokens + (EXCLUDED.updated - b.updated) * %(r)s) >= 1, "
+        "updated = EXCLUDED.updated "
+        "RETURNING tokens, allowed"
+    )
+
+    def __init__(self, dsn: str, rate: float, burst: int) -> None:
+        if rate <= 0 or burst < 1:
+            raise ValueError("rate must be > 0 and burst >= 1")
+        self.rate, self.burst = rate, burst
+        self._checks = 0
+        super().__init__(dsn)
+
+    def check(self, key: str):
+        from .ratelimit import RateDecision
+        conn = self._connection()
+        tokens, allowed = conn.execute(
+            self._UPSERT, {"k": key, "b": float(self.burst), "r": self.rate}).fetchone()
+        self._checks += 1
+        if self._checks % 1000 == 0:
+            conn.execute("DELETE FROM sphragis_rate_buckets "
+                         "WHERE updated < extract(epoch FROM clock_timestamp()) - %s",
+                         (self.burst / self.rate,))
+        if allowed:
+            return RateDecision(True, 0.0)
+        return RateDecision(False, (1.0 - tokens) / self.rate)
+
+
+class PostgresChallengeStore(_PgBase):
+    """Single-use WebAuthn challenges shared by every replica."""
+
+    _SCHEMA = """
+    CREATE TABLE IF NOT EXISTS sphragis_webauthn_challenges (
+        challenge  BYTEA PRIMARY KEY,
+        expires    DOUBLE PRECISION NOT NULL
+    );
+    """
+
+    def __init__(self, dsn: str, ttl_seconds: float = 120.0, size: int = 32) -> None:
+        self._ttl, self._size = ttl_seconds, size
+        super().__init__(dsn)
+
+    def issue(self) -> bytes:
+        import secrets
+        challenge = secrets.token_bytes(self._size)
+        conn = self._connection()
+        conn.execute("DELETE FROM sphragis_webauthn_challenges "
+                     "WHERE expires < extract(epoch FROM clock_timestamp())")
+        conn.execute("INSERT INTO sphragis_webauthn_challenges (challenge, expires) "
+                     "VALUES (%s, extract(epoch FROM clock_timestamp()) + %s)",
+                     (challenge, self._ttl))
+        return challenge
+
+    def consume(self, challenge: bytes) -> bool:
+        row = self._connection().execute(
+            "DELETE FROM sphragis_webauthn_challenges WHERE challenge = %s "
+            "AND expires >= extract(epoch FROM clock_timestamp()) RETURNING 1",
+            (bytes(challenge),)).fetchone()
+        return row is not None

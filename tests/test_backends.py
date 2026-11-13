@@ -529,6 +529,106 @@ def test_key_inventory_closes_every_connection(tmp_path, monkeypatch):
             conn.execute("SELECT 1")
 
 
+# --- Shared rate limiting and challenges (#72) ------------------------------------
+
+def _shared_limiters(kind, tmp_path, request, rate, burst, clock=None):
+    if kind == "sqlite":
+        from sphragis.sqlstore import SqliteRateLimiter
+        db = tmp_path / "limits.db"
+        kw = {} if clock is None else {"clock": clock}
+        return SqliteRateLimiter(db, rate, burst, **kw), SqliteRateLimiter(db, rate, burst, **kw)
+    from sphragis.pgstore import PostgresRateLimiter
+    dsn = request.getfixturevalue("pg_dsn")
+    return PostgresRateLimiter(dsn, rate, burst), PostgresRateLimiter(dsn, rate, burst)
+
+
+@pytest.mark.parametrize("kind", ["sqlite", pytest.param("pg", marks=needs_pg)])
+def test_rate_limit_holds_across_instances(kind, tmp_path, request):
+    a, b = _shared_limiters(kind, tmp_path, request, rate=0.001, burst=3)
+    key = f"ip:{kind}-{os.urandom(4).hex()}"
+    results = [a.check(key).allowed, b.check(key).allowed, a.check(key).allowed,
+               b.check(key).allowed]
+    assert results == [True, True, True, False]
+    assert b.check(key).retry_after > 0
+    assert a.check("ip:someone-else").allowed
+    for limiter in (a, b):
+        limiter.close()
+
+
+def test_shared_bucket_refills_with_time(tmp_path):
+    now = [1000.0]
+    a, b = _shared_limiters("sqlite", tmp_path, None, rate=1.0, burst=1,
+                            clock=lambda: now[0])
+    assert a.check("k").allowed and not b.check("k").allowed
+    now[0] += 1.0
+    assert b.check("k").allowed
+    a.close(), b.close()
+
+
+def _challenge_stores(kind, tmp_path, request, **kw):
+    if kind == "sqlite":
+        from sphragis.sqlstore import SqliteChallengeStore
+        db = tmp_path / "challenges.db"
+        return SqliteChallengeStore(db, **kw), SqliteChallengeStore(db, **kw)
+    from sphragis.pgstore import PostgresChallengeStore
+    dsn = request.getfixturevalue("pg_dsn")
+    kw.pop("clock", None)
+    return PostgresChallengeStore(dsn, **kw), PostgresChallengeStore(dsn, **kw)
+
+
+@pytest.mark.parametrize("kind", ["sqlite", pytest.param("pg", marks=needs_pg)])
+def test_challenge_issued_by_one_instance_is_consumed_once_by_another(kind, tmp_path, request):
+    issuer, verifier = _challenge_stores(kind, tmp_path, request)
+    challenge = issuer.issue()
+    assert verifier.consume(challenge)
+    assert not issuer.consume(challenge) and not verifier.consume(challenge)
+    assert not verifier.consume(os.urandom(32))
+    for store in (issuer, verifier):
+        getattr(store, "close", lambda: None)()
+
+
+def test_expired_challenges_are_refused(tmp_path):
+    now = [1000.0]
+    issuer, verifier = _challenge_stores("sqlite", tmp_path, None, ttl_seconds=10,
+                                         clock=lambda: now[0])
+    challenge = issuer.issue()
+    now[0] += 11
+    assert not verifier.consume(challenge)
+    issuer.close(), verifier.close()
+
+
+def test_two_app_instances_share_the_ip_budget(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from sphragis.api import create_app_from_env
+    for name in ("MASTER_FILE", "META_READ", "LOG_PSEUDONYM"):
+        monkeypatch.setenv("SPHRAGIS_" + name, os.urandom(16).hex())
+    env = {"SPHRAGIS_DB_PATH": str(tmp_path / "s.db"), "SPHRAGIS_RATE_LIMIT_STORE": "db",
+           "SPHRAGIS_IP_RATE": "0.001", "SPHRAGIS_IP_BURST": "2"}
+    first = TestClient(create_app_from_env(env), client=("203.0.113.9", 1))
+    second = TestClient(create_app_from_env(env), client=("203.0.113.9", 2))
+    codes = [first.get("/t").status_code, second.get("/t").status_code,
+             first.get("/t").status_code]
+    assert codes == [200, 200, 429]
+
+
+def test_ipv6_buckets_can_be_coarser():
+    pytest.importorskip("fastapi")
+    from sphragis.api.app import client_address
+    from sphragis.api.settings import ApiSettings
+    a = client_address("2001:db8:1:1::1", [], (), ipv6_prefix=48)
+    b = client_address("2001:db8:1:ffff::1", [], (), ipv6_prefix=48)
+    assert a == b == "2001:db8:1::/48"
+    assert client_address("2001:db8:1:1::1", [], ()) == "2001:db8:1:1::/64"
+    assert ApiSettings.from_env({"SPHRAGIS_IPV6_PREFIX": "48"}).ipv6_prefix == 48
+    for bad in ("8", "129", "x"):
+        with pytest.raises(ValueError, match="IPV6_PREFIX"):
+            ApiSettings.from_env({"SPHRAGIS_IPV6_PREFIX": bad})
+    with pytest.raises(ValueError, match="RATE_LIMIT_STORE"):
+        ApiSettings.from_env({"SPHRAGIS_RATE_LIMIT_STORE": "redis"})
+
+
 # --- Shared JSON file, and a ledger kept complete by the floor-only API ------
 
 def test_json_store_reads_see_other_instances(tmp_path):

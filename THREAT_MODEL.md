@@ -113,8 +113,8 @@ first-class, scored detector rather than a simple freshness flag.
   the old public key is withdrawn from the log's trust list.
 - **Public taps carry no location**: impossible-velocity needs authenticated
   readers; anonymous phone taps feed only the counter-based signals.
-- The in-process rate limiter is per replica; a global limit needs a shared
-  `RateLimiter` backend.
+- The default in-process rate limiter is per replica; a global limit needs
+  `SPHRAGIS_RATE_LIMIT_STORE=db` (buckets in the shared database).
 
 ## Residual risk
 
