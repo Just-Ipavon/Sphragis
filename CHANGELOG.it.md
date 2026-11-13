@@ -3,6 +3,20 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Corretto
+
+- Due tap autentici dello stesso tag elaborati in contemporanea non rendono
+  più `SUSPICIOUS` (`prior_divergence`) tutti i tap successivi. Il registro e
+  la cronologia del rilevatore sono scritti in due passi, quindi la
+  cronologia poteva ricevere i due contatori nuovi in ordine inverso e
+  leggerlo come una biforcazione. Ogni riga della cronologia ora registra se
+  il registro l'ha trovata nuova o in regressione (colonna `regression`
+  aggiunta sul posto alle tabelle SQLite e Postgres), e le righe nuove non
+  vengono mai prese per una biforcazione; le righe della 2.0.0 sono ancora
+  giudicate dall'ordine (#62).
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di

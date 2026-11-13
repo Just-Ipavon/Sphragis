@@ -3,6 +3,19 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Two genuine taps of one tag processed concurrently no longer make every
+  later tap `SUSPICIOUS` (`prior_divergence`). The ledger and the detector
+  history are written in two steps, so the history could receive the two
+  fresh counters in reverse order and read that as a fork. Each history row
+  now records whether the ledger found it fresh or a regression (a
+  `regression` column added in place to the SQLite and Postgres
+  observation tables), and fresh rows are never taken for a fork; rows from
+  2.0.0 are still judged by order (#62).
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,
