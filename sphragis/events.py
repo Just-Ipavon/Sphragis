@@ -96,13 +96,20 @@ class _Tagged:
 
 def cbor_decode(data: bytes):
     """Decode one deterministic CBOR item; anything else is an EventError."""
-    value, end = _decode(data, 0)
+    value, end = _decode(data, 0, 0)
     if end != len(data):
         raise EventError("trailing bytes after CBOR item")
     return value
 
 
-def _decode(data: bytes, i: int):
+MAX_CBOR_DEPTH = 8
+"""Nesting limit: events and COSE keys use two levels; deeper input is refused
+before it can exhaust the interpreter's stack."""
+
+
+def _decode(data: bytes, i: int, depth: int):
+    if depth > MAX_CBOR_DEPTH:
+        raise EventError("CBOR nested too deeply")
     if i >= len(data):
         raise EventError("truncated CBOR")
     first = data[i]
@@ -142,21 +149,23 @@ def _decode(data: bytes, i: int):
     if major == 4:
         items = []
         for _ in range(n):
-            item, i = _decode(data, i)
+            item, i = _decode(data, i, depth + 1)
             items.append(item)
         return items, i
     if major == 5:
         out, previous = {}, None
         for _ in range(n):
             start = i
-            key, i = _decode(data, i)
+            key, i = _decode(data, i, depth + 1)
+            if not isinstance(key, (int, str, bytes, bool)) and key is not None:
+                raise EventError("CBOR map key must be an integer, text or bytes")
             encoded = data[start:i]
             if previous is not None and encoded <= previous:
                 raise EventError("CBOR map keys not in deterministic order")
             previous = encoded
-            out[key], i = _decode(data, i)
+            out[key], i = _decode(data, i, depth + 1)
         return out, i
-    item, i = _decode(data, i)
+    item, i = _decode(data, i, depth + 1)
     return _Tagged(n, item), i
 
 
