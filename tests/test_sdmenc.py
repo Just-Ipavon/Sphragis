@@ -266,8 +266,9 @@ def test_cli_verify_enc(capsys):
     assert main(["verify", "--enc", *keys, T3_URL]) == 0
     out = capsys.readouterr().out
     assert "AUTHENTIC" in out and "FileData   : " + "78" * 16 in out
-    # Without --enc the plain verifier keeps refusing the URL.
-    assert main(["verify", *keys, T3_URL]) == 1
+    # Without --enc the 'enc' parameter selects the same verifier (#75).
+    assert main(["verify", *keys, T3_URL]) == 0
+    assert "FileData   : " + "78" * 16 in capsys.readouterr().out
 
 
 # --- Physical tag, all-zero keys ---------------------------------------------

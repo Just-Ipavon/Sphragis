@@ -132,6 +132,11 @@ python -m sphragis.cli inspect \
   "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
 ```
 
+`verify` exits 0 for AUTHENTIC, 1 for ERROR (malformed input), 3 for REPLAY
+and 4 for FORGED; 2 is a usage error. A tap with an `enc` parameter is
+verified as an SDMENCFileData tap automatically, and `--sqlite DB` keeps the
+anti-replay floor in SQLite instead of `--store FILE` (JSON).
+
 ## REST API
 
 An optional FastAPI front end (`pip install "sphragis[api]"`). It takes the

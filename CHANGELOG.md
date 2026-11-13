@@ -14,6 +14,11 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- CLI (#75): `--version`; `verify` detects SDMENCFileData taps by their
+  `enc` parameter (`--enc` still forces it), takes `--sqlite DB` as an
+  alternative to the JSON `--store`, and exits 0 AUTHENTIC, 1 ERROR,
+  3 REPLAY, 4 FORGED (2 stays the usage error), as documented in the README
+  and `--help`.
 - `/readyz`: every store answers a read and the webhook alert queue is under
   90% full, or `503` with the failing checks. On shutdown the API delivers
   queued webhook alerts (up to 10 s) and closes the stores;
