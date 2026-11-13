@@ -5,14 +5,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
-### Corretto
-- L'input malformato non sfugge più con un tipo di eccezione inatteso (#64):
-  un `clientDataJSON` WebAuthn il cui `origin` o `type` non è una stringa dà
-  `ERROR` invece di un `TypeError` che arriva al chiamante; `cbor_decode`
-  solleva `EventError` per una chiave di mappa che non è intero, testo o
-  byte, e per annidamenti oltre gli 8 livelli (prima arrivava a
-  `RecursionError` prima del controllo della firma); `verify_webhook`
-  restituisce `False` per un header di firma non ASCII o assente.
 ### Sicurezza
 
 - `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
@@ -23,6 +15,13 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Corretto
 
+- L'input malformato non sfugge più con un tipo di eccezione inatteso (#64):
+  un `clientDataJSON` WebAuthn il cui `origin` o `type` non è una stringa dà
+  `ERROR` invece di un `TypeError` che arriva al chiamante; `cbor_decode`
+  solleva `EventError` per una chiave di mappa che non è intero, testo o
+  byte, e per annidamenti oltre gli 8 livelli (prima arrivava a
+  `RecursionError` prima del controllo della firma); `verify_webhook`
+  restituisce `False` per un header di firma non ASCII o assente.
 - Un tap autentico con un parametro di query aggiuntivo contenente `?` o `:`
   (`&next=/a?b=1`, `v:1&…`) veniva letto come URL e diventava `ERROR`. Una
   query senza URL ora si riconosce da un `=` prima del primo `?` o `#`, e
