@@ -201,6 +201,7 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | livello di log |
 | `SPHRAGIS_EVENTS_FILE` | nessuno | scrive gli [eventi firmati](events.it.md) in questo file (richiede il segreto `event_signing`) |
+| `SPHRAGIS_EVENT_LOG_ID` | nessuno | concatena gli eventi firmati con questo id di log, uno per replica ([log concatenati](events.it.md#log-concatenati)) |
 | `SPHRAGIS_EVENTS_ON` | tutte | classificazioni da firmare |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | versione della chiave di firma degli eventi |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | versioni di chiave attive, la corrente per prima (es. `2,1`), vedi [gestione delle chiavi](key-management.it.md#versioni-delle-chiavi-e-rotazione) |

@@ -3,6 +3,18 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Chained signed events (#71): with `EventChain` (API:
+  `SPHRAGIS_EVENT_LOG_ID`) every event is schema 2 and carries its log id,
+  a sequence number and the SHA-256 of the previous signed event. The API
+  resumes the chain from the events file after a restart. `verify_log` and
+  `sphragis verify-events` detect removed, reordered, injected or foreign
+  lines and return the head as a checkpoint. Unchained (schema 1) events are
+  unchanged and still the default.
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,

@@ -22,7 +22,7 @@ from ..analyzer import TagAnalyzer
 from ..backends import VerificationBackend
 from ..detection import CloneDetector
 from ..encverifier import Ntag424EncBackend
-from ..events import EventSigner, FileEventSink
+from ..events import EventChain, EventSigner, FileEventSink, read_event_file
 from ..keyring import build_keyring
 from ..logs import UidPseudonymizer, configure_logging
 from ..observations import SqliteObservationStore
@@ -70,9 +70,14 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         None if settings.log_uid == "plain" else secrets.get_key("log_pseudonym")
     )
     signer = sinks_for_events = None
+    chain = None
     if settings.events_file:
         signer = EventSigner(secrets, version=settings.event_key_version)
         sinks_for_events = [FileEventSink(settings.events_file)]
+        if settings.event_log_id:
+            # Continue the chain the file already holds (one log per replica).
+            chain = EventChain.resume(settings.event_log_id,
+                                      read_event_file(settings.events_file))
     service = VerificationService(
         analyzer,
         alert_sinks=sinks,
@@ -82,6 +87,7 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         event_signer=signer,
         event_sinks=sinks_for_events or (),
         events_on=settings.events_on,
+        event_chain=chain,
     )
     return create_app(
         service,
