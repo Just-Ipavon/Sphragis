@@ -28,7 +28,7 @@ from typing import Callable, Iterable
 
 from .alerts import Alert, AlertSink, dispatch
 from .analyzer import AnalysisResult, TagAnalyzer
-from .events import EventSigner, EventSink, SignedEvent, publish
+from .events import EventChain, EventSigner, EventSink, SignedEvent, publish
 from .logs import UidPseudonymizer
 from .ratelimit import RateLimiter
 
@@ -47,6 +47,9 @@ class VerificationOutcome:
     result: AnalysisResult
     uid_ref: str | None
     reader_id: str | None
+    # At least one sink accepted the alert. A background sink (the webhook)
+    # accepts it when queued; delivery is logged, and the durable audit sink
+    # is the record of what was alerted.
     alerted: bool
 
 
@@ -63,10 +66,13 @@ class VerificationService:
         event_signer: EventSigner | None = None,
         event_sinks: Iterable[EventSink] = (),
         events_on: Iterable[str] | None = None,
+        event_chain: EventChain | None = None,
     ) -> None:
         """
         With an `event_signer`, every verification whose classification is in
         `events_on` (all of them when None) is signed and sent to `event_sinks`.
+        With an `event_chain` the events are sequence-numbered and hash-linked
+        (schema 2), and published in sequence order.
         """
         self._analyzer = analyzer
         self._sinks = tuple(alert_sinks)
@@ -81,7 +87,8 @@ class VerificationService:
         self._signer = event_signer
         self._event_sinks = tuple(event_sinks)
         self._events_on = None if events_on is None else frozenset(events_on)
-        if self._event_sinks and self._signer is None:
+        self._chain = event_chain
+        if (self._event_sinks or self._chain) and self._signer is None:
             raise ValueError("event sinks need an event signer")
 
     def _admit(self, uid_hex: str) -> bool:
@@ -135,7 +142,12 @@ class VerificationService:
                 algorithm=result.algorithm, key_version=result.key_version,
             )
             try:
-                publish(self._signer.sign(event), event, self._event_sinks, self._log)
+                if self._chain is None:
+                    publish(self._signer.sign(event), event, self._event_sinks, self._log)
+                else:
+                    with self._chain.lock:
+                        signed, event = self._chain.seal(self._signer, event)
+                        publish(signed, event, self._event_sinks, self._log)
             except Exception:  # noqa: BLE001 - signing must never break verification
                 self._log.exception("event_signing_failed",
                                     extra={"fields": {"event_id": event_id}})

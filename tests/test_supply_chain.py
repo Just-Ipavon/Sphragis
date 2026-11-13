@@ -49,11 +49,21 @@ def _read(*parts):
 
 def test_ci_installs_only_locked_hashed_dependencies():
     ci = _read(".github", "workflows", "ci.yml")
-    assert ci.count("--require-hashes -r requirements/ci.lock") == 2
+    assert ci.count("--require-hashes -r requirements/ci.lock") == 3     # test, pg, package
     assert "pip install -e" not in ci                   # nothing resolved on the fly
     lock = _read("requirements", "ci.lock")
     pins = re.findall(r"^([A-Za-z0-9_.-]+)==", lock, re.M)
     assert {"pycryptodome", "fastapi", "psycopg", "pytest"} <= {p.lower() for p in pins}
+    assert lock.count("--hash=sha256:") >= len(pins)
+
+
+def test_security_scanners_are_locked():
+    workflow = _read(".github", "workflows", "security.yml")
+    assert "--require-hashes -r requirements/security.lock" in workflow
+    assert "pip install pip-audit" not in workflow
+    lock = _read("requirements", "security.lock")
+    pins = {p.lower() for p in re.findall(r"^([A-Za-z0-9_.-]+)==", lock, re.M)}
+    assert {"pip-audit", "bandit"} <= pins
     assert lock.count("--hash=sha256:") >= len(pins)
 
 

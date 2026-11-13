@@ -26,7 +26,7 @@ from sphragis import (  # noqa: E402
     verify_event,
 )
 from sphragis.emulator import EmulatedTag  # noqa: E402
-from sphragis.events import EVENT_CONTENT_TYPE, cbor_decode, cbor_encode  # noqa: E402
+from sphragis.events import cbor_decode, cbor_encode  # noqa: E402
 
 SECRET = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
 
@@ -93,6 +93,20 @@ def test_cbor_encoding_matches_rfc_8949(value, encoded):
 def test_cbor_decoder_is_strict(bad):
     with pytest.raises(EventError):
         cbor_decode(bytes.fromhex(bad))
+
+
+@pytest.mark.parametrize("bad", [
+    bytes.fromhex("a18000"),           # an array as a map key (unhashable)
+    bytes.fromhex("81") * 2000 + b"\x00",   # nested far beyond any real event
+    bytes.fromhex("81") * 9 + b"\x00",      # one level past the limit
+])
+def test_cbor_decoder_refuses_odd_keys_and_deep_nesting(bad):
+    with pytest.raises(EventError):
+        cbor_decode(bad)
+
+
+def test_cbor_nesting_up_to_the_limit_decodes():
+    assert cbor_decode(bytes.fromhex("81") * 8 + b"\x00") is not None
 
 
 # --- Signing and verification ------------------------------------------------------
@@ -277,3 +291,140 @@ def test_settings_validate_event_options():
                       ("EVENT_KEY_VERSION", "x")):
         with pytest.raises(ValueError, match=name):
             ApiSettings.from_env({"SPHRAGIS_" + name: bad})
+
+
+# --- Chained logs (#71) ---------------------------------------------------------------
+
+def _chained_log(n=5, log_id="replica-a"):
+    from sphragis import EventChain
+    chain, signer = EventChain(log_id), _signer()
+    signed = []
+    for i in range(n):
+        out, event = chain.seal(signer, EVENT.__class__(**{**EVENT.__dict__,
+                                                           "event_id": f"e{i}"}))
+        assert event.seq == i and event.log_id == log_id
+        signed.append(out)
+    return signed, chain
+
+
+def _pub():
+    return _signer().public_key
+
+
+def test_a_chained_log_verifies_and_reports_its_head():
+    from sphragis import verify_log
+    from sphragis.events import event_digest
+    signed, chain = _chained_log()
+    events, head = verify_log(signed, _pub(), kid=b"event_signing:v1", log_id="replica-a")
+    assert [e.seq for e in events] == list(range(5))
+    assert head == chain.head == (5, event_digest(signed[-1]))
+    # Each chained event still verifies on its own.
+    assert verify_event(signed[2], _pub()).seq == 2
+
+
+@pytest.mark.parametrize("tamper", ["remove", "reorder", "inject", "duplicate"])
+def test_verify_log_detects_tampering(tamper):
+    from sphragis import verify_log
+    signed, _ = _chained_log()
+    if tamper == "remove":
+        signed = signed[:2] + signed[3:]
+    elif tamper == "reorder":
+        signed[1], signed[2] = signed[2], signed[1]
+    elif tamper == "inject":
+        stranger, _ = _chained_log(3, log_id="replica-b")
+        signed.insert(2, stranger[2])
+    else:
+        signed.insert(3, signed[2])
+    with pytest.raises(EventError):
+        verify_log(signed, _pub())
+
+
+def test_verify_log_refuses_a_line_from_another_log_in_the_same_position():
+    from sphragis import verify_log
+    signed, _ = _chained_log()
+    other, _ = _chained_log(log_id="replica-b")
+    with pytest.raises(EventError, match="belongs to log"):
+        verify_log(signed[:2] + other[2:3] + signed[3:], _pub())
+
+
+def test_verify_log_from_a_pinned_head_checks_only_the_rest():
+    from sphragis import verify_log
+    signed, _ = _chained_log()
+    _, head = verify_log(signed[:3], _pub())
+    events, _ = verify_log(signed[3:], _pub(), start=head)
+    assert [e.seq for e in events] == [3, 4]
+    with pytest.raises(EventError):
+        verify_log(signed[4:], _pub(), start=head)          # seq 3 missing
+
+
+def test_chain_resumes_after_the_last_event_of_a_file(tmp_path):
+    from sphragis import EventChain, verify_log
+    from sphragis.events import FileEventSink
+    path = tmp_path / "events.log"
+    sink = FileEventSink(path)
+    first, _ = _chained_log(3)
+    for s in first:
+        sink.publish(s, None)
+    chain = EventChain.resume("replica-a", read_event_file(path))
+    more, _ = chain.seal(_signer(), EVENT)
+    sink.publish(more, None)
+    events, (seq, _) = verify_log(read_event_file(path), _pub())
+    assert seq == 4 and events[-1].event_id == EVENT.event_id
+    with pytest.raises(EventError, match="does not end with an event of this chain"):
+        EventChain.resume("replica-b", read_event_file(path))
+
+
+def test_unchained_events_keep_schema_1_and_the_known_answer():
+    assert cbor_decode(bytes.fromhex(KAT_SIGNED)).value[2]   # payload present
+    assert _signer().sign(EVENT).hex() == KAT_SIGNED
+    from sphragis import verify_log
+    with pytest.raises(EventError, match="not chained"):
+        verify_log([bytes.fromhex(KAT_SIGNED)], _pub())
+
+
+def test_service_publishes_a_chain_and_the_cli_checks_it(tmp_path, capsys):
+    from sphragis import EventChain, StaticKeys
+    from sphragis.analyzer import TagAnalyzer
+    from sphragis.cli import main
+    from sphragis.events import FileEventSink
+    from sphragis.service import VerificationService
+    tag = EmulatedTag(uid=os.urandom(7), meta_read_key=os.urandom(16),
+                      file_read_key=os.urandom(16))
+    path = tmp_path / "events.log"
+    service = VerificationService(
+        TagAnalyzer(StaticKeys(tag.meta_read_key, tag.file_read_key)),
+        event_signer=_signer(), event_sinks=[FileEventSink(path)],
+        event_chain=EventChain("gate-host"))
+    for _ in range(3):
+        service.verify(tag.tap())
+    argv = ["verify-events", str(path), "--public-key", _pub().hex(), "--log-id", "gate-host"]
+    assert main(argv) == 0
+    assert "3 events" in capsys.readouterr().out
+    lines = path.read_bytes().splitlines()
+    path.write_bytes(b"\n".join([lines[0], lines[2]]) + b"\n")
+    assert main(argv) == 1
+    assert "BROKEN" in capsys.readouterr().out
+
+
+def test_api_chains_events_across_restarts(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from sphragis import DiversifiedKeys, verify_log
+    from sphragis.api import create_app_from_env
+    from sphragis.emulator import tag_from_provider
+
+    master, meta = os.urandom(16), os.urandom(16)
+    for name, key in (("MASTER_FILE", master), ("META_READ", meta),
+                      ("LOG_PSEUDONYM", os.urandom(16)), ("EVENT_SIGNING", SECRET)):
+        monkeypatch.setenv("SPHRAGIS_" + name, key.hex())
+    events = tmp_path / "events.log"
+    env = {"SPHRAGIS_DB_PATH": str(tmp_path / "s.db"), "SPHRAGIS_EVENTS_FILE": str(events),
+           "SPHRAGIS_EVENT_LOG_ID": "replica-a"}
+    tag = tag_from_provider(DiversifiedKeys(master, meta), uid=os.urandom(7))
+    for _ in range(2):                                      # two runs of the server
+        with TestClient(create_app_from_env(env)) as client:
+            for _ in range(2):
+                client.get("/t?" + tag.tap().partition("?")[2])
+    found, (seq, _) = verify_log(read_event_file(events), _pub(), log_id="replica-a")
+    assert seq == 4 and [e.seq for e in found] == [0, 1, 2, 3]

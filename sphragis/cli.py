@@ -21,6 +21,13 @@ Examples:
     # Decode what a tag emits (diagnostic; keys default to all-zero)
     python -m sphragis.cli inspect "https://example.com/t?picc_data=...&cmac=..."
 
+    # Keep the anti-replay floor in SQLite, shareable with the API's database
+    python -m sphragis.cli verify --secrets-dir ~/.sphragis/keys --sqlite sphragis.db "<url>"
+
+Exit status of verify: 0 AUTHENTIC, 1 ERROR (malformed input), 3 REPLAY,
+4 FORGED; 2 is a usage error for every command. Taps with an `enc`
+parameter are verified as SDMENCFileData taps automatically.
+
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
 """
@@ -32,14 +39,24 @@ import getpass
 import json
 import os
 import sys
+from urllib.parse import parse_qs
 
-from .counterstore import CounterStore
+from . import __version__
+from .counterstore import CounterStore, CounterStoreError
 from .diagnostics import ZERO_KEY, inspect_tap
 from .emulator import EmulatedTag
 from .encverifier import EncFileVerifier
 from .sdm import SdmError
 from .secrets import FileSecretsBackend, SecretsError, build_diversified_keys
-from .verifier import StaticKeys, Verdict, Verifier
+from .verifier import _ENC_MARKERS, StaticKeys, Verdict, Verifier, _query_of
+
+EXIT_CODES = {
+    Verdict.AUTHENTIC: 0,
+    Verdict.ERROR: 1,          # malformed input: not a tap at all
+    Verdict.REPLAY: 3,         # valid MAC, stale counter
+    Verdict.FORGED: 4,         # MAC does not verify
+}
+"""verify's exit status; 2 is argparse's usage error, as for every command."""
 
 _VERDICT_LABEL = {
     Verdict.AUTHENTIC: "AUTHENTIC  - genuine tag, fresh tap",
@@ -54,6 +71,41 @@ def _hexkey(value: str) -> bytes:
     if len(key) != 16:
         raise argparse.ArgumentTypeError("key must be 16 bytes (32 hex chars)")
     return key
+
+
+MAX_COUNTER = 0xFFFFFF
+"""SDMReadCtr is 24 bits; a real tag stops answering with SUN at the limit."""
+
+
+def _uid(value: str) -> bytes:
+    try:
+        uid = bytes.fromhex(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("UID must be hex") from None
+    if len(uid) != 7:
+        raise argparse.ArgumentTypeError("UID must be 7 bytes (14 hex chars)")
+    return uid
+
+
+def _counter(value: str) -> int:
+    try:
+        counter = int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError("counter must be an integer") from None
+    if not 0 <= counter < MAX_COUNTER:
+        raise argparse.ArgumentTypeError(
+            f"counter must be between 0 and {MAX_COUNTER - 1} (each tap adds one)")
+    return counter
+
+
+def _taps(value: str) -> int:
+    try:
+        taps = int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError("taps must be an integer") from None
+    if taps < 1:
+        raise argparse.ArgumentTypeError("taps must be at least 1")
+    return taps
 
 
 def _resolve_keys(args: argparse.Namespace):
@@ -86,8 +138,19 @@ def _resolve_keys(args: argparse.Namespace):
 
 def _cmd_verify(args: argparse.Namespace) -> int:
     keys = _resolve_keys(args)
-    verifier_cls = EncFileVerifier if args.enc else Verifier
-    result = verifier_cls(keys, CounterStore(args.store)).verify(args.url)
+    verifier_cls = EncFileVerifier if args.enc or _mirrors_file_data(args.url) else Verifier
+    try:
+        if args.sqlite:
+            from .sqlstore import SqliteCounterStore
+            store = SqliteCounterStore(args.sqlite)
+        else:
+            store = CounterStore(args.store)
+    except (CounterStoreError, ValueError, OSError) as exc:
+        raise SystemExit(f"error: {exc}") from None
+    try:
+        result = verifier_cls(keys, store).verify(args.url)
+    finally:
+        getattr(store, "close", lambda: None)()
     print(_VERDICT_LABEL[result.verdict])
     if result.uid:
         print(f"UID        : {result.uid}")
@@ -96,7 +159,16 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if getattr(result, "file_data", None) is not None:
         print(f"FileData   : {result.file_data.hex().upper()}")
     print(f"Detail     : {result.detail}")
-    return 0 if result.ok else 1
+    return EXIT_CODES[result.verdict]
+
+
+def _mirrors_file_data(url: str) -> bool:
+    """Whether the tap carries SDMENCFileData (an `enc` parameter)."""
+    try:
+        query = _query_of(url)
+    except SdmError:
+        return False
+    return any(k.lower() in _ENC_MARKERS for k in parse_qs(query, keep_blank_values=True))
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
@@ -113,8 +185,11 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _cmd_emulate(args: argparse.Namespace) -> int:
+    if args.counter + args.taps > MAX_COUNTER:
+        raise SystemExit(f"error: --counter {args.counter} plus {args.taps} taps passes "
+                         f"the 24-bit limit ({MAX_COUNTER})")
     keys = _resolve_keys(args)
-    uid = bytes.fromhex(args.uid)
+    uid = args.uid
     tag = EmulatedTag(
         uid=uid,
         meta_read_key=keys.meta_read_key(),
@@ -123,6 +198,26 @@ def _cmd_emulate(args: argparse.Namespace) -> int:
     )
     for _ in range(args.taps):
         print(tag.tap())
+    return 0
+
+
+def _cmd_verify_events(args: argparse.Namespace) -> int:
+    from .events import EventError, read_event_file, verify_log
+    try:
+        public_key = bytes.fromhex(args.public_key)
+    except ValueError:
+        raise SystemExit("error: --public-key must be hex") from None
+    try:
+        events, (seq, head) = verify_log(read_event_file(args.file), public_key,
+                                         log_id=args.log_id)
+    except (EventError, ValueError) as exc:
+        print(f"BROKEN     : {exc}")
+        return 1
+    except OSError as exc:
+        raise SystemExit(f"error: cannot read {args.file}: {exc.strerror}") from None
+    log = events[0].log_id if events else args.log_id
+    print(f"OK         : {len(events)} events, log {log!r}")
+    print(f"Head       : seq {seq}, digest {head.hex()}  (pin this as a checkpoint)")
     return 0
 
 
@@ -140,16 +235,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sphragis",
         description="NTAG 424 DNA SUN/SDM verification toolkit",
+        epilog="verify exits 0 AUTHENTIC, 1 ERROR (malformed), 3 REPLAY, 4 FORGED; "
+               "2 is a usage error for every command",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     v = sub.add_parser("verify", help="verify a tapped SUN URL")
     v.add_argument("url", help="the full URL (or query string) emitted by the tag")
     _add_key_args(v)
-    v.add_argument("--store", default=None, help="path to the JSON counter store")
+    stores = v.add_mutually_exclusive_group()
+    stores.add_argument("--store", default=None,
+                        help="JSON counter store (default: in memory, nothing kept)")
+    stores.add_argument("--sqlite", default=None, metavar="DB",
+                        help="SQLite counter store, shareable with the API's database")
     v.add_argument("--enc", action="store_true",
-                   help="the URL mirrors SDMENCFileData (picc_data, enc, cmac); "
-                        "print the decrypted file data")
+                   help="treat the URL as mirroring SDMENCFileData even without an "
+                        "'enc' parameter (detected automatically otherwise)")
     v.set_defaults(func=_cmd_verify)
 
     i = sub.add_parser(
@@ -165,11 +267,19 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--json", action="store_true", help="machine-readable output")
     i.set_defaults(func=_cmd_inspect)
 
+    ve = sub.add_parser("verify-events",
+                        help="check a chained signed-event log: signatures, sequence, links")
+    ve.add_argument("file", help="event log written by FileEventSink")
+    ve.add_argument("--public-key", required=True,
+                    help="raw Ed25519 public key (hex), as served at /v1/event-key")
+    ve.add_argument("--log-id", default=None, help="expected log id (default: the first)")
+    ve.set_defaults(func=_cmd_verify_events)
+
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     _add_key_args(e)
-    e.add_argument("--uid", required=True, help="7-byte UID (hex)")
-    e.add_argument("--counter", type=int, default=0, help="starting read counter")
-    e.add_argument("--taps", type=int, default=1, help="number of taps to emit")
+    e.add_argument("--uid", required=True, type=_uid, help="7-byte UID (hex)")
+    e.add_argument("--counter", type=_counter, default=0, help="starting read counter")
+    e.add_argument("--taps", type=_taps, default=1, help="number of taps to emit")
     e.set_defaults(func=_cmd_emulate)
 
     return parser

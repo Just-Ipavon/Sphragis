@@ -21,8 +21,8 @@ encrypted file data (SDMENCFileData, a multiple of 16 bytes).
     python tools/provision.py --dry-run --base-url https://example.com/t
     python tools/provision.py --reader chameleon --port /dev/ttyACM0 \\
         --base-url https://example.com/t --yes
-    python tools/provision.py --reader chameleon --base-url https://example.com/t \\
-        --enc-data 0123456789ABCDEF --dry-run
+    python tools/provision.py --reader chameleon --port /dev/ttyACM0 \\
+        --base-url https://example.com/t --enc-data 0123456789ABCDEF --dry-run
 """
 
 from __future__ import annotations
@@ -35,10 +35,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _reader import add_reader_args, reader_factory  # noqa: E402
 
-from sphragis.keyprov import DiversifiedTagKeys, current_tag_keys  # noqa: E402
+from sphragis.apdu import ApduError  # noqa: E402
+from sphragis.keyprov import (  # noqa: E402
+    DiversifiedTagKeys,
+    KeyProvisionError,
+    current_tag_keys,
+)
 from sphragis.provision import ProvisionError, provision_tag  # noqa: E402
 from sphragis.sdmconfig import WRITE_LOCK_KEYS  # noqa: E402
-from sphragis.secrets import FileSecretsBackend  # noqa: E402
+from sphragis.secrets import FileSecretsBackend, SecretsError  # noqa: E402
+from sphragis.transport import TransportError  # noqa: E402
 
 
 def confirm_by_typing(report) -> bool:
@@ -125,8 +131,11 @@ def main(argv: list[str] | None = None) -> int:
             report = provision_tag(transport, args.base_url, dry_run=args.dry_run,
                                    log=print, uid=uid,
                                    confirm=None if uid else confirm_by_typing, **options)
-    except ProvisionError as exc:
+    except (ProvisionError, KeyProvisionError) as exc:
         print(f"REFUSED      : {exc}")
+        return 2
+    except (TransportError, ApduError, SecretsError) as exc:
+        print(f"ERROR        : {exc}")
         return 2
     if args.dry_run:
         return 0

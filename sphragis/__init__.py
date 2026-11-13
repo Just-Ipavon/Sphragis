@@ -47,6 +47,7 @@ from .diversify import DiversifiedKeys, diversify_key
 from .keyring import KeyRing, build_keyring, versioned_name
 from .encverifier import EncFileVerifier, EncVerificationResult, Ntag424EncBackend
 from .events import (
+    EventChain,
     EventError,
     EventSigner,
     EventSink,
@@ -54,6 +55,7 @@ from .events import (
     SignedEvent,
     read_event_file,
     verify_event,
+    verify_log,
 )
 from .logs import JsonFormatter, UidPseudonymizer, configure_logging
 from .observations import (
@@ -162,6 +164,8 @@ __all__ = [
     "EventError",
     "verify_event",
     "read_event_file",
+    "EventChain",
+    "verify_log",
 ]
 
 __version__ = "2.0.0"

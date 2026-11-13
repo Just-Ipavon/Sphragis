@@ -108,21 +108,30 @@ class SqliteAlertSink:
 
     def __init__(self, path: str | os.PathLike = "alerts.db") -> None:
         self._path = str(path)
-        self._local = threading.local()
-        from .sqlstore import PROVENANCE_COLUMNS, add_missing_columns, secure_db_file
+        from .sqlstore import (
+            PROVENANCE_COLUMNS,
+            ThreadConnections,
+            add_missing_columns,
+            secure_db_file,
+        )
         secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, (
+            "PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000"))
         conn = self._connection()
         conn.executescript(_SCHEMA)
         add_missing_columns(conn, "alerts", PROVENANCE_COLUMNS)
 
     def _connection(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self._path, isolation_level=None, timeout=30.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            self._local.conn = conn
-        return conn
+        return self._conns.get()
+
+    def close(self) -> None:
+        self._conns.close()
+
+    def __enter__(self) -> "SqliteAlertSink":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def emit(self, alert: Alert) -> None:
         self._connection().execute(
@@ -173,7 +182,10 @@ def verify_webhook(secret: bytes, timestamp: str, signature: str, body: bytes,
     current = time.time() if now is None else now
     if abs(current - ts) > tolerance:
         return False
-    return hmac.compare_digest(sign_webhook(secret, timestamp, body), signature or "")
+    if not isinstance(signature, str):
+        return False
+    return hmac.compare_digest(sign_webhook(secret, timestamp, body).encode(),
+                               signature.encode("utf-8", "surrogatepass"))
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -225,9 +237,13 @@ class WebhookAlertSink:
                 "X-Sphragis-Signature": sign_webhook(self._secret, ts, body),
             },
         )
-        with _opener.open(req, timeout=self._timeout) as resp:  # noqa: S310
-            if not 200 <= resp.status < 300:
-                raise RuntimeError(f"webhook answered HTTP {resp.status}")
+        try:
+            with _opener.open(req, timeout=self._timeout) as resp:  # noqa: S310
+                if not 200 <= resp.status < 300:
+                    raise RuntimeError(f"webhook answered HTTP {resp.status}")
+        except urllib.error.HTTPError as exc:
+            exc.close()                  # it holds the response and its socket
+            raise
 
 
 class BackgroundAlertSink:
@@ -267,10 +283,42 @@ class BackgroundAlertSink:
             finally:
                 self._queue.task_done()
 
-    def flush(self) -> None:
-        """Wait until every queued alert has been handed to the sink."""
-        self._queue.join()
+    @property
+    def pending(self) -> int:
+        """Alerts queued and not yet handed to the sink."""
+        return self._queue.qsize()
 
-    def close(self) -> None:
-        self._queue.put(None)
-        self._thread.join(timeout=5)
+    @property
+    def capacity(self) -> int:
+        return self._queue.maxsize
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Wait until every queued alert has been handed to the sink, at most
+        `timeout` seconds; return whether the queue drained."""
+        if timeout is None:
+            self._queue.join()
+            return True
+        deadline = time.monotonic() + timeout
+        while self._queue.unfinished_tasks:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def close(self, timeout: float = 5.0) -> bool:
+        """Deliver what is queued, then stop the worker. Returns whether every
+        queued alert was handed to the sink within `timeout` seconds; the
+        alerts left behind are logged (the durable sink kept them anyway)."""
+        deadline = time.monotonic() + timeout
+        try:
+            self._queue.put(None, timeout=timeout)    # after the queued alerts
+        except queue.Full:
+            pass
+        self._thread.join(max(0.0, deadline - time.monotonic()))
+        left = self._queue.qsize()
+        if self._thread.is_alive() or left:
+            _log.error("alert worker stopped with alerts undelivered",
+                       extra={"fields": {"pending": left,
+                                         "sink": type(self._sink).__name__}})
+            return False
+        return True

@@ -77,7 +77,48 @@ verifica. `FileEventSink` aggiunge una riga base64url per evento (file creato
 
 Impostazioni della API: `SPHRAGIS_EVENTS_FILE` (abilita la firma),
 `SPHRAGIS_EVENTS_ON` (classificazioni da firmare, di default tutte),
-`SPHRAGIS_EVENT_KEY_VERSION` (default `1`).
+`SPHRAGIS_EVENT_KEY_VERSION` (default `1`), `SPHRAGIS_EVENT_LOG_ID` (concatena
+gli eventi, vedi sotto).
+
+## Log concatenati
+
+Ogni evento si verifica da solo, ma un log di eventi potrebbe perdere,
+riordinare o acquisire righe senza che nessuno se ne accorga. Con un
+`EventChain` (API: `SPHRAGIS_EVENT_LOG_ID`) ogni evento è di schema `2` e
+porta tre chiavi in più:
+
+| Chiave | Contenuto |
+|---|---|
+| `log` | identificatore del log: uno per scrittore, quindi uno diverso per ogni replica |
+| `seq` | posizione nel log, da 0 |
+| `prev` | SHA-256 dell'evento firmato precedente così come pubblicato (32 byte a zero per `seq` 0) |
+
+Tutte e tre sono dentro il payload firmato. Il servizio firma e pubblica
+sotto il lock della catena, quindi il file contiene gli eventi in ordine di
+sequenza, e l'API riprende la catena dall'ultima riga di
+`SPHRAGIS_EVENTS_FILE` dopo un riavvio.
+
+```python
+from sphragis import read_event_file, verify_log
+events, head = verify_log(read_event_file("events.log"), public_key,
+                          kid=b"event_signing:v1", log_id="replica-a")
+```
+
+`verify_log` controlla ogni firma, un solo id di log, numeri di sequenza
+senza buchi e ogni collegamento, e solleva `EventError` alla prima rottura:
+una riga rimossa, riordinata o inserita, o presa da un altro log. Restituisce
+la testa `(prossimo seq, ultimo digest)`. Una catena non può mostrare che
+delle righe sono state tagliate dalla fine, quindi chi la consuma fissa la
+testa come checkpoint e controlla che le verifiche successive la
+raggiungano; passando una testa fissata come `start=` si verifica solo ciò
+che è stato aggiunto da allora. Da riga di comando:
+
+```
+python -m sphragis.cli verify-events events.log --public-key <hex> --log-id replica-a
+```
+
+esce con 0 e la testa, o con 1 indicando la prima rottura. Gli eventi di
+schema 1 (senza catena) si verificano ancora con `verify_event`.
 
 ## Verifica
 

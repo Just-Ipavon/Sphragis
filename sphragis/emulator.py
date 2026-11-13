@@ -22,6 +22,7 @@ from .sdmenc import encrypt_file_data
 
 # PICCDataTag for "UID mirrored (7 bytes) + read counter present".
 _PICC_TAG_UID7_CTR = 0xC7
+MAX_READ_COUNTER = 0xFFFFFF
 
 
 @dataclass
@@ -41,6 +42,18 @@ class EmulatedTag:
                         ("file_read_key", self.file_read_key)):
             if len(k) != 16:
                 raise ValueError(f"{name} must be an AES-128 (16-byte) key")
+        if not 0 <= self.read_counter <= MAX_READ_COUNTER:
+            raise ValueError(f"read_counter must be between 0 and {MAX_READ_COUNTER}")
+
+    def _advance(self) -> None:
+        """One tap: a real tag stops answering with SUN once SDMReadCtr is full."""
+        if self.read_counter >= MAX_READ_COUNTER:
+            raise ValueError("SDMReadCtr is at its 24-bit limit: the tag emits no more taps")
+        self.read_counter += 1
+
+    def _url(self, query: str) -> str:
+        """`base_url` plus the SUN parameters, after any query it already has."""
+        return f"{self.base_url}{'&' if '?' in self.base_url else '?'}{query}"
 
     def _encrypt_picc_data(self) -> bytes:
         """Build and encrypt the PICCData block for the current counter value."""
@@ -55,14 +68,14 @@ class EmulatedTag:
         """
         Simulate one physical tap: increment the counter and return the SUN URL.
         """
-        self.read_counter += 1
+        self._advance()
         enc_picc = self._encrypt_picc_data()
         mac = compute_sdmmac(self.file_read_key, self.uid, self.read_counter)
         query = urlencode({
             "picc_data": enc_picc.hex().upper(),
             "cmac": mac.hex().upper(),
         })
-        return f"{self.base_url}?{query}"
+        return self._url(query)
 
 
 @dataclass
@@ -76,15 +89,15 @@ class EmulatedEncTag(EmulatedTag):
     file_data: bytes = b"\x00" * 16   # static plaintext, n * 16 bytes
 
     def tap(self) -> str:
-        self.read_counter += 1
+        self._advance()
         enc_picc = self._encrypt_picc_data()
         enc_hex = encrypt_file_data(
             self.file_read_key, self.uid, self.read_counter, self.file_data
         ).hex().upper()
         mac = compute_sdmmac(self.file_read_key, self.uid, self.read_counter,
                              f"{enc_hex}&cmac=".encode("ascii"))
-        return (f"{self.base_url}?picc_data={enc_picc.hex().upper()}"
-                f"&enc={enc_hex}&cmac={mac.hex().upper()}")
+        return self._url(f"picc_data={enc_picc.hex().upper()}"
+                         f"&enc={enc_hex}&cmac={mac.hex().upper()}")
 
 
 def random_tag(base_url: str = "https://example.com/t") -> EmulatedTag:

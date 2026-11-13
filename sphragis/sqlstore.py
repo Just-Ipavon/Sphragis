@@ -33,13 +33,58 @@ import threading
 import time
 
 from .counterstore import TapRecord, check_ledger_window, compaction_mark
+from .identity import store_key
 
 
 def secure_db_file(path: str) -> None:
     """Create the database file readable by its owner only (0600), if new.
-    UIDs and counters are not keys, but they are tracking data."""
-    if path != ":memory:" and not os.path.exists(path):
+    UIDs and counters are not keys, but they are tracking data.
+
+    In-memory databases are refused: every thread opens its own connection,
+    and each `:memory:` connection is a separate, empty database, so a store
+    would lose its schema and data on the first request served by another
+    thread (FastAPI runs sync endpoints in a thread pool)."""
+    if path == ":memory:" or path.startswith("file::memory:") or "mode=memory" in path:
+        raise ValueError("SQLite stores need a database file; :memory: gives every "
+                         "thread its own empty database (use a temporary file)")
+    if not os.path.exists(path):
         os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+
+
+class ThreadConnections:
+    """
+    One SQLite connection per thread, all closable from any thread.
+
+    Each thread uses only its own connection; `check_same_thread=False` is
+    what lets `close()` reach the connections of other threads (a worker
+    pool's), which sqlite3 otherwise refuses with an error that used to be
+    swallowed, leaving them open.
+    """
+
+    def __init__(self, path: str, pragmas: tuple[str, ...]) -> None:
+        self._path, self._pragmas = path, pragmas
+        self._local = threading.local()
+        self._all: list[sqlite3.Connection] = []
+        self._lock = threading.Lock()
+
+    def get(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._path, isolation_level=None, timeout=30.0,
+                                   check_same_thread=False)
+            for pragma in self._pragmas:
+                conn.execute(pragma)
+            self._local.conn = conn
+            with self._lock:
+                self._all.append(conn)
+        return conn
+
+    def close(self) -> None:
+        with self._lock:
+            conns, self._all = self._all, []
+        for conn in conns:
+            conn.close()
+        self._local = threading.local()
 
 # Provenance columns (crypto agility): which backend, algorithm and key version
 # produced a row. Rows written before they existed read back as NULL: unknown.
@@ -83,31 +128,22 @@ class SqliteCounterStore:
                  ledger_window: int | None = None) -> None:
         self._path = str(path)
         self._window = check_ledger_window(ledger_window)
-        self._local = threading.local()
-        self._all_conns: list[sqlite3.Connection] = []
-        self._conns_lock = threading.Lock()
         secure_db_file(self._path)
+        # FULL: an acknowledged floor advance survives a power loss; with
+        # NORMAL the last transactions of a WAL can roll back, and the taps
+        # they accepted would verify again.
+        self._conns = ThreadConnections(self._path, (
+            "PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000",
+            "PRAGMA synchronous=FULL"))
         # Create the schema once up front.
         self._connection().executescript(_SCHEMA)
 
     def _connection(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self._path, isolation_level=None, timeout=30.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            # FULL: an acknowledged floor advance survives a power loss; with
-            # NORMAL the last transactions of a WAL can roll back, and the
-            # taps they accepted would verify again.
-            conn.execute("PRAGMA synchronous=FULL")
-            self._local.conn = conn
-            with self._conns_lock:
-                self._all_conns.append(conn)
-        return conn
+        return self._conns.get()
 
     def last_counter(self, uid_hex: str) -> int | None:
         row = self._connection().execute(
-            "SELECT counter FROM counters WHERE uid = ?", (uid_hex.upper(),)
+            "SELECT counter FROM counters WHERE uid = ?", (store_key(uid_hex),)
         ).fetchone()
         return None if row is None else int(row[0])
 
@@ -118,7 +154,7 @@ class SqliteCounterStore:
         rollback. Safe under concurrent threads and processes: the IMMEDIATE
         transaction serializes writers via SQLite's write lock.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time()
         conn = self._connection()
         conn.execute("BEGIN IMMEDIATE")
@@ -140,6 +176,13 @@ class SqliteCounterStore:
                 accepted = True
             else:
                 accepted = False
+            if accepted:
+                # A UID whose tap ledger has started keeps it complete, so a
+                # later replay of this tap reads as a replay, not a rollback.
+                conn.execute(
+                    "INSERT OR IGNORE INTO tap_counters (uid, counter, first_seen) "
+                    "SELECT uid, ?, ? FROM tap_ledgers WHERE uid = ?",
+                    (counter, now, uid_hex))
             conn.execute("COMMIT")
             return accepted
         except Exception:
@@ -149,7 +192,7 @@ class SqliteCounterStore:
     def seen(self, uid_hex: str, counter: int) -> bool:
         return self._connection().execute(
             "SELECT 1 FROM tap_counters WHERE uid = ? AND counter = ?",
-            (uid_hex.upper(), counter),
+            (store_key(uid_hex), counter),
         ).fetchone() is not None
 
     def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
@@ -157,7 +200,7 @@ class SqliteCounterStore:
         Tap ledger (`counterstore.TapLedger`): record `counter` for the UID and
         advance the floor if it is new and higher, in one IMMEDIATE transaction.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time()
         conn = self._connection()
         conn.execute("BEGIN IMMEDIATE")
@@ -191,14 +234,7 @@ class SqliteCounterStore:
             raise
 
     def close(self) -> None:
-        with self._conns_lock:
-            for conn in self._all_conns:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            self._all_conns.clear()
-        self._local = threading.local()
+        self._conns.close()
 
     def __enter__(self) -> "SqliteCounterStore":
         return self
