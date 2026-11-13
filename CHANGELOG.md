@@ -5,6 +5,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Added
 
 - `/readyz`: every store answers a read and the webhook alert queue is under
@@ -13,12 +20,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   `BackgroundAlertSink` gains bounded `flush(timeout)` / `close(timeout)` and
   `pending`. `alerted` in results and events is documented as "a sink
   accepted the alert" (queued, for the webhook) (#70).
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
 
 ### Fixed
 

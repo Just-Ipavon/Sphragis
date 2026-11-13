@@ -5,6 +5,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ### Aggiunto
 
 - `/readyz`: ogni storage risponde a una lettura e la coda degli alert del
@@ -14,13 +22,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   `close(timeout)` limitati e `pending`. `alerted` nei risultati e negli
   eventi è documentato come "un sink ha accettato l'alert" (in coda, per il
   webhook) (#70).
-### Sicurezza
-
-- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
-  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
-  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
-  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
-  tutta a zero. `--allow-known-uid` non scavalca il controllo.
 
 ### Corretto
 
