@@ -198,6 +198,7 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` or `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | log level |
 | `SPHRAGIS_EVENTS_FILE` | none | write [signed events](events.md) to this file (needs the `event_signing` secret) |
+| `SPHRAGIS_EVENT_LOG_ID` | none | chain the signed events under this log id, one per replica ([chained logs](events.md#chained-logs)) |
 | `SPHRAGIS_EVENTS_ON` | all | classifications to sign |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | version of the event signing key |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | active key versions, current first (e.g. `2,1`), see [key management](key-management.md#key-versions-and-rotation) |

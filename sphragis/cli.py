@@ -201,6 +201,26 @@ def _cmd_emulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_verify_events(args: argparse.Namespace) -> int:
+    from .events import EventError, read_event_file, verify_log
+    try:
+        public_key = bytes.fromhex(args.public_key)
+    except ValueError:
+        raise SystemExit("error: --public-key must be hex") from None
+    try:
+        events, (seq, head) = verify_log(read_event_file(args.file), public_key,
+                                         log_id=args.log_id)
+    except (EventError, ValueError) as exc:
+        print(f"BROKEN     : {exc}")
+        return 1
+    except OSError as exc:
+        raise SystemExit(f"error: cannot read {args.file}: {exc.strerror}") from None
+    log = events[0].log_id if events else args.log_id
+    print(f"OK         : {len(events)} events, log {log!r}")
+    print(f"Head       : seq {seq}, digest {head.hex()}  (pin this as a checkpoint)")
+    return 0
+
+
 def _add_key_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--secrets-dir", help="directory with master_file and meta_read "
                                               "(hex, 0600): per-UID diversified keys")
@@ -246,6 +266,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "(hex, default all-zero)")
     i.add_argument("--json", action="store_true", help="machine-readable output")
     i.set_defaults(func=_cmd_inspect)
+
+    ve = sub.add_parser("verify-events",
+                        help="check a chained signed-event log: signatures, sequence, links")
+    ve.add_argument("file", help="event log written by FileEventSink")
+    ve.add_argument("--public-key", required=True,
+                    help="raw Ed25519 public key (hex), as served at /v1/event-key")
+    ve.add_argument("--log-id", default=None, help="expected log id (default: the first)")
+    ve.set_defaults(func=_cmd_verify_events)
 
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     _add_key_args(e)

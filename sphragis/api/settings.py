@@ -118,6 +118,7 @@ class ApiSettings:
     events_file: str | None = None
     events_on: frozenset[str] | None = None        # None: every verification
     event_key_version: int = 1
+    event_log_id: str | None = None                 # set: chained events (schema 2)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -203,4 +204,5 @@ class ApiSettings:
             events_file=get("EVENTS_FILE", "") or None,
             events_on=events_on,
             event_key_version=event_key_version,
+            event_log_id=get("EVENT_LOG_ID", "") or None,
         )

@@ -28,10 +28,11 @@ secret serves no other purpose. Verifiers only need the 32-byte public key
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import struct
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Iterator, Protocol, runtime_checkable
 
 from Crypto.Hash import SHA256
@@ -42,6 +43,9 @@ from Crypto.Signature import eddsa
 from .keyring import versioned_name
 
 EVENT_SCHEMA_VERSION = 1
+CHAINED_SCHEMA_VERSION = 2
+GENESIS = bytes(32)
+"""`prev` of the first event of a chained log."""
 EVENT_CONTENT_TYPE = "application/vnd.sphragis.verification-event+cbor"
 COSE_ALG_EDDSA = -8
 _COSE_SIGN1_TAG = 18
@@ -183,6 +187,12 @@ class SignedEvent:
         sig  signal names              al   whether an alert was raised
         be   backend or null           alg  authenticator algorithm or null
         kv   key version or null
+
+    Chained events (schema 2, see `EventChain`) add:
+
+        log  log identifier            seq  position in the log, from 0
+        prev SHA-256 of the previous signed event as published (32 zero
+             bytes for seq 0)
     """
 
     event_id: str
@@ -197,23 +207,44 @@ class SignedEvent:
     backend: str | None = None
     algorithm: str | None = None
     key_version: int | None = None
+    log_id: str | None = None
+    seq: int | None = None
+    prev: bytes | None = None
+
+    @property
+    def chained(self) -> bool:
+        return self.seq is not None
 
     def to_payload(self) -> dict:
-        return {"v": EVENT_SCHEMA_VERSION, "id": self.event_id, "t": self.timestamp_ms,
-                "cls": self.classification, "rs": self.risk_score, "tag": self.uid_ref,
-                "ctr": self.read_counter, "rdr": self.reader_id,
-                "sig": list(self.signals), "al": self.alerted, "be": self.backend,
-                "alg": self.algorithm, "kv": self.key_version}
+        payload = {"v": EVENT_SCHEMA_VERSION, "id": self.event_id, "t": self.timestamp_ms,
+                   "cls": self.classification, "rs": self.risk_score, "tag": self.uid_ref,
+                   "ctr": self.read_counter, "rdr": self.reader_id,
+                   "sig": list(self.signals), "al": self.alerted, "be": self.backend,
+                   "alg": self.algorithm, "kv": self.key_version}
+        if self.chained:
+            payload.update(v=CHAINED_SCHEMA_VERSION, log=self.log_id, seq=self.seq,
+                           prev=self.prev)
+        return payload
 
     @classmethod
     def from_payload(cls, p) -> "SignedEvent":
         try:
-            if not isinstance(p, dict) or p.get("v") != EVENT_SCHEMA_VERSION:
+            if not isinstance(p, dict) or p.get("v") not in (EVENT_SCHEMA_VERSION,
+                                                             CHAINED_SCHEMA_VERSION):
                 raise EventError("unknown event schema")
-            if set(p) != set(cls("", 0, "", 0, None, None, None, (), False).to_payload()):
+            base = set(cls("", 0, "", 0, None, None, None, (), False).to_payload())
+            chained = p["v"] == CHAINED_SCHEMA_VERSION
+            if set(p) != (base | {"log", "seq", "prev"} if chained else base):
                 raise EventError("unexpected event fields")
-            return cls(p["id"], p["t"], p["cls"], p["rs"], p["tag"], p["ctr"], p["rdr"],
-                       tuple(p["sig"]), p["al"], p["be"], p["alg"], p["kv"])
+            event = cls(p["id"], p["t"], p["cls"], p["rs"], p["tag"], p["ctr"], p["rdr"],
+                        tuple(p["sig"]), p["al"], p["be"], p["alg"], p["kv"])
+            if chained:
+                if (not isinstance(p["log"], str) or not isinstance(p["seq"], int)
+                        or isinstance(p["seq"], bool) or p["seq"] < 0
+                        or not isinstance(p["prev"], bytes) or len(p["prev"]) != 32):
+                    raise EventError("malformed chain fields")
+                event = replace(event, log_id=p["log"], seq=p["seq"], prev=p["prev"])
+            return event
         except (KeyError, TypeError) as exc:
             raise EventError(f"malformed event payload: {exc}") from exc
 
@@ -276,6 +307,102 @@ def verify_event(signed: bytes, public_key: bytes,
     except ValueError as exc:
         raise EventError("signature does not verify") from exc
     return SignedEvent.from_payload(cbor_decode(payload))
+
+
+# --- Chained logs -----------------------------------------------------------------------
+
+def event_digest(signed: bytes) -> bytes:
+    """What the next event's `prev` holds: SHA-256 of the signed bytes."""
+    return hashlib.sha256(signed).digest()
+
+
+class EventChain:
+    """
+    Sequence numbers and hash links for one log (schema 2): each event names
+    its log, its position and the digest of the event before it, so removing,
+    reordering or injecting a line, or moving one into another log, breaks
+    the chain (`verify_log`).
+
+    One chain per writer: replicas each need their own `log_id`. `seal` and
+    the publication of its result must happen under `lock`, so the log
+    receives the events in sequence order.
+    """
+
+    def __init__(self, log_id: str, seq: int = 0, prev: bytes = GENESIS) -> None:
+        if not log_id:
+            raise ValueError("a chained log needs a log id")
+        if len(prev) != 32 or seq < 0:
+            raise ValueError("invalid chain position")
+        self.log_id, self._seq, self._prev = log_id, seq, prev
+        self.lock = threading.Lock()
+
+    @classmethod
+    def resume(cls, log_id: str, signed_events: Iterable[bytes]) -> "EventChain":
+        """Continue after the last event already written (e.g. a log file)."""
+        last = None
+        for signed in signed_events:
+            last = signed
+        if last is None:
+            return cls(log_id)
+        event = SignedEvent.from_payload(cbor_decode(_cose_payload(last)))
+        if not event.chained or event.log_id != log_id:
+            raise EventError("the log does not end with an event of this chain")
+        return cls(log_id, event.seq + 1, event_digest(last))
+
+    @property
+    def head(self) -> tuple[int, bytes]:
+        """(next sequence number, digest of the last event): a checkpoint."""
+        return self._seq, self._prev
+
+    def seal(self, signer: "EventSigner", event: SignedEvent) -> tuple[bytes, SignedEvent]:
+        """Chain and sign `event`, and advance. Call it under `lock`."""
+        event = replace(event, log_id=self.log_id, seq=self._seq, prev=self._prev)
+        signed = signer.sign(event)
+        self._seq, self._prev = self._seq + 1, event_digest(signed)
+        return signed, event
+
+
+def _cose_payload(signed: bytes) -> bytes:
+    item = cbor_decode(signed)
+    if isinstance(item, _Tagged):
+        item = item.value
+    if not isinstance(item, list) or len(item) != 4 or not isinstance(item[2], bytes):
+        raise EventError("malformed COSE_Sign1 structure")
+    return item[2]
+
+
+def verify_log(signed_events: Iterable[bytes], public_key: bytes, *,
+               kid: bytes | None = None, log_id: str | None = None,
+               start: tuple[int, bytes] = (0, GENESIS)) -> tuple[list[SignedEvent],
+                                                                tuple[int, bytes]]:
+    """
+    Verify a chained log in order: every signature, one log id (`log_id` if
+    given), sequence numbers from `start[0]` without gaps, and each `prev`
+    equal to the digest of the event before it (`start[1]` for the first).
+    Returns the events and the head `(next seq, last digest)`, which a
+    consumer can pin as a checkpoint: a later run that does not reach the
+    pinned head means events were cut from the end, and passing a pinned
+    head as `start` verifies only what was appended since. Raises EventError
+    at the first break.
+    """
+    seq, prev = start
+    events = []
+    for n, signed in enumerate(signed_events):
+        event = verify_event(signed, public_key, kid)
+        if not event.chained:
+            raise EventError(f"event {n} is not chained")
+        if log_id is None:
+            log_id = event.log_id
+        if event.log_id != log_id:
+            raise EventError(f"event {n} belongs to log {event.log_id!r}, not {log_id!r}")
+        if event.seq != seq:
+            raise EventError(f"event {n} has sequence {event.seq}, expected {seq}: "
+                             "events removed, reordered or injected")
+        if event.prev != prev:
+            raise EventError(f"event {n} (seq {seq}) does not link to the event before it")
+        events.append(event)
+        seq, prev = seq + 1, event_digest(signed)
+    return events, (seq, prev)
 
 
 # --- Sinks ------------------------------------------------------------------------------

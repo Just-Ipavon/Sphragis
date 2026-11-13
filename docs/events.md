@@ -75,7 +75,45 @@ base64url line per event (file created `0600`, every line fsync'd);
 
 API settings: `SPHRAGIS_EVENTS_FILE` (enables signing), `SPHRAGIS_EVENTS_ON`
 (classifications to sign, default all), `SPHRAGIS_EVENT_KEY_VERSION`
-(default `1`).
+(default `1`), `SPHRAGIS_EVENT_LOG_ID` (chains the events, see below).
+
+## Chained logs
+
+Each event verifies on its own, but a log of them could lose, reorder or gain
+lines unnoticed. With an `EventChain` (API: `SPHRAGIS_EVENT_LOG_ID`) every
+event is schema `2` and carries three more keys:
+
+| Key | Content |
+|---|---|
+| `log` | log identifier: one per writer, so give each replica its own |
+| `seq` | position in the log, from 0 |
+| `prev` | SHA-256 of the previous signed event as published (32 zero bytes for `seq` 0) |
+
+All three are inside the signed payload. The service signs and publishes
+under the chain's lock, so the file holds the events in sequence order, and
+the API resumes the chain from the last line of `SPHRAGIS_EVENTS_FILE` after
+a restart.
+
+```python
+from sphragis import read_event_file, verify_log
+events, head = verify_log(read_event_file("events.log"), public_key,
+                          kid=b"event_signing:v1", log_id="replica-a")
+```
+
+`verify_log` checks every signature, one log id, sequence numbers without
+gaps and every link, and raises `EventError` at the first break: a removed,
+reordered or injected line, or one taken from another log. It returns the
+head `(next seq, last digest)`. A chain cannot show that lines were cut from
+its end, so a consumer pins the head as a checkpoint and checks that later
+runs reach it; passing a pinned head as `start=` verifies only what was
+appended since. From the command line:
+
+```
+python -m sphragis.cli verify-events events.log --public-key <hex> --log-id replica-a
+```
+
+exits 0 with the head, or 1 naming the first break. Schema 1 events (no
+chain) still verify with `verify_event`.
 
 ## Verifying
 

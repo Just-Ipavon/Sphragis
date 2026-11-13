@@ -15,6 +15,13 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- Eventi firmati concatenati (#71): con `EventChain` (API:
+  `SPHRAGIS_EVENT_LOG_ID`) ogni evento è di schema 2 e porta l'id del log, un
+  numero di sequenza e lo SHA-256 dell'evento firmato precedente. L'API
+  riprende la catena dal file degli eventi dopo un riavvio. `verify_log` e
+  `sphragis verify-events` rilevano righe rimosse, riordinate, inserite o di
+  un altro log e restituiscono la testa come checkpoint. Gli eventi non
+  concatenati (schema 1) non cambiano e restano il default.
 - CLI (#75): `--version`; `verify` riconosce i tap SDMENCFileData dal
   parametro `enc` (`--enc` lo forza ancora), accetta `--sqlite DB` in
   alternativa allo `--store` JSON, ed esce con 0 AUTHENTIC, 1 ERROR,
