@@ -158,10 +158,10 @@ class TagAnalyzer:
         if not record.new:                       # already submitted (or a racing copy)
             return self._replay(tap, record.floor_before)
         if not record.fresh:
-            if record.predates_ledger:          # store upgraded from a bare floor
+            if record.predates_ledger:          # bare-floor upgrade, or compacted
                 return self._replay(tap, record.floor_before,
-                                    "below the floor the UID had when its tap "
-                                    "ledger began: treated as a replay")
+                                    "at or below the oldest counter the tap ledger "
+                                    "keeps for this UID: treated as a replay")
             det = self._detector.assess_stale(
                 uid_hex, counter, record.floor_before,
                 timestamp=timestamp, reader_id=reader_id,

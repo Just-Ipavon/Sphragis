@@ -33,6 +33,19 @@ bare floor records where each UID's ledger began; counters at or below that
 point are reported as `REPLAY` (`stale_counter`), since whether they were
 submitted before is unknown.
 
+### Retention
+
+By default the ledger keeps every counter ever submitted. With a window
+(`SPHRAGIS_LEDGER_WINDOW=N`, or `ledger_window=N` on the counter stores) it
+keeps the counters within `N` of the floor one by one, and summarises older
+ones by moving the same "ledger began" mark up to `floor - N`, in the same
+transaction as the tap. Taps within the window are classified exactly as
+before; a counter at or below the mark is a `REPLAY` (`stale_counter`). The
+trade-off: a withheld URL older than `N` reads becomes `REPLAY` instead of
+`CLONE_LIKELY`, so choose `N` above the number of reads a tag can make while
+a captured URL is held back. The ledger then holds at most `N` counters per
+UID.
+
 ## Signals
 
 | Signal | Weight | Meaning |
@@ -41,7 +54,7 @@ submitted before is unknown.
 | `counter_regression` | 70 | below the floor and never submitted → a second device with its own counter stream (clone), or a genuine tap that was read and withheld (pre-play) |
 | `impossible_velocity` | 60 | a fresh tap at one reader while another reader saw the tag less than `min_travel_seconds` before → two tags. Every authenticated reader observation in that window counts, so an anonymous tap in between hides nothing |
 | `large_counter_gap` | 15 | an unusually large jump above the floor; weak / informational |
-| `stale_counter` | 65 | below the floor the UID had when its ledger began (upgraded stores) |
+| `stale_counter` | 65 | at or below the oldest counter the ledger keeps for the UID (upgraded stores, retention window) |
 | `counter_rate` | 40 | more unseen reads since the floor was set than a tag can produce (`max_tap_rate`, 25/s, after `rate_slack_seconds`, 2 s, of jitter allowance): e.g. +500 in 10 s. An emulator or a clone with a set counter, or a URL delivered long after its tap |
 | `prior_divergence` | 35 | a fresh tap on a UID whose history already holds a regression: the counter stream has forked, so either device may be tapping |
 | `counter_reordered` | 30 | just below the floor, same reader, moments later: out-of-order delivery of two quick taps |

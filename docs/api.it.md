@@ -195,6 +195,7 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | bucket per IP |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | bucket per tag |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | soglia di velocità impossibile |
+| `SPHRAGIS_LEDGER_WINDOW` | nessuno (tutti) | conserva gli ultimi N valori del contatore per UID nel registro dei tap ([conservazione](clone-detection.it.md#conservazione)) |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classificazioni che generano un alert |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | body di richiesta più grande accettato |
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |

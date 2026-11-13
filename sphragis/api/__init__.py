@@ -49,11 +49,11 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         # One shared database for every replica, on any number of hosts.
         from ..pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore
         history, floor = (PostgresObservationStore(settings.db_url),
-                          PostgresCounterStore(settings.db_url))
+                          PostgresCounterStore(settings.db_url, settings.ledger_window))
         audit: AlertSink = PostgresAlertSink(settings.db_url)
     else:
         history, floor = (SqliteObservationStore(settings.db_path),
-                          SqliteCounterStore(settings.db_path))
+                          SqliteCounterStore(settings.db_path, settings.ledger_window))
         audit = SqliteAlertSink(settings.db_path)
     detector = CloneDetector(min_travel_seconds=settings.min_travel_seconds, store=history)
     factories = {"ntag424-sun-enc": Ntag424EncBackend, "ntag424-sun": Ntag424SunBackend}

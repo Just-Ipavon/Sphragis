@@ -3,6 +3,19 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Tap ledger retention (#56): with `SPHRAGIS_LEDGER_WINDOW=N` (or
+  `ledger_window=N` on the JSON, SQLite and Postgres counter stores) the
+  ledger keeps the counters within N of the floor and summarises older ones
+  by raising the UID's "ledger began" mark, in the same transaction as the
+  tap, so it holds at most N counters per UID. Taps inside the window are
+  classified exactly as before; one at or below the mark is a `REPLAY`
+  (`stale_counter`), so a withheld URL older than N reads is no longer
+  reported as a clone. Unbounded by default.
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,

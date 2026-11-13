@@ -35,7 +35,7 @@ import threading
 import time
 
 from .alerts import Alert
-from .counterstore import TapRecord
+from .counterstore import TapRecord, check_ledger_window, compaction_mark
 from .observations import Observation
 
 try:
@@ -96,6 +96,10 @@ class _PgBase:
 
 class PostgresCounterStore(_PgBase):
     """Anti-replay floor shared by every host using the same database."""
+
+    def __init__(self, dsn: str, ledger_window: int | None = None) -> None:
+        self._window = check_ledger_window(ledger_window)
+        super().__init__(dsn)
 
     _SCHEMA = """
     CREATE TABLE IF NOT EXISTS sphragis_counters (
@@ -171,6 +175,13 @@ class PostgresCounterStore(_PgBase):
                     "SET counter = EXCLUDED.counter, updated_at = EXCLUDED.updated_at "
                     "WHERE c.counter < EXCLUDED.counter",
                     (uid_hex, counter, now))
+                since_now = None if since is None else int(since)
+                mark = compaction_mark(self._window, counter, since_now)
+                if mark is not None:            # retention, in the same transaction
+                    conn.execute("UPDATE sphragis_tap_ledgers SET since = %s WHERE uid = %s",
+                                 (mark, uid_hex))
+                    conn.execute("DELETE FROM sphragis_tap_counters "
+                                 "WHERE uid = %s AND counter <= %s", (uid_hex, mark))
         return record
 
 

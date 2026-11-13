@@ -389,3 +389,70 @@ def test_same_tap_from_many_processes_is_new_once(backend):
             start.set()
             results = [p.get(timeout=60) for p in pending]
     assert results.count(True) == 1, results
+
+
+# --- Tap ledger retention (#56) ---------------------------------------------------
+
+def _windowed(kind, tmp_path, request, window):
+    if kind == "memory":
+        from sphragis.counterstore import CounterStore
+        return CounterStore(ledger_window=window)
+    if kind == "json":
+        from sphragis.counterstore import CounterStore
+        return CounterStore(str(tmp_path / "c.json"), ledger_window=window)
+    if kind == "sqlite":
+        return SqliteCounterStore(tmp_path / "c.db", ledger_window=window)
+    from sphragis.pgstore import PostgresCounterStore
+    return PostgresCounterStore(request.getfixturevalue("pg_dsn"), ledger_window=window)
+
+
+def _ledger_size(store, kind, uid):
+    if kind in ("memory", "json"):
+        return len(store._taps.get(uid, ()))
+    conn = store._connection()
+    table = "tap_counters" if kind == "sqlite" else "sphragis_tap_counters"
+    mark = "?" if kind == "sqlite" else "%s"
+    return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE uid = {mark}",
+                        (uid,)).fetchone()[0]
+
+
+@pytest.mark.parametrize("kind", ["memory", "json", "sqlite",
+                                  pytest.param("pg", marks=needs_pg)])
+def test_ledger_stays_bounded_and_exact_inside_the_window(kind, tmp_path, request):
+    store = _windowed(kind, tmp_path, request, window=10)
+    uid = f"04AB{kind.upper()[:2].encode().hex()}"
+    for counter in range(1, 201):
+        assert store.record_tap(uid, counter).fresh
+    assert _ledger_size(store, kind, uid) <= 10
+    inside = store.record_tap(uid, 195)                  # replayed, within the window
+    assert not inside.new and not inside.predates_ledger
+    regression = store.record_tap(uid, 150)              # never seen? compacted away
+    assert regression.predates_ledger and not regression.fresh
+    store.record_tap(uid, 201)
+    assert _ledger_size(store, kind, uid) <= 11
+    getattr(store, "close", lambda: None)()
+
+
+def test_window_must_be_positive(tmp_path):
+    from sphragis.counterstore import CounterStore
+    for bad in (0, -3, True, 2.5):
+        with pytest.raises(ValueError, match="ledger window"):
+            CounterStore(ledger_window=bad)
+
+
+def test_unbounded_by_default(tmp_path):
+    store = SqliteCounterStore(tmp_path / "c.db")
+    for counter in range(1, 51):
+        store.record_tap("04CD", counter)
+    assert _ledger_size(store, "sqlite", "04CD") == 50
+    assert store.record_tap("04CD", 3).new is False
+
+
+def test_settings_read_the_ledger_window():
+    pytest.importorskip("fastapi")
+    from sphragis.api.settings import ApiSettings
+    assert ApiSettings.from_env({}).ledger_window is None
+    assert ApiSettings.from_env({"SPHRAGIS_LEDGER_WINDOW": "1000"}).ledger_window == 1000
+    for bad in ("0", "-1", "many"):
+        with pytest.raises(ValueError, match="LEDGER_WINDOW"):
+            ApiSettings.from_env({"SPHRAGIS_LEDGER_WINDOW": bad})

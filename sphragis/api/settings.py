@@ -108,6 +108,7 @@ class ApiSettings:
     events_file: str | None = None
     events_on: frozenset[str] | None = None        # None: every verification
     event_key_version: int = 1
+    ledger_window: int | None = None                # None: keep every counter
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -166,6 +167,16 @@ class ApiSettings:
             event_key_version = 0
         if event_key_version < 1:
             raise ValueError("SPHRAGIS_EVENT_KEY_VERSION must be a key version >= 1")
+        raw_window = get("LEDGER_WINDOW", "")
+        ledger_window = None
+        if raw_window:
+            try:
+                ledger_window = int(raw_window)
+            except ValueError:
+                ledger_window = 0
+            if ledger_window < 1:
+                raise ValueError("SPHRAGIS_LEDGER_WINDOW must be a positive number of "
+                                 "counter values")
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -193,4 +204,5 @@ class ApiSettings:
             events_file=get("EVENTS_FILE", "") or None,
             events_on=events_on,
             event_key_version=event_key_version,
+            ledger_window=ledger_window,
         )
