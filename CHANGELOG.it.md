@@ -3,6 +3,22 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Corretto
+
+- La CLI, l'emulatore e i tool non terminano più con un traceback su input
+  errato (#68): `emulate --uid` deve essere di 7 byte esadecimali e
+  `--counter`/`--taps` restano nel contatore a 24 bit, come errori d'uso;
+  `verify --store` con un file vuoto o corrotto stampa un errore.
+  `EmulatedTag` rifiuta un contatore fuori intervallo, si ferma al limite di
+  24 bit come una tag reale, e aggiunge i parametri SUN con `&` a un
+  `base_url` che ha già una query. `tools/provision.py` e `tools/rekey.py`
+  riportano gli errori di lettore, APDU e segreti su una riga (uscita 2);
+  l'esempio di provision senza `--port` è corretto. Il controllo di velocità
+  impossibile ignora la cronologia registrata dopo il tap (salti
+  dell'orologio, sfasamento tra host).
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di

@@ -33,7 +33,7 @@ import json
 import os
 import sys
 
-from .counterstore import CounterStore
+from .counterstore import CounterStore, CounterStoreError
 from .diagnostics import ZERO_KEY, inspect_tap
 from .emulator import EmulatedTag
 from .encverifier import EncFileVerifier
@@ -54,6 +54,41 @@ def _hexkey(value: str) -> bytes:
     if len(key) != 16:
         raise argparse.ArgumentTypeError("key must be 16 bytes (32 hex chars)")
     return key
+
+
+MAX_COUNTER = 0xFFFFFF
+"""SDMReadCtr is 24 bits; a real tag stops answering with SUN at the limit."""
+
+
+def _uid(value: str) -> bytes:
+    try:
+        uid = bytes.fromhex(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("UID must be hex") from None
+    if len(uid) != 7:
+        raise argparse.ArgumentTypeError("UID must be 7 bytes (14 hex chars)")
+    return uid
+
+
+def _counter(value: str) -> int:
+    try:
+        counter = int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError("counter must be an integer") from None
+    if not 0 <= counter < MAX_COUNTER:
+        raise argparse.ArgumentTypeError(
+            f"counter must be between 0 and {MAX_COUNTER - 1} (each tap adds one)")
+    return counter
+
+
+def _taps(value: str) -> int:
+    try:
+        taps = int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError("taps must be an integer") from None
+    if taps < 1:
+        raise argparse.ArgumentTypeError("taps must be at least 1")
+    return taps
 
 
 def _resolve_keys(args: argparse.Namespace):
@@ -87,7 +122,11 @@ def _resolve_keys(args: argparse.Namespace):
 def _cmd_verify(args: argparse.Namespace) -> int:
     keys = _resolve_keys(args)
     verifier_cls = EncFileVerifier if args.enc else Verifier
-    result = verifier_cls(keys, CounterStore(args.store)).verify(args.url)
+    try:
+        store = CounterStore(args.store)
+    except CounterStoreError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    result = verifier_cls(keys, store).verify(args.url)
     print(_VERDICT_LABEL[result.verdict])
     if result.uid:
         print(f"UID        : {result.uid}")
@@ -113,8 +152,11 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _cmd_emulate(args: argparse.Namespace) -> int:
+    if args.counter + args.taps > MAX_COUNTER:
+        raise SystemExit(f"error: --counter {args.counter} plus {args.taps} taps passes "
+                         f"the 24-bit limit ({MAX_COUNTER})")
     keys = _resolve_keys(args)
-    uid = bytes.fromhex(args.uid)
+    uid = args.uid
     tag = EmulatedTag(
         uid=uid,
         meta_read_key=keys.meta_read_key(),
@@ -167,9 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     _add_key_args(e)
-    e.add_argument("--uid", required=True, help="7-byte UID (hex)")
-    e.add_argument("--counter", type=int, default=0, help="starting read counter")
-    e.add_argument("--taps", type=int, default=1, help="number of taps to emit")
+    e.add_argument("--uid", required=True, type=_uid, help="7-byte UID (hex)")
+    e.add_argument("--counter", type=_counter, default=0, help="starting read counter")
+    e.add_argument("--taps", type=_taps, default=1, help="number of taps to emit")
     e.set_defaults(func=_cmd_emulate)
 
     return parser

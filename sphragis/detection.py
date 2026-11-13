@@ -236,6 +236,8 @@ class CloneDetector:
                 dt = now - prior.timestamp
                 if dt >= self.min_travel_seconds:
                     break
+                if dt < 0:          # recorded "after" this tap: clock step or host skew
+                    continue
                 if prior.reader_id is not None and prior.reader_id != reader_id:
                     signals.append(Signal(
                         "impossible_velocity", 60,

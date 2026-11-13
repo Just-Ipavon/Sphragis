@@ -3,6 +3,21 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- The CLI, the emulator and the tools no longer end in a traceback on bad
+  input (#68): `emulate --uid` must be 7 hex bytes and `--counter`/`--taps`
+  stay within the 24-bit counter, as usage errors; `verify --store` with an
+  empty or corrupt file prints an error. `EmulatedTag` refuses a counter out
+  of range, stops at the 24-bit limit like a real tag, and appends its SUN
+  parameters with `&` to a `base_url` that already has a query.
+  `tools/provision.py` and `tools/rekey.py` report reader, APDU and secrets
+  errors as one line (exit 2); the provision example without `--port` is
+  fixed. Impossible-velocity checks skip history recorded after the tap
+  (clock steps, host skew).
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,
