@@ -420,3 +420,48 @@ def test_floor_only_api_keeps_a_started_ledger_complete_locally(kind, tmp_path):
     from sphragis.counterstore import CounterStore
     _floor_api_then_replay(CounterStore(str(tmp_path / "c.json")) if kind == "json"
                            else CounterStore())
+
+
+# --- Identities are opaque, except bare hex UIDs ------------------------------
+
+def _memory_or_json(kind, tmp_path):
+    from sphragis.counterstore import CounterStore
+    from sphragis.observations import MemoryObservationStore
+    return (CounterStore(str(tmp_path / "counters.json")) if kind == "json"
+            else CounterStore()), MemoryObservationStore()
+
+
+def _case_distinct_credentials(counters, history):
+    # base64url credential ids are case-sensitive: two different credentials.
+    assert counters.record_tap("fido2:abcd", 10).fresh
+    second = counters.record_tap("fido2:ABCD", 3)
+    assert second.fresh and second.floor_before is None
+    assert counters.last_counter("fido2:abcd") == 10
+    assert counters.last_counter("fido2:ABCD") == 3
+    assert counters.check_and_advance("fido2:Ab_-", 1)
+    assert counters.last_counter("fido2:aB_-") is None
+    history.observe("fido2:abcd", Observation(10, 1.0), limit=5)
+    assert history.history("fido2:ABCD") == []
+    # Bare hex UIDs still match whatever their case.
+    assert counters.check_and_advance("04aabb", 7)
+    assert counters.last_counter("04AABB") == 7
+
+
+def test_prefixed_identities_keep_their_case(backend):
+    _case_distinct_credentials(backend["counters"](), backend["history"]())
+
+
+@pytest.mark.parametrize("kind", ["memory", "json"])
+def test_prefixed_identities_keep_their_case_in_local_stores(kind, tmp_path):
+    _case_distinct_credentials(*_memory_or_json(kind, tmp_path))
+
+
+def test_detector_and_pseudonyms_keep_the_case_of_prefixed_identities():
+    from sphragis.detection import CloneDetector
+    from sphragis.logs import UidPseudonymizer
+    detector = CloneDetector()
+    assert detector.analyze("fido2:abcd", 10, timestamp=1.0).risk_level.name == "GENUINE"
+    assert detector.analyze("fido2:ABCD", 3, timestamp=2.0).risk_level.name == "GENUINE"
+    plain = UidPseudonymizer(None)
+    assert plain.ref("fido2:abcd") != plain.ref("fido2:ABCD")
+    assert plain.ref("04aa") == "04AA"

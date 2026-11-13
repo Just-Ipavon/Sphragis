@@ -36,6 +36,7 @@ import time
 
 from .alerts import Alert
 from .counterstore import TapRecord
+from .identity import store_key
 from .observations import Observation
 
 try:
@@ -118,7 +119,7 @@ class PostgresCounterStore(_PgBase):
     def last_counter(self, uid_hex: str) -> int | None:
         row = self._connection().execute(
             "SELECT counter FROM sphragis_counters WHERE uid = %s",
-            (uid_hex.upper(),),
+            (store_key(uid_hex),),
         ).fetchone()
         return None if row is None else int(row[0])
 
@@ -128,7 +129,7 @@ class PostgresCounterStore(_PgBase):
         A UID whose tap ledger has started also gets the counter recorded
         there, in the same transaction, so a later replay reads as a replay.
         """
-        uid_hex, now = uid_hex.upper(), time.time()
+        uid_hex, now = store_key(uid_hex), time.time()
         conn = self._connection()
         with conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))",
@@ -152,7 +153,7 @@ class PostgresCounterStore(_PgBase):
     def seen(self, uid_hex: str, counter: int) -> bool:
         return self._connection().execute(
             "SELECT 1 FROM sphragis_tap_counters WHERE uid = %s AND counter = %s",
-            (uid_hex.upper(), counter),
+            (store_key(uid_hex), counter),
         ).fetchone() is not None
 
     def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
@@ -160,7 +161,7 @@ class PostgresCounterStore(_PgBase):
         Tap ledger (`counterstore.TapLedger`): record `counter` and advance the
         floor if it is new and higher, in one transaction serialized per UID.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time()
         conn = self._connection()
         with conn.transaction():
@@ -218,10 +219,10 @@ class PostgresObservationStore(_PgBase):
                 for c, t, r, b, a, k in rows]
 
     def history(self, uid_hex: str) -> list[Observation]:
-        return self._rows(self._connection(), uid_hex.upper())
+        return self._rows(self._connection(), store_key(uid_hex))
 
     def observe(self, uid_hex: str, obs: Observation, limit: int) -> list[Observation]:
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         conn = self._connection()
         with conn.transaction():
             # Serialize per UID: the lock is held until commit, so the next

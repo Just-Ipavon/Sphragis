@@ -17,6 +17,24 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   UID, una volta che questo è iniziato, così uno storage usato sia da
   `Verifier` sia da `TagAnalyzer` valuta un replay esatto come `REPLAY` e non
   come regressione del contatore (#67).
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
+### Corretto
+
+- Gli storage non convertono più in maiuscolo ogni identità: solo gli UID
+  esadecimali senza prefisso (NTAG 424 DNA), mentre le identità con prefisso
+  come `fido2:<base64url>` conservano maiuscole e minuscole, così due
+  credenziali WebAuthn i cui id differiscono solo per le maiuscole non
+  condividono più contatore e cronologia (#63). Aggiornamento: i dati NTAG non
+  cambiano. Le righe che la 2.0.0 ha salvato per un'identità non esadecimale
+  erano in maiuscolo; una credenziale con lettere minuscole nell'id inizia una
+  nuova cronologia con il suo id reale.
 
 ## 2.0.0 — 2026-10-18
 
