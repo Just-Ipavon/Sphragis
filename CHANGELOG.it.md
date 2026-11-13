@@ -6,6 +6,7 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 ## Non rilasciato
 
 ### Corretto
+
 - Gli storage non convertono più in maiuscolo ogni identità: solo gli UID
   esadecimali senza prefisso (NTAG 424 DNA), mentre le identità con prefisso
   come `fido2:<base64url>` conservano maiuscole e minuscole, così due
@@ -14,6 +15,7 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   cambiano. Le righe che la 2.0.0 ha salvato per un'identità non esadecimale
   erano in maiuscolo; una credenziale con lettere minuscole nell'id inizia una
   nuova cronologia con il suo id reale.
+
 ### Sicurezza
 
 - `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già

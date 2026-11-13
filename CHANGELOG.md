@@ -6,6 +6,7 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 ## Unreleased
 
 ### Fixed
+
 - Stores no longer upper-case every identity: only bare hex UIDs (NTAG 424
   DNA) are, and prefixed identities such as `fido2:<base64url>` keep their
   case, so two WebAuthn credentials whose ids differ only by case no longer
@@ -13,6 +14,7 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   unaffected. Rows that 2.0.0 stored for a non-hex identity were stored
   upper-cased; a credential whose id has lower-case letters starts a new
   history under its real id.
+
 ### Security
 
 - `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
