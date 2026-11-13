@@ -6,6 +6,7 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 ## Non rilasciato
 
 ### Sicurezza
+
 - `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
   cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
   dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo

@@ -6,6 +6,7 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 ## Unreleased
 
 ### Security
+
 - `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
   slot while slot 0 is on factory keys and no UID-specific slot proves a key:
   ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
