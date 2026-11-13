@@ -3,6 +3,17 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+- Malformed input no longer escapes as an unexpected exception type
+  (#64): a WebAuthn `clientDataJSON` whose `origin` or `type` is not a
+  string is `ERROR` instead of a `TypeError` reaching the caller;
+  `cbor_decode` raises `EventError` for a map key that is not an integer,
+  text or bytes, and for nesting deeper than 8 levels (it used to hit
+  `RecursionError` before the signature check); `verify_webhook` returns
+  `False` for a non-ASCII or missing signature header.
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,

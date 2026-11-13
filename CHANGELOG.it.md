@@ -3,6 +3,17 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Corretto
+- L'input malformato non sfugge più con un tipo di eccezione inatteso (#64):
+  un `clientDataJSON` WebAuthn il cui `origin` o `type` non è una stringa dà
+  `ERROR` invece di un `TypeError` che arriva al chiamante; `cbor_decode`
+  solleva `EventError` per una chiave di mappa che non è intero, testo o
+  byte, e per annidamenti oltre gli 8 livelli (prima arrivava a
+  `RecursionError` prima del controllo della firma); `verify_webhook`
+  restituisce `False` per un header di firma non ASCII o assente.
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di
