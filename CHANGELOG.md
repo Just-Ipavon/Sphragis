@@ -14,6 +14,17 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- Packaging, docs and CI (#69): a `MANIFEST.in` puts in the sdist what its
+  tests read (test helpers, docs, tools, examples, locks, workflows), and a
+  new CI job builds the sdist and the wheel and runs the suite from the
+  unpacked sdist. The license is declared as an SPDX expression with
+  `license-files` (setuptools 77 or later), dropping the deprecated table
+  and classifier. The README shows the current `clone_demo.py` output, and
+  a test keeps it in step. The security workflow installs `pip-audit`,
+  `bandit` and `ruff` from a hash-locked `requirements/security.lock` and
+  now runs ruff's correctness rules (`F`, `E9`, `B`, fixed across the
+  code). The Postgres service image is pinned by digest and its job runs
+  on Python 3.10 (the oldest supported); Dependabot also watches `requirements/`.
 - The CLI, the emulator and the tools no longer end in a traceback on bad
   input (#68): `emulate --uid` must be 7 hex bytes and `--counter`/`--taps`
   stay within the 24-bit counter, as usage errors; `verify --store` with an

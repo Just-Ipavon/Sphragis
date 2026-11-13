@@ -15,6 +15,18 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Corretto
 
+- Packaging, documentazione e CI (#69): un `MANIFEST.in` mette nella sdist
+  ciò che i suoi test leggono (helper dei test, documentazione, tool, esempi,
+  lock, workflow), e un nuovo job di CI costruisce sdist e wheel ed esegue la
+  suite dalla sdist estratta. La licenza è dichiarata come espressione SPDX
+  con `license-files` (setuptools 77 o successivo), senza la tabella e il
+  classifier deprecati. Il README mostra l'output attuale di
+  `clone_demo.py`, e un test lo tiene allineato. Il workflow di sicurezza
+  installa `pip-audit`, `bandit` e `ruff` da un
+  `requirements/security.lock` con hash e ora esegue le regole di
+  correttezza di ruff (`F`, `E9`, `B`, corrette in tutto il codice).
+  L'immagine Postgres del servizio è fissata per digest e il suo job gira
+  su Python 3.10 (la più vecchia supportata); Dependabot controlla anche `requirements/`.
 - La CLI, l'emulatore e i tool non terminano più con un traceback su input
   errato (#68): `emulate --uid` deve essere di 7 byte esadecimali e
   `--counter`/`--taps` restano nel contatore a 24 bit, come errori d'uso;

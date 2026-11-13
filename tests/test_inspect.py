@@ -15,7 +15,10 @@ NXP_URL = ("https://choose.url.com/ntag424?"
            "picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086")
 
 
-def _zero_tag(counter=0, uid=bytes.fromhex("04A1B2C3D4E5F6")):
+_ZERO_UID = bytes.fromhex("04A1B2C3D4E5F6")
+
+
+def _zero_tag(counter=0, uid=_ZERO_UID):
     return EmulatedTag(uid=uid, meta_read_key=ZERO_KEY, file_read_key=ZERO_KEY,
                        read_counter=counter)
 

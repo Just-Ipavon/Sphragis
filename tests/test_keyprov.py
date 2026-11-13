@@ -44,7 +44,7 @@ from sphragis.keyprov import (  # noqa: E402
     verify_originality,
 )
 from sphragis.ndef import read_uri  # noqa: E402
-from sphragis.provision import provision_tag  # noqa: E402
+from sphragis.provision import ProvisionError, provision_tag  # noqa: E402
 from sphragis.transport import ScriptedTransport  # noqa: E402
 
 H = bytes.fromhex
@@ -327,7 +327,7 @@ def test_provisioning_after_rekey_uses_the_real_keys():
     server = DiversifiedKeys(H("B1" * 16), H("C2" * 16), context=b"DEMO")
     r = EncFileVerifier(server, CounterStore()).verify(read_uri(tag))
     assert r.ok and r.file_data == b"FEDCBA9876543210"
-    with pytest.raises(Exception):                      # factory keys no longer work
+    with pytest.raises(ProvisionError, match="rejects key 0"):                    # factory keys no longer work
         provision_tag(tag, BASE)
 
 

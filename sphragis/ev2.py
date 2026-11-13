@@ -85,7 +85,7 @@ def _pad(data: bytes) -> bytes:
 def session_vectors(rnd_a: bytes, rnd_b: bytes) -> tuple[bytes, bytes]:
     """SV1 / SV2 for the AES session keys (AN12196 Table 14, steps 25-26)."""
     tail = (rnd_a[0:2]
-            + bytes(x ^ y for x, y in zip(rnd_a[2:8], rnd_b[0:6]))
+            + bytes(x ^ y for x, y in zip(rnd_a[2:8], rnd_b[0:6], strict=True))
             + rnd_b[6:16]
             + rnd_a[8:16])
     return (bytes.fromhex("A55A00010080") + tail,

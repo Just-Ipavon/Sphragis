@@ -373,7 +373,7 @@ def test_concurrent_genuine_taps_never_taint_the_tag(tmp_path):
                                detector=CloneDetector(store=history), store=store)
         urls, barrier, results = [tag.tap(), tag.tap()], threading.Barrier(2), []
 
-        def submit(url):
+        def submit(url, barrier=barrier, results=results, analyzer=analyzer):
             barrier.wait()
             results.append(analyzer.analyze(url, timestamp=1000).classification)
 

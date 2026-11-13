@@ -37,7 +37,7 @@ class ApduTransport(ABC):
     def transceive(self, apdu: bytes) -> bytes:
         """Send one command APDU, return the response (data || SW1 SW2)."""
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027 - optional hook, not abstract
         """Release the underlying link. Default: nothing to release."""
 
     def __enter__(self) -> "ApduTransport":

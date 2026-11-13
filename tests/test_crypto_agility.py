@@ -8,9 +8,10 @@ import hashlib
 import hmac
 import os
 import sys
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from Crypto.Cipher import AES
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -139,8 +140,16 @@ def test_forged_under_every_version_is_forged_not_error():
     v2 = DiversifiedKeys(os.urandom(16), v1.meta_read_key())
     with pytest.raises(ForgedTap):
         Ntag424SunBackend(KeyRing([(2, v2), (1, v1)])).authenticate(tag.tap())
-    with pytest.raises(SdmError):            # no version decrypts the PICCData
-        Ntag424SunBackend(KeyRing([(2, _keys())])).authenticate(tag.tap())
+    # No version decrypts the PICCData. A random key still turns the block into
+    # the standard layout (tag byte C7h) once in 256 times, which reaches the
+    # MAC check instead: pick a key that does not.
+    url = tag.tap()
+    block = bytes.fromhex(parse_qs(urlsplit(url).query)["picc_data"][0])
+    other = _keys()
+    while AES.new(other.meta_read_key(), AES.MODE_ECB).decrypt(block)[0] == 0xC7:
+        other = _keys()
+    with pytest.raises(SdmError):
+        Ntag424SunBackend(KeyRing([(2, other)])).authenticate(url)
 
 
 # --- Algorithm switch ---------------------------------------------------------------

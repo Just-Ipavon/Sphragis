@@ -1,0 +1,11 @@
+# The sdist carries what its own test suite reads, so the tests run from an
+# unpacked sdist (#69): the test helpers, docs, tools, examples, the locks and
+# the workflows test_supply_chain.py checks.
+include LICENSE SECURITY.md CHANGELOG*.md README*.md THREAT_MODEL*.md requirements.txt
+include .gitignore
+recursive-include tests *.py
+recursive-include docs *
+recursive-include tools *.py
+recursive-include examples *
+recursive-include requirements *
+recursive-include .github *.yml
