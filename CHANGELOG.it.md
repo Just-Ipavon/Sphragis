@@ -18,7 +18,7 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   `requirements/security.lock` con hash e ora esegue le regole di
   correttezza di ruff (`F`, `E9`, `B`, corrette in tutto il codice).
   L'immagine Postgres del servizio è fissata per digest e il suo job gira
-  su Python 3.10 e 3.13; Dependabot controlla anche `requirements/`.
+  su Python 3.10 (la più vecchia supportata); Dependabot controlla anche `requirements/`.
 
 ## 2.0.0 — 2026-10-18
 

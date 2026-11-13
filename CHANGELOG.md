@@ -17,7 +17,7 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   `bandit` and `ruff` from a hash-locked `requirements/security.lock` and
   now runs ruff's correctness rules (`F`, `E9`, `B`, fixed across the
   code). The Postgres service image is pinned by digest and its job runs
-  on Python 3.10 and 3.13; Dependabot also watches `requirements/`.
+  on Python 3.10 (the oldest supported); Dependabot also watches `requirements/`.
 
 ## 2.0.0 — 2026-10-18
 
