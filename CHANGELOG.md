@@ -5,7 +5,15 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Fixed
+
 - A genuine tap with an extra query parameter containing `?` or `:`
   (`&next=/a?b=1`, `v:1&…`) was read as a URL and became `ERROR`. A bare
   query is now recognised by a `=` before its first `?` or `#`, and `/t`
@@ -17,15 +25,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   that ledger has started, so a store used by both `Verifier` and
   `TagAnalyzer` scores an exact replay as `REPLAY`, not as a counter
   regression (#67).
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
-
-### Fixed
-
 - Stores no longer upper-case every identity: only bare hex UIDs (NTAG 424
   DNA) are, and prefixed identities such as `fido2:<base64url>` keep their
   case, so two WebAuthn credentials whose ids differ only by case no longer
