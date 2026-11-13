@@ -182,8 +182,12 @@ class CloneDetector:
         """
         uid_hex = store_key(uid_hex)
         now = time.time() if timestamp is None else timestamp
+        # A fresh tap is never a fork, whatever its place in the history: two
+        # concurrent fresh taps can be appended in the opposite order to the
+        # ledger, which an order-based scan would read as a regression.
         hist = self._store.observe(
-            uid_hex, _observation(counter, now, reader_id, provenance), self.history_limit
+            uid_hex, _observation(counter, now, reader_id, provenance, regression=False),
+            self.history_limit,
         )
         return self._aggregate(
             self._history_signals(hist, counter, now, reader_id, floor_before))
@@ -218,7 +222,8 @@ class CloneDetector:
                 f"delivered out of order",
             )])
         self._store.observe(
-            uid_hex, _observation(counter, now, reader_id, provenance), self.history_limit
+            uid_hex, _observation(counter, now, reader_id, provenance, regression=True),
+            self.history_limit,
         )
         return self._aggregate([Signal(
             "counter_regression", 70,
@@ -303,9 +308,11 @@ class CloneDetector:
 
 
 def _observation(counter: int, now: float, reader_id: str | None,
-                 provenance: Provenance | None) -> Observation:
+                 provenance: Provenance | None,
+                 regression: bool | None = None) -> Observation:
     p = provenance or Provenance()
-    return Observation(counter, now, reader_id, p.backend, p.algorithm, p.key_version)
+    return Observation(counter, now, reader_id, p.backend, p.algorithm, p.key_version,
+                       regression)
 
 
 def _floor_observation(hist: list[Observation], floor: int | None) -> Observation | None:
@@ -319,12 +326,16 @@ def _floor_observation(hist: list[Observation], floor: int | None) -> Observatio
 
 
 def _first_regression(hist: list[Observation]) -> Observation | None:
-    """The first observation below an earlier maximum and not a repeat of an
-    earlier value (a repeat is a replay, not a fork)."""
+    """The first observation below an earlier maximum in the window and not a
+    repeat of an earlier value (a repeat is a replay, not a fork). Rows the
+    tap ledger recorded as fresh are never forks, whatever their order: two
+    concurrent fresh taps can be appended in the opposite order to the
+    ledger. Rows from before that flag existed are judged by order alone."""
     seen: set[int] = set()
     top: int | None = None
     for obs in hist:
-        if top is not None and obs.counter < top and obs.counter not in seen:
+        if (obs.regression is not False and top is not None and obs.counter < top
+                and obs.counter not in seen):
             return obs
         seen.add(obs.counter)
         top = obs.counter if top is None else max(top, obs.counter)

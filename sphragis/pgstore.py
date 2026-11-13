@@ -213,18 +213,20 @@ class PostgresObservationStore(_PgBase):
     ALTER TABLE sphragis_observations
         ADD COLUMN IF NOT EXISTS backend TEXT,
         ADD COLUMN IF NOT EXISTS algorithm TEXT,
-        ADD COLUMN IF NOT EXISTS key_version INTEGER;
+        ADD COLUMN IF NOT EXISTS key_version INTEGER,
+        ADD COLUMN IF NOT EXISTS regression BOOLEAN;
     """
 
     @staticmethod
     def _rows(conn, uid_hex: str) -> list[Observation]:
         rows = conn.execute(
-            "SELECT counter, ts, reader_id, backend, algorithm, key_version "
+            "SELECT counter, ts, reader_id, backend, algorithm, key_version, regression "
             "FROM sphragis_observations WHERE uid = %s ORDER BY id",
             (uid_hex,),
         ).fetchall()
-        return [Observation(int(c), float(t), r, b, a, None if k is None else int(k))
-                for c, t, r, b, a, k in rows]
+        return [Observation(int(c), float(t), r, b, a, None if k is None else int(k),
+                            None if g is None else bool(g))
+                for c, t, r, b, a, k, g in rows]
 
     def history(self, uid_hex: str) -> list[Observation]:
         return self._rows(self._connection(), store_key(uid_hex))
@@ -240,9 +242,10 @@ class PostgresObservationStore(_PgBase):
             prior = self._rows(conn, uid_hex)
             conn.execute(
                 "INSERT INTO sphragis_observations (uid, counter, ts, reader_id, "
-                "backend, algorithm, key_version) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "backend, algorithm, key_version, regression) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (uid_hex, obs.counter, obs.timestamp, obs.reader_id, obs.backend,
-                 obs.algorithm, obs.key_version),
+                 obs.algorithm, obs.key_version, obs.regression),
             )
             conn.execute(
                 "DELETE FROM sphragis_observations WHERE uid = %s AND id NOT IN ("

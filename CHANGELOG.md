@@ -14,6 +14,14 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- Two genuine taps of one tag processed concurrently no longer make every
+  later tap `SUSPICIOUS` (`prior_divergence`). The ledger and the detector
+  history are written in two steps, so the history could receive the two
+  fresh counters in reverse order and read that as a fork. Each history row
+  now records whether the ledger found it fresh or a regression (a
+  `regression` column added in place to the SQLite and Postgres
+  observation tables), and fresh rows are never taken for a fork; rows from
+  2.0.0 are still judged by order (#62).
 - SQLite stores (#65): `:memory:` is refused with a clear error instead of
   failing with "no such table" on the first request served by another
   thread; `close()` now closes the connections of every thread (they are

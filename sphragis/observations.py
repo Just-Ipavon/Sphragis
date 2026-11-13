@@ -41,6 +41,10 @@ class Observation:
     backend: str | None = None
     algorithm: str | None = None
     key_version: int | None = None
+    # Whether the tap ledger found this counter below the floor (a fork), as
+    # decided when it was recorded. None for rows written before the flag
+    # existed: the detector then infers it from the order of the history.
+    regression: bool | None = None
 
 
 @runtime_checkable
@@ -105,7 +109,8 @@ class SqliteObservationStore:
             "PRAGMA synchronous=NORMAL"))
         conn = self._connection()
         conn.executescript(_SCHEMA)
-        add_missing_columns(conn, "observations", PROVENANCE_COLUMNS)
+        add_missing_columns(conn, "observations",
+                            {**PROVENANCE_COLUMNS, "regression": "INTEGER"})
 
     def _connection(self) -> sqlite3.Connection:
         return self._conns.get()
@@ -113,12 +118,13 @@ class SqliteObservationStore:
     @staticmethod
     def _rows(conn: sqlite3.Connection, uid_hex: str) -> list[Observation]:
         rows = conn.execute(
-            "SELECT counter, ts, reader_id, backend, algorithm, key_version "
+            "SELECT counter, ts, reader_id, backend, algorithm, key_version, regression "
             "FROM observations WHERE uid = ? ORDER BY id",
             (uid_hex,),
         ).fetchall()
-        return [Observation(int(c), float(t), r, b, a, None if k is None else int(k))
-                for c, t, r, b, a, k in rows]
+        return [Observation(int(c), float(t), r, b, a, None if k is None else int(k),
+                            None if g is None else bool(g))
+                for c, t, r, b, a, k, g in rows]
 
     def history(self, uid_hex: str) -> list[Observation]:
         return self._rows(self._connection(), store_key(uid_hex))
@@ -131,9 +137,10 @@ class SqliteObservationStore:
             prior = self._rows(conn, uid_hex)
             conn.execute(
                 "INSERT INTO observations (uid, counter, ts, reader_id, backend, "
-                "algorithm, key_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "algorithm, key_version, regression) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (uid_hex, obs.counter, obs.timestamp, obs.reader_id, obs.backend,
-                 obs.algorithm, obs.key_version),
+                 obs.algorithm, obs.key_version,
+                 None if obs.regression is None else int(obs.regression)),
             )
             # Keep only the newest `limit` rows for this UID.
             conn.execute(
