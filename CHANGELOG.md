@@ -12,9 +12,35 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   alternative to the JSON `--store`, and exits 0 AUTHENTIC, 1 ERROR,
   3 REPLAY, 4 FORGED (2 stays the usage error), as documented in the README
   and `--help`.
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
+### Added
+
+- `/readyz`: every store answers a read and the webhook alert queue is under
+  90% full, or `503` with the failing checks. On shutdown the API delivers
+  queued webhook alerts (up to 10 s) and closes the stores;
+  `BackgroundAlertSink` gains bounded `flush(timeout)` / `close(timeout)` and
+  `pending`. `alerted` in results and events is documented as "a sink
+  accepted the alert" (queued, for the webhook) (#70).
 
 ### Fixed
 
+- Packaging, docs and CI (#69): a `MANIFEST.in` puts in the sdist what its
+  tests read (test helpers, docs, tools, examples, locks, workflows), and a
+  new CI job builds the sdist and the wheel and runs the suite from the
+  unpacked sdist. The license is declared as an SPDX expression with
+  `license-files` (setuptools 77 or later), dropping the deprecated table
+  and classifier. The README shows the current `clone_demo.py` output, and
+  a test keeps it in step. The security workflow installs `pip-audit`,
+  `bandit` and `ruff` from a hash-locked `requirements/security.lock` and
+  now runs ruff's correctness rules (`F`, `E9`, `B`, fixed across the
+  code). The Postgres service image is pinned by digest and its job runs
+  on Python 3.10 (the oldest supported); Dependabot also watches `requirements/`.
 - The CLI, the emulator and the tools no longer end in a traceback on bad
   input (#68): `emulate --uid` must be 7 hex bytes and `--counter`/`--taps`
   stay within the 24-bit counter, as usage errors; `verify --store` with an
@@ -25,6 +51,53 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   errors as one line (exit 2); the provision example without `--port` is
   fixed. Impossible-velocity checks skip history recorded after the tap
   (clock steps, host skew).
+- Two genuine taps of one tag processed concurrently no longer make every
+  later tap `SUSPICIOUS` (`prior_divergence`). The ledger and the detector
+  history are written in two steps, so the history could receive the two
+  fresh counters in reverse order and read that as a fork. Each history row
+  now records whether the ledger found it fresh or a regression (a
+  `regression` column added in place to the SQLite and Postgres
+  observation tables), and fresh rows are never taken for a fork; rows from
+  2.0.0 are still judged by order (#62).
+- SQLite stores (#65): `:memory:` is refused with a clear error instead of
+  failing with "no such table" on the first request served by another
+  thread; `close()` now closes the connections of every thread (they are
+  opened with `check_same_thread=False`), and `SqliteAlertSink` gains
+  `close()` and context-manager support. `SqliteKeyInventory` closes its
+  connection after every call, the Postgres stores drop and close a broken
+  connection when they replace it, and a refused webhook redirect no longer
+  leaves the response socket open. The test suite now treats
+  `ResourceWarning` as an error.
+- Per-IP rate limiting no longer collapses to one bucket behind a Unix
+  socket or a proxy that writes `ip:port`: forwarded hops may be `ip:port`,
+  `[v6]` or `[v6]:port`, `unix` in `SPHRAGIS_TRUSTED_PROXIES` trusts the
+  proxy in front of a Unix socket, and the API logs a warning when the peer
+  has no address and nothing tells it the client's (#66).
+- Malformed input no longer escapes as an unexpected exception type
+  (#64): a WebAuthn `clientDataJSON` whose `origin` or `type` is not a
+  string is `ERROR` instead of a `TypeError` reaching the caller;
+  `cbor_decode` raises `EventError` for a map key that is not an integer,
+  text or bytes, and for nesting deeper than 8 levels (it used to hit
+  `RecursionError` before the signature check); `verify_webhook` returns
+  `False` for a non-ASCII or missing signature header.
+- A genuine tap with an extra query parameter containing `?` or `:`
+  (`&next=/a?b=1`, `v:1&…`) was read as a URL and became `ERROR`. A bare
+  query is now recognised by a `=` before its first `?` or `#`, and `/t`
+  passes its query explicitly (#67).
+- The JSON `CounterStore` re-reads the shared file for `last_counter`,
+  `is_fresh` and `seen` too, so an instance no longer reports a floor
+  another process has already moved past (#67).
+- `check_and_advance` also records the counter in a UID's tap ledger once
+  that ledger has started, so a store used by both `Verifier` and
+  `TagAnalyzer` scores an exact replay as `REPLAY`, not as a counter
+  regression (#67).
+- Stores no longer upper-case every identity: only bare hex UIDs (NTAG 424
+  DNA) are, and prefixed identities such as `fido2:<base64url>` keep their
+  case, so two WebAuthn credentials whose ids differ only by case no longer
+  share one counter and one history (#63). Upgrading: NTAG data is
+  unaffected. Rows that 2.0.0 stored for a non-hex identity were stored
+  upper-cased; a credential whose id has lower-case letters starts a new
+  history under its real id.
 
 ## 2.0.0 — 2026-10-18
 

@@ -91,6 +91,10 @@ any key leaves the station:
   authenticate with them, and only a UID-specific slot (0, 1, 3, 4) counts:
   slot 2 holds the shared `meta_read`, which proves nothing about the UID.
   This is what lets an interrupted run resume safely (slot 1 is changed first).
+  The check applies to a reset too: with slot 0 on factory keys, ChangeKey of
+  a keyed slot sends its old key under the public zero key (toward factory
+  keys, the old key itself), so a tag whose only non-factory slot is slot 2 is
+  refused even with `--to-factory` or `--allow-known-uid`.
 - **Confirmation.** The UID and the plan are shown; without `--uid` the
   operator types the UID before anything is written.
 

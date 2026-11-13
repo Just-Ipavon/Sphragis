@@ -32,7 +32,7 @@ def main() -> None:
 
     print("Genuine tag in the field (reader = gate-A):")
     for i in range(3):
-        show(f"  authentic tap", analyzer.analyze(
+        show("  authentic tap", analyzer.analyze(
             tag.tap(), timestamp=1000 + i, reader_id="gate-A"))
 
     print("\nAttacker extracts the keys and builds a perfect clone.")

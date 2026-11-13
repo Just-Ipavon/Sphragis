@@ -200,7 +200,7 @@ class FakeNtag424:
                 self.failed_auths += 1
                 return b"\x91\xAE"
             ti = os.urandom(4)
-            tail = (rnd_a[0:2] + bytes(x ^ y for x, y in zip(rnd_a[2:8], rnd_b[0:6]))
+            tail = (rnd_a[0:2] + bytes(x ^ y for x, y in zip(rnd_a[2:8], rnd_b[0:6], strict=True))
                     + rnd_b[6:16] + rnd_a[8:16])
             self.session = dict(
                 key_no=key_no, ti=ti, ctr=0,
@@ -269,7 +269,7 @@ class FakeNtag424:
             self.key_changes += 1
             self.session = None                     # session key gone
             return b"\x91\x00"
-        new = bytes(a ^ b for a, b in zip(plain[:16], self.keys[key_no]))
+        new = bytes(a ^ b for a, b in zip(plain[:16], self.keys[key_no], strict=True))
         version, crc = plain[16], plain[17:21]
         if crc != (zlib.crc32(new) ^ 0xFFFFFFFF).to_bytes(4, "little"):
             self.session = None
