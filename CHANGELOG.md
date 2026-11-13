@@ -14,6 +14,11 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- Per-IP rate limiting no longer collapses to one bucket behind a Unix
+  socket or a proxy that writes `ip:port`: forwarded hops may be `ip:port`,
+  `[v6]` or `[v6]:port`, `unix` in `SPHRAGIS_TRUSTED_PROXIES` trusts the
+  proxy in front of a Unix socket, and the API logs a warning when the peer
+  has no address and nothing tells it the client's (#66).
 - Malformed input no longer escapes as an unexpected exception type
   (#64): a WebAuthn `clientDataJSON` whose `origin` or `type` is not a
   string is `ERROR` instead of a `TypeError` reaching the caller;

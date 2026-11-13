@@ -15,6 +15,11 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Corretto
 
+- Il rate limit per IP non si riduce più a un solo bucket dietro un socket
+  Unix o un proxy che scrive `ip:porta`: gli hop inoltrati possono essere
+  `ip:porta`, `[v6]` o `[v6]:porta`, `unix` in `SPHRAGIS_TRUSTED_PROXIES`
+  rende fidato il proxy davanti a un socket Unix, e l'API registra un avviso
+  quando il peer non ha indirizzo e nulla indica quello del client (#66).
 - L'input malformato non sfugge più con un tipo di eccezione inatteso (#64):
   un `clientDataJSON` WebAuthn il cui `origin` o `type` non è una stringa dà
   `ERROR` invece di un `TypeError` che arriva al chiamante; `cbor_decode`

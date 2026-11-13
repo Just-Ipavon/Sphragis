@@ -282,6 +282,46 @@ def test_duplicate_forwarded_for_lines_cannot_mint_buckets():
     assert client_address("8.8.8.8", ["1.1.1.1"], proxy) == "8.8.8.8"   # untrusted peer
 
 
+@pytest.mark.parametrize("hop,expected", [
+    ("1.1.1.1:51234", "1.1.1.1"),                          # Azure Application Gateway
+    ("[2001:db8:1:2::1]:443", "2001:db8:1:2::/64"),
+    ("[2001:db8:1:2::1]", "2001:db8:1:2::/64"),
+    ("2001:db8:1:2::1", "2001:db8:1:2::/64"),
+    ("[2001:db8::1]junk", "10.0.0.2"),                      # garbage: the proxy itself
+    ("1.1.1.1:http", "10.0.0.2"),
+])
+def test_forwarded_hops_with_ports_and_brackets(hop, expected):
+    from sphragis.api.app import client_address, parse_trusted_proxies
+    proxy = parse_trusted_proxies(["10.0.0.0/8"])
+    assert client_address("10.0.0.2", [hop], proxy) == expected
+
+
+def test_unix_socket_peer_reads_the_forwarded_header_only_when_trusted():
+    from sphragis.api.app import client_address, parse_trusted_proxies
+    assert client_address(None, ["1.1.1.1"], ()) == "unknown"
+    unix = parse_trusted_proxies(["unix"])
+    assert client_address(None, ["1.1.1.1"], unix) == "1.1.1.1"
+    assert client_address(None, ["6.6.6.6, 2.2.2.2:80"], unix) == "2.2.2.2"
+    assert client_address(None, [], unix) == "unknown"
+
+
+def test_unix_socket_clients_get_separate_buckets_end_to_end(caplog):
+    limiter = TokenBucketLimiter(rate=0.01, burst=1)
+    tag, client, _ = _rig(ip_limiter=limiter, peer=None, trusted_proxies=["unix"])
+    assert client.get("/t", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
+    assert client.get("/t", headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 200
+    assert client.get("/t", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 429
+
+
+def test_unix_socket_without_trust_warns_once(caplog):
+    limiter = TokenBucketLimiter(rate=0.01, burst=5)
+    tag, client, _ = _rig(ip_limiter=limiter, peer=None)
+    with caplog.at_level("WARNING", logger="sphragis.api"):
+        client.get("/t")
+        client.get("/t")
+    assert sum("no client address" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_duplicate_forwarded_for_header_end_to_end():
     limiter = TokenBucketLimiter(rate=0.01, burst=1)
     tag, client, _ = _rig(ip_limiter=limiter, peer=("10.0.0.2", 50000),
