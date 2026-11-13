@@ -105,7 +105,7 @@ def test_same_counter_from_many_threads_is_accepted_once(backend):
     for value in range(1, 6):
         results, barrier = [], threading.Barrier(16)
 
-        def tap():
+        def tap(barrier=barrier, results=results, value=value):
             barrier.wait()
             results.append(s.check_and_advance("04EE", value))
 
@@ -275,7 +275,14 @@ def test_alert_audit_trail(backend):
 def test_alert_event_ids_are_unique(backend):
     a = backend["alerts"]()
     a.emit(_alert("dup", 1.0))
-    with pytest.raises(Exception):
+    import sqlite3
+    duplicate = (sqlite3.IntegrityError,)
+    try:
+        import psycopg
+        duplicate += (psycopg.errors.UniqueViolation,)
+    except ImportError:
+        pass
+    with pytest.raises(duplicate):
         a.emit(_alert("dup", 2.0))
 
 
@@ -350,7 +357,7 @@ def test_same_tap_from_many_threads_is_new_once(backend):
     for value in range(1, 6):
         results, barrier = [], threading.Barrier(16)
 
-        def tap():
+        def tap(barrier=barrier, results=results, value=value):
             barrier.wait()
             results.append(s.record_tap("04EF", value).new)
 

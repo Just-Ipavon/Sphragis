@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,12 +8,12 @@ version = "2.0.0"
 description = "Cryptographic clone-detection engine for NXP NTAG 424 DNA (SUN/SDM)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [{ name = "Pasquale Ruotolo" }]
 keywords = ["nfc", "ntag424", "sdm", "sun", "aes-cmac", "anti-counterfeiting",
             "clone-detection", "cryptography", "security"]
 classifiers = [
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -52,3 +52,10 @@ packages = ["sphragis", "sphragis.api", "sphragis.transport"]
 # namespace. The engine requires pycryptodome and refuses PyCrypto at import
 # time (sphragis/_cryptocheck.py), so the finding does not apply.
 skips = ["B413"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# Correctness only: undefined or unused names, syntax errors, likely bugs.
+select = ["F", "E9", "B"]

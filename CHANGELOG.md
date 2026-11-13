@@ -3,6 +3,22 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Packaging, docs and CI (#69): a `MANIFEST.in` puts in the sdist what its
+  tests read (test helpers, docs, tools, examples, locks, workflows), and a
+  new CI job builds the sdist and the wheel and runs the suite from the
+  unpacked sdist. The license is declared as an SPDX expression with
+  `license-files` (setuptools 77 or later), dropping the deprecated table
+  and classifier. The README shows the current `clone_demo.py` output, and
+  a test keeps it in step. The security workflow installs `pip-audit`,
+  `bandit` and `ruff` from a hash-locked `requirements/security.lock` and
+  now runs ruff's correctness rules (`F`, `E9`, `B`, fixed across the
+  code). The Postgres service image is pinned by digest and its job runs
+  on Python 3.10 and 3.13; Dependabot also watches `requirements/`.
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,

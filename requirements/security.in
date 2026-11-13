@@ -1,0 +1,4 @@
+# Scanners and the linter for .github/workflows/security.yml; locked in requirements/security.lock.
+pip-audit
+bandit
+ruff

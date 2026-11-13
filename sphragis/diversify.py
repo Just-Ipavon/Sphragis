@@ -58,7 +58,7 @@ def diversify_key(master_key: bytes, div_input: bytes) -> bytes:
         last_key = k2
     else:
         last_key = k1
-    d = d[:_BLOCK] + bytes(a ^ b for a, b in zip(d[_BLOCK:], last_key))
+    d = d[:_BLOCK] + bytes(a ^ b for a, b in zip(d[_BLOCK:], last_key, strict=True))
     return AES.new(master_key, AES.MODE_CBC, bytes(_BLOCK)).encrypt(d)[_BLOCK:]
 
 

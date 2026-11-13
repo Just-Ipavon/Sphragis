@@ -120,7 +120,7 @@ def change_key(session: Session, key_no: int, new_key: bytes, version: int, *,
     if key_no != auth_key_no:
         if old_key is None or len(old_key) != 16:
             raise ValueError("changing another key needs its current value")
-        data = (bytes(a ^ b for a, b in zip(new_key, old_key))
+        data = (bytes(a ^ b for a, b in zip(new_key, old_key, strict=True))
                 + bytes([version]) + crc32nk(new_key))
         session.send_full(INS_CHANGE_KEY, header, data)
         return True

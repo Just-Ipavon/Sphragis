@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from sphragis import StaticKeys  # noqa: E402
 from sphragis.adversary import KeyCloner, KeylessAttacker  # noqa: E402
 from sphragis.analyzer import TagAnalyzer  # noqa: E402
-from sphragis.detection import CloneDetector  # noqa: E402
 from sphragis.diversify import DiversifiedKeys  # noqa: E402
 from sphragis.emulator import EmulatedTag, tag_from_provider  # noqa: E402
 from sphragis.verifier import _consttime_eq  # noqa: E402
@@ -221,4 +220,4 @@ def test_piccdata_parser_never_crashes_on_garbage():
         except SdmError:
             pass  # expected rejection
         except Exception as exc:  # noqa: BLE001
-            raise AssertionError(f"unhandled exception on garbage: {exc!r}")
+            raise AssertionError(f"unhandled exception on garbage: {exc!r}") from exc

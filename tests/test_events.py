@@ -26,7 +26,7 @@ from sphragis import (  # noqa: E402
     verify_event,
 )
 from sphragis.emulator import EmulatedTag  # noqa: E402
-from sphragis.events import EVENT_CONTENT_TYPE, cbor_decode, cbor_encode  # noqa: E402
+from sphragis.events import cbor_decode, cbor_encode  # noqa: E402
 
 SECRET = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
 

@@ -33,9 +33,15 @@ jobs:
   postgres:
     # The storage backends against a real Postgres: conformance + concurrency.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
     services:
       postgres:
-        image: postgres:16
+        # Pinned by digest (the multi-arch index of postgres:16); Dependabot does
+        # not update service images, so refresh it with the tag deliberately.
+        image: postgres:16@sha256:63e83b5a3dc36a917dccb76fe1bd2ac51f1ec9c1deb47ff20d4f04233bf6eae9
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sphragis_test
@@ -49,10 +55,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install (locked, hash-checked)
         run: |
           pip install --require-hashes -r requirements/ci.lock
           pip install --no-deps -e .
       - name: Run tests (Postgres backends enabled)
         run: python -m pytest -q
+
+  package:
+    # What is published, tested: build the sdist and the wheel with the locked
+    # build tools, install the wheel and run the suite from the unpacked sdist.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build (locked, hash-checked)
+        run: |
+          pip install --require-hashes -r requirements/release.lock
+          python -m build --no-isolation
+      - name: Test the wheel from the unpacked sdist
+        run: |
+          pip install --require-hashes -r requirements/ci.lock
+          pip install --no-deps dist/*.whl
+          mkdir unpacked && tar -xzf dist/*.tar.gz -C unpacked --strip-components=1
+          cd unpacked && python -m pytest -q -p no:cacheprovider tests

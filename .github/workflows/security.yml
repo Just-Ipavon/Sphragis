@@ -21,9 +21,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install the scanners
-        run: pip install pip-audit bandit
+      - name: Install the scanners (locked, hash-checked)
+        run: pip install --require-hashes -r requirements/security.lock
       - name: pip-audit (locked dependencies)
         run: pip-audit --require-hashes --disable-pip -r requirements/ci.lock
       - name: bandit (medium severity and up)
         run: bandit -c pyproject.toml -r sphragis tools -ll -ii
+      - name: ruff (correctness rules in pyproject.toml)
+        run: ruff check sphragis tools tests examples

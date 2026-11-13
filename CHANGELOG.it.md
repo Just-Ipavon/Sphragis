@@ -3,6 +3,23 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Corretto
+
+- Packaging, documentazione e CI (#69): un `MANIFEST.in` mette nella sdist
+  ciò che i suoi test leggono (helper dei test, documentazione, tool, esempi,
+  lock, workflow), e un nuovo job di CI costruisce sdist e wheel ed esegue la
+  suite dalla sdist estratta. La licenza è dichiarata come espressione SPDX
+  con `license-files` (setuptools 77 o successivo), senza la tabella e il
+  classifier deprecati. Il README mostra l'output attuale di
+  `clone_demo.py`, e un test lo tiene allineato. Il workflow di sicurezza
+  installa `pip-audit`, `bandit` e `ruff` da un
+  `requirements/security.lock` con hash e ora esegue le regole di
+  correttezza di ruff (`F`, `E9`, `B`, corrette in tutto il codice).
+  L'immagine Postgres del servizio è fissata per digest e il suo job gira
+  su Python 3.10 e 3.13; Dependabot controlla anche `requirements/`.
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di
