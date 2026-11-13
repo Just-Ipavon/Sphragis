@@ -5,6 +5,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Fixed
 
 - SQLite stores (#65): `:memory:` is refused with a clear error instead of
@@ -16,15 +23,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   connection when they replace it, and a refused webhook redirect no longer
   leaves the response socket open. The test suite now treats
   `ResourceWarning` as an error.
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
-
-### Fixed
-
 - Per-IP rate limiting no longer collapses to one bucket behind a Unix
   socket or a proxy that writes `ip:port`: forwarded hops may be `ip:port`,
   `[v6]` or `[v6]:port`, `unix` in `SPHRAGIS_TRUSTED_PROXIES` trusts the

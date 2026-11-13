@@ -5,6 +5,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ### Corretto
 
 - Storage SQLite (#65): `:memory:` viene rifiutato con un errore chiaro invece
@@ -16,16 +24,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   connessione rotta quando la sostituiscono, e un redirect di webhook
   rifiutato non lascia più aperto il socket della risposta. La suite di test
   ora tratta `ResourceWarning` come errore.
-### Sicurezza
-
-- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
-  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
-  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
-  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
-  tutta a zero. `--allow-known-uid` non scavalca il controllo.
-
-### Corretto
-
 - Il rate limit per IP non si riduce più a un solo bucket dietro un socket
   Unix o un proxy che scrive `ip:porta`: gli hop inoltrati possono essere
   `ip:porta`, `[v6]` o `[v6]:porta`, `unix` in `SPHRAGIS_TRUSTED_PROXIES`
