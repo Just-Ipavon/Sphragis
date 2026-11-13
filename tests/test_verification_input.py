@@ -167,3 +167,20 @@ def test_only_the_exact_encoding_of_a_tap_is_accepted():
     assert Verifier(KEYS, CounterStore()).verify(url).ok
     assert Verifier(KEYS, CounterStore()).verify(url.split("?", 1)[1]).ok   # bare query
 
+
+
+@pytest.mark.parametrize("extra", ["&next=/a?b=1", "&v=1:2", "&back=https://x.example/y?z=1"])
+def test_bare_query_with_url_characters_in_a_value(extra):
+    tag = EmulatedTag(uid=os.urandom(7), meta_read_key=META, file_read_key=FILE)
+    query = tag.tap().split("?", 1)[1]
+    assert Verifier(KEYS, CounterStore()).verify(query + extra).ok
+    assert Verifier(KEYS, CounterStore()).verify("v:1&" + query).ok    # scheme-like prefix
+    assert Verifier(KEYS, CounterStore()).verify("?" + query + extra).ok
+
+
+def test_full_urls_still_read_only_their_query():
+    tag = EmulatedTag(uid=os.urandom(7), meta_read_key=META, file_read_key=FILE)
+    query = tag.tap().split("?", 1)[1]
+    assert Verifier(KEYS, CounterStore()).verify("example.com/t?" + query).ok
+    assert Verifier(KEYS, CounterStore()).verify("https://example.com/t?" + query).ok
+    assert not Verifier(KEYS, CounterStore()).verify("https://example.com/t#" + query).ok

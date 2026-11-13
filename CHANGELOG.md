@@ -14,6 +14,17 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- A genuine tap with an extra query parameter containing `?` or `:`
+  (`&next=/a?b=1`, `v:1&…`) was read as a URL and became `ERROR`. A bare
+  query is now recognised by a `=` before its first `?` or `#`, and `/t`
+  passes its query explicitly (#67).
+- The JSON `CounterStore` re-reads the shared file for `last_counter`,
+  `is_fresh` and `seen` too, so an instance no longer reports a floor
+  another process has already moved past (#67).
+- `check_and_advance` also records the counter in a UID's tap ledger once
+  that ledger has started, so a store used by both `Verifier` and
+  `TagAnalyzer` scores an exact replay as `REPLAY`, not as a counter
+  regression (#67).
 - Stores no longer upper-case every identity: only bare hex UIDs (NTAG 424
   DNA) are, and prefixed identities such as `fido2:<base64url>` keep their
   case, so two WebAuthn credentials whose ids differ only by case no longer

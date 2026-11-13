@@ -391,6 +391,37 @@ def test_same_tap_from_many_processes_is_new_once(backend):
     assert results.count(True) == 1, results
 
 
+# --- Shared JSON file, and a ledger kept complete by the floor-only API ------
+
+def test_json_store_reads_see_other_instances(tmp_path):
+    from sphragis.counterstore import CounterStore
+    path = str(tmp_path / "counters.json")
+    a, b = CounterStore(path), CounterStore(path)
+    assert a.check_and_advance("AA", 5)
+    assert b.last_counter("AA") == 5
+    assert not b.is_fresh("AA", 3)
+    a.record_tap("AA", 6)
+    assert b.seen("AA", 6)
+
+
+def _floor_api_then_replay(store):
+    assert store.record_tap("04CC", 1).fresh             # the ledger starts
+    assert store.check_and_advance("04CC", 2)            # Verifier path
+    replay = store.record_tap("04CC", 2)                 # TagAnalyzer path
+    assert not replay.new and not replay.fresh
+
+
+def test_floor_only_api_keeps_a_started_ledger_complete(backend):
+    _floor_api_then_replay(backend["counters"]())
+
+
+@pytest.mark.parametrize("kind", ["memory", "json"])
+def test_floor_only_api_keeps_a_started_ledger_complete_locally(kind, tmp_path):
+    from sphragis.counterstore import CounterStore
+    _floor_api_then_replay(CounterStore(str(tmp_path / "c.json")) if kind == "json"
+                           else CounterStore())
+
+
 # --- Identities are opaque, except bare hex UIDs ------------------------------
 
 def _memory_or_json(kind, tmp_path):

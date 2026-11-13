@@ -139,6 +139,13 @@ class SqliteCounterStore:
                 accepted = True
             else:
                 accepted = False
+            if accepted:
+                # A UID whose tap ledger has started keeps it complete, so a
+                # later replay of this tap reads as a replay, not a rollback.
+                conn.execute(
+                    "INSERT OR IGNORE INTO tap_counters (uid, counter, first_seen) "
+                    "SELECT uid, ?, ? FROM tap_ledgers WHERE uid = ?",
+                    (counter, now, uid_hex))
             conn.execute("COMMIT")
             return accepted
         except Exception:

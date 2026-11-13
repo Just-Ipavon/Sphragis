@@ -124,16 +124,30 @@ class PostgresCounterStore(_PgBase):
         return None if row is None else int(row[0])
 
     def check_and_advance(self, uid_hex: str, counter: int) -> bool:
-        """Accept `counter` iff strictly greater than the stored one, atomically."""
-        row = self._connection().execute(
-            "INSERT INTO sphragis_counters AS c (uid, counter, updated_at) "
-            "VALUES (%s, %s, %s) "
-            "ON CONFLICT (uid) DO UPDATE "
-            "SET counter = EXCLUDED.counter, updated_at = EXCLUDED.updated_at "
-            "WHERE c.counter < EXCLUDED.counter "
-            "RETURNING c.counter",
-            (store_key(uid_hex), counter, time.time()),
-        ).fetchone()
+        """Accept `counter` iff strictly greater than the stored one, atomically.
+
+        A UID whose tap ledger has started also gets the counter recorded
+        there, in the same transaction, so a later replay reads as a replay.
+        """
+        uid_hex, now = store_key(uid_hex), time.time()
+        conn = self._connection()
+        with conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))",
+                         (_LOCK_NS + 1, uid_hex))
+            row = conn.execute(
+                "INSERT INTO sphragis_counters AS c (uid, counter, updated_at) "
+                "VALUES (%s, %s, %s) "
+                "ON CONFLICT (uid) DO UPDATE "
+                "SET counter = EXCLUDED.counter, updated_at = EXCLUDED.updated_at "
+                "WHERE c.counter < EXCLUDED.counter "
+                "RETURNING c.counter",
+                (uid_hex, counter, now),
+            ).fetchone()
+            if row is not None:
+                conn.execute(
+                    "INSERT INTO sphragis_tap_counters (uid, counter, first_seen) "
+                    "SELECT uid, %s, %s FROM sphragis_tap_ledgers WHERE uid = %s "
+                    "ON CONFLICT DO NOTHING", (counter, now, uid_hex))
         return row is not None
 
     def seen(self, uid_hex: str, counter: int) -> bool:

@@ -375,7 +375,7 @@ def create_app(
             return dict(PREVIEW_BODY)
         # The raw query string goes to the parser untouched, so duplicated
         # parameters and encrypted-file-data markers are still detected.
-        outcome = service.verify(request.url.query, reader_id=reader)
+        outcome = service.verify("?" + request.url.query, reader_id=reader)
         return respond(outcome, reader)
 
     @app.post("/v1/verify")
