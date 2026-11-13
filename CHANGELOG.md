@@ -5,6 +5,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Fixed
 
 - The CLI, the emulator and the tools no longer end in a traceback on bad
@@ -17,15 +24,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   errors as one line (exit 2); the provision example without `--port` is
   fixed. Impossible-velocity checks skip history recorded after the tap
   (clock steps, host skew).
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
-
-### Fixed
-
 - Two genuine taps of one tag processed concurrently no longer make every
   later tap `SUSPICIOUS` (`prior_divergence`). The ledger and the detector
   history are written in two steps, so the history could receive the two

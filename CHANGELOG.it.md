@@ -5,6 +5,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ### Corretto
 
 - La CLI, l'emulatore e i tool non terminano più con un traceback su input
@@ -18,16 +26,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   l'esempio di provision senza `--port` è corretto. Il controllo di velocità
   impossibile ignora la cronologia registrata dopo il tap (salti
   dell'orologio, sfasamento tra host).
-### Sicurezza
-
-- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
-  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
-  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
-  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
-  tutta a zero. `--allow-known-uid` non scavalca il controllo.
-
-### Corretto
-
 - Due tap autentici dello stesso tag elaborati in contemporanea non rendono
   più `SUSPICIOUS` (`prior_divergence`) tutti i tap successivi. Il registro e
   la cronologia del rilevatore sono scritti in due passi, quindi la
