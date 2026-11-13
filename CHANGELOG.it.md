@@ -13,6 +13,16 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
   tutta a zero. `--allow-known-uid` non scavalca il controllo.
 
+### Aggiunto
+
+- `/readyz`: ogni storage risponde a una lettura e la coda degli alert del
+  webhook è sotto il 90%, altrimenti `503` con i controlli falliti.
+  All'arresto l'API consegna gli alert del webhook in coda (fino a 10 s) e
+  chiude gli storage; `BackgroundAlertSink` ottiene `flush(timeout)` /
+  `close(timeout)` limitati e `pending`. `alerted` nei risultati e negli
+  eventi è documentato come "un sink ha accettato l'alert" (in coda, per il
+  webhook) (#70).
+
 ### Corretto
 
 - Packaging, documentazione e CI (#69): un `MANIFEST.in` mette nella sdist

@@ -283,10 +283,42 @@ class BackgroundAlertSink:
             finally:
                 self._queue.task_done()
 
-    def flush(self) -> None:
-        """Wait until every queued alert has been handed to the sink."""
-        self._queue.join()
+    @property
+    def pending(self) -> int:
+        """Alerts queued and not yet handed to the sink."""
+        return self._queue.qsize()
 
-    def close(self) -> None:
-        self._queue.put(None)
-        self._thread.join(timeout=5)
+    @property
+    def capacity(self) -> int:
+        return self._queue.maxsize
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Wait until every queued alert has been handed to the sink, at most
+        `timeout` seconds; return whether the queue drained."""
+        if timeout is None:
+            self._queue.join()
+            return True
+        deadline = time.monotonic() + timeout
+        while self._queue.unfinished_tasks:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def close(self, timeout: float = 5.0) -> bool:
+        """Deliver what is queued, then stop the worker. Returns whether every
+        queued alert was handed to the sink within `timeout` seconds; the
+        alerts left behind are logged (the durable sink kept them anyway)."""
+        deadline = time.monotonic() + timeout
+        try:
+            self._queue.put(None, timeout=timeout)    # after the queued alerts
+        except queue.Full:
+            pass
+        self._thread.join(max(0.0, deadline - time.monotonic()))
+        left = self._queue.qsize()
+        if self._thread.is_alive() or left:
+            _log.error("alert worker stopped with alerts undelivered",
+                       extra={"fields": {"pending": left,
+                                         "sink": type(self._sink).__name__}})
+            return False
+        return True

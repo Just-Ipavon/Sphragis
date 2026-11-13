@@ -12,6 +12,15 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
   under the public zero key. `--allow-known-uid` does not override this.
 
+### Added
+
+- `/readyz`: every store answers a read and the webhook alert queue is under
+  90% full, or `503` with the failing checks. On shutdown the API delivers
+  queued webhook alerts (up to 10 s) and closes the stores;
+  `BackgroundAlertSink` gains bounded `flush(timeout)` / `close(timeout)` and
+  `pending`. `alerted` in results and events is documented as "a sink
+  accepted the alert" (queued, for the webhook) (#70).
+
 ### Fixed
 
 - Packaging, docs and CI (#69): a `MANIFEST.in` puts in the sdist what its

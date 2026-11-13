@@ -6,6 +6,7 @@ Endpoints
 GET  /t?picc_data=..&cmac=..   the URL a tag points to: a phone opens it on tap
 POST /v1/verify {"url": ...}   an app or backend forwards a tapped URL
 GET  /healthz                  liveness probe (not rate limited)
+GET  /readyz                   readiness: storage reachable, alert queue not full
 
 Two response tiers
 ------------------
@@ -44,7 +45,8 @@ import json
 import logging
 import math
 import re
-from typing import Iterable, Mapping
+from contextlib import asynccontextmanager
+from typing import Callable, Iterable, Mapping, Sequence
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -326,6 +328,8 @@ def create_app(
     enable_docs: bool = False,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     event_signer=None,
+    ready_checks: Mapping[str, Callable[[], object]] | None = None,
+    on_shutdown: Sequence[Callable[[], object]] = (),
 ) -> FastAPI:
     """
     Build the API around an already-configured service.
@@ -333,7 +337,26 @@ def create_app(
     `reader_tokens` maps SHA-256(token) hex -> reader id (see
     `settings.parse_reader_tokens`). Interactive docs are off by default to keep
     the public surface minimal.
+
+    `ready_checks` names callables that raise (or return False) when a
+    dependency is not usable; `/readyz` answers 503 listing the failing names.
+    `on_shutdown` runs in order when the server stops (drain the alert queue,
+    close the stores); a failing step is logged and the next one still runs.
     """
+    checks = dict(ready_checks or {})
+    closers = tuple(on_shutdown)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        yield
+        for step in closers:
+            try:
+                step()
+            except Exception:  # noqa: BLE001 - every step gets its chance
+                logger.exception("shutdown step failed",
+                                 extra={"fields": {"step": getattr(step, "__qualname__",
+                                                                   repr(step))}})
+
     tokens = {k.lower(): v for k, v in (reader_tokens or {}).items()}
     trusted = parse_trusted_proxies(trusted_proxies)
     install_access_log_redaction()
@@ -342,6 +365,7 @@ def create_app(
         docs_url="/docs" if enable_docs else None,
         redoc_url=None,
         openapi_url="/openapi.json" if enable_docs else None,
+        lifespan=lifespan,
     )
 
     @app.middleware("http")
@@ -388,6 +412,23 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    def readyz():
+        failing = []
+        for name, check in checks.items():
+            try:
+                ok = check()
+            except Exception:  # noqa: BLE001 - any failure means not ready
+                logger.warning("readiness check failed", exc_info=True,
+                               extra={"fields": {"check": name}})
+                ok = False
+            if ok is False:
+                failing.append(name)
+        if failing:
+            return JSONResponse({"status": "unavailable", "failing": failing},
+                                status_code=503, headers={"cache-control": "no-store"})
+        return {"status": "ready"}
 
     if event_signer is not None:
         public_key = {"kid": event_signer.kid.decode(), "alg": "EdDSA", "crv": "Ed25519",

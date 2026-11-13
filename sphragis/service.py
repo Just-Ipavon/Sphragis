@@ -47,6 +47,9 @@ class VerificationOutcome:
     result: AnalysisResult
     uid_ref: str | None
     reader_id: str | None
+    # At least one sink accepted the alert. A background sink (the webhook)
+    # accepts it when queued; delivery is logged, and the durable audit sink
+    # is the record of what was alerted.
     alerted: bool
 
 
