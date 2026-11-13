@@ -105,7 +105,7 @@ def test_same_counter_from_many_threads_is_accepted_once(backend):
     for value in range(1, 6):
         results, barrier = [], threading.Barrier(16)
 
-        def tap():
+        def tap(barrier=barrier, results=results, value=value):
             barrier.wait()
             results.append(s.check_and_advance("04EE", value))
 
@@ -275,7 +275,14 @@ def test_alert_audit_trail(backend):
 def test_alert_event_ids_are_unique(backend):
     a = backend["alerts"]()
     a.emit(_alert("dup", 1.0))
-    with pytest.raises(Exception):
+    import sqlite3
+    duplicate = (sqlite3.IntegrityError,)
+    try:
+        import psycopg
+        duplicate += (psycopg.errors.UniqueViolation,)
+    except ImportError:
+        pass
+    with pytest.raises(duplicate):
         a.emit(_alert("dup", 2.0))
 
 
@@ -350,7 +357,7 @@ def test_same_tap_from_many_threads_is_new_once(backend):
     for value in range(1, 6):
         results, barrier = [], threading.Barrier(16)
 
-        def tap():
+        def tap(barrier=barrier, results=results, value=value):
             barrier.wait()
             results.append(s.record_tap("04EF", value).new)
 
@@ -389,6 +396,73 @@ def test_same_tap_from_many_processes_is_new_once(backend):
             start.set()
             results = [p.get(timeout=60) for p in pending]
     assert results.count(True) == 1, results
+
+
+# --- Tap ledger retention (#56) ---------------------------------------------------
+
+def _windowed(kind, tmp_path, request, window):
+    if kind == "memory":
+        from sphragis.counterstore import CounterStore
+        return CounterStore(ledger_window=window)
+    if kind == "json":
+        from sphragis.counterstore import CounterStore
+        return CounterStore(str(tmp_path / "c.json"), ledger_window=window)
+    if kind == "sqlite":
+        return SqliteCounterStore(tmp_path / "c.db", ledger_window=window)
+    from sphragis.pgstore import PostgresCounterStore
+    return PostgresCounterStore(request.getfixturevalue("pg_dsn"), ledger_window=window)
+
+
+def _ledger_size(store, kind, uid):
+    if kind in ("memory", "json"):
+        return len(store._taps.get(uid, ()))
+    conn = store._connection()
+    table = "tap_counters" if kind == "sqlite" else "sphragis_tap_counters"
+    mark = "?" if kind == "sqlite" else "%s"
+    return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE uid = {mark}",
+                        (uid,)).fetchone()[0]
+
+
+@pytest.mark.parametrize("kind", ["memory", "json", "sqlite",
+                                  pytest.param("pg", marks=needs_pg)])
+def test_ledger_stays_bounded_and_exact_inside_the_window(kind, tmp_path, request):
+    store = _windowed(kind, tmp_path, request, window=10)
+    uid = f"04AB{kind.upper()[:2].encode().hex()}"
+    for counter in range(1, 201):
+        assert store.record_tap(uid, counter).fresh
+    assert _ledger_size(store, kind, uid) <= 10
+    inside = store.record_tap(uid, 195)                  # replayed, within the window
+    assert not inside.new and not inside.predates_ledger
+    regression = store.record_tap(uid, 150)              # never seen? compacted away
+    assert regression.predates_ledger and not regression.fresh
+    store.record_tap(uid, 201)
+    assert _ledger_size(store, kind, uid) <= 11
+    getattr(store, "close", lambda: None)()
+
+
+def test_window_must_be_positive(tmp_path):
+    from sphragis.counterstore import CounterStore
+    for bad in (0, -3, True, 2.5):
+        with pytest.raises(ValueError, match="ledger window"):
+            CounterStore(ledger_window=bad)
+
+
+def test_unbounded_by_default(tmp_path):
+    store = SqliteCounterStore(tmp_path / "c.db")
+    for counter in range(1, 51):
+        store.record_tap("04CD", counter)
+    assert _ledger_size(store, "sqlite", "04CD") == 50
+    assert store.record_tap("04CD", 3).new is False
+
+
+def test_settings_read_the_ledger_window():
+    pytest.importorskip("fastapi")
+    from sphragis.api.settings import ApiSettings
+    assert ApiSettings.from_env({}).ledger_window is None
+    assert ApiSettings.from_env({"SPHRAGIS_LEDGER_WINDOW": "1000"}).ledger_window == 1000
+    for bad in ("0", "-1", "many"):
+        with pytest.raises(ValueError, match="LEDGER_WINDOW"):
+            ApiSettings.from_env({"SPHRAGIS_LEDGER_WINDOW": bad})
 
 
 # --- SQLite store lifecycle across threads (#65) -------------------------------
@@ -553,3 +627,79 @@ def test_ipv6_buckets_can_be_coarser():
             ApiSettings.from_env({"SPHRAGIS_IPV6_PREFIX": bad})
     with pytest.raises(ValueError, match="RATE_LIMIT_STORE"):
         ApiSettings.from_env({"SPHRAGIS_RATE_LIMIT_STORE": "redis"})
+
+
+# --- Shared JSON file, and a ledger kept complete by the floor-only API ------
+
+def test_json_store_reads_see_other_instances(tmp_path):
+    from sphragis.counterstore import CounterStore
+    path = str(tmp_path / "counters.json")
+    a, b = CounterStore(path), CounterStore(path)
+    assert a.check_and_advance("AA", 5)
+    assert b.last_counter("AA") == 5
+    assert not b.is_fresh("AA", 3)
+    a.record_tap("AA", 6)
+    assert b.seen("AA", 6)
+
+
+def _floor_api_then_replay(store):
+    assert store.record_tap("04CC", 1).fresh             # the ledger starts
+    assert store.check_and_advance("04CC", 2)            # Verifier path
+    replay = store.record_tap("04CC", 2)                 # TagAnalyzer path
+    assert not replay.new and not replay.fresh
+
+
+def test_floor_only_api_keeps_a_started_ledger_complete(backend):
+    _floor_api_then_replay(backend["counters"]())
+
+
+@pytest.mark.parametrize("kind", ["memory", "json"])
+def test_floor_only_api_keeps_a_started_ledger_complete_locally(kind, tmp_path):
+    from sphragis.counterstore import CounterStore
+    _floor_api_then_replay(CounterStore(str(tmp_path / "c.json")) if kind == "json"
+                           else CounterStore())
+
+
+# --- Identities are opaque, except bare hex UIDs ------------------------------
+
+def _memory_or_json(kind, tmp_path):
+    from sphragis.counterstore import CounterStore
+    from sphragis.observations import MemoryObservationStore
+    return (CounterStore(str(tmp_path / "counters.json")) if kind == "json"
+            else CounterStore()), MemoryObservationStore()
+
+
+def _case_distinct_credentials(counters, history):
+    # base64url credential ids are case-sensitive: two different credentials.
+    assert counters.record_tap("fido2:abcd", 10).fresh
+    second = counters.record_tap("fido2:ABCD", 3)
+    assert second.fresh and second.floor_before is None
+    assert counters.last_counter("fido2:abcd") == 10
+    assert counters.last_counter("fido2:ABCD") == 3
+    assert counters.check_and_advance("fido2:Ab_-", 1)
+    assert counters.last_counter("fido2:aB_-") is None
+    history.observe("fido2:abcd", Observation(10, 1.0), limit=5)
+    assert history.history("fido2:ABCD") == []
+    # Bare hex UIDs still match whatever their case.
+    assert counters.check_and_advance("04aabb", 7)
+    assert counters.last_counter("04AABB") == 7
+
+
+def test_prefixed_identities_keep_their_case(backend):
+    _case_distinct_credentials(backend["counters"](), backend["history"]())
+
+
+@pytest.mark.parametrize("kind", ["memory", "json"])
+def test_prefixed_identities_keep_their_case_in_local_stores(kind, tmp_path):
+    _case_distinct_credentials(*_memory_or_json(kind, tmp_path))
+
+
+def test_detector_and_pseudonyms_keep_the_case_of_prefixed_identities():
+    from sphragis.detection import CloneDetector
+    from sphragis.logs import UidPseudonymizer
+    detector = CloneDetector()
+    assert detector.analyze("fido2:abcd", 10, timestamp=1.0).risk_level.name == "GENUINE"
+    assert detector.analyze("fido2:ABCD", 3, timestamp=2.0).risk_level.name == "GENUINE"
+    plain = UidPseudonymizer(None)
+    assert plain.ref("fido2:abcd") != plain.ref("fido2:ABCD")
+    assert plain.ref("04aa") == "04AA"

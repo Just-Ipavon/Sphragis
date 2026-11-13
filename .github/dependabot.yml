@@ -7,6 +7,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+  # The hash-locked files under requirements/ (ci, release, security).
+  - package-ecosystem: pip
+    directory: "/requirements"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
   # Actions are pinned by commit SHA; Dependabot keeps the pins current.
   - package-ecosystem: github-actions
     directory: "/"

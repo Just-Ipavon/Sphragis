@@ -6,6 +6,7 @@ Endpoints
 GET  /t?picc_data=..&cmac=..   the URL a tag points to: a phone opens it on tap
 POST /v1/verify {"url": ...}   an app or backend forwards a tapped URL
 GET  /healthz                  liveness probe (not rate limited)
+GET  /readyz                   readiness: storage reachable, alert queue not full
 
 Two response tiers
 ------------------
@@ -44,7 +45,8 @@ import json
 import logging
 import math
 import re
-from typing import Iterable, Mapping
+from contextlib import asynccontextmanager
+from typing import Callable, Iterable, Mapping, Sequence
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -52,7 +54,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..ratelimit import RateLimiter
 from ..service import VerificationOutcome, VerificationService
-from .settings import parse_trusted_proxies
+from .settings import UNIX_SOCKET, parse_trusted_proxies
 
 PUBLIC_MESSAGES = {
     "GENUINE": "Authentic tag.",
@@ -103,6 +105,8 @@ class RateLimited(Exception):
 DEFAULT_MAX_BODY_BYTES = 8 * 1024
 LIMITED_PATHS = frozenset({"/t", "/v1/verify"})
 
+logger = logging.getLogger("sphragis.api")
+
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -115,6 +119,20 @@ def _address(text: str) -> Address | None:
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
         return addr.ipv4_mapped
     return addr
+
+
+def _hop_address(text: str) -> Address | None:
+    """An address as proxies write it: `ip`, `ip:port`, `[v6]` or `[v6]:port`."""
+    text = text.strip()
+    if text.startswith("["):
+        host, bracket, rest = text[1:].partition("]")
+        if not bracket or (rest and not (rest.startswith(":") and rest[1:].isdigit())):
+            return None
+        return _address(host)
+    host, colon, port = text.partition(":")
+    if colon and ":" not in port and port.isdigit():      # IPv4 with a port
+        return _address(host)
+    return _address(text)
 
 
 def bucket_key(addr: Address, ipv6_prefix: int = 64) -> str:
@@ -135,23 +153,29 @@ def client_address(peer: str | None, forwarded: list[str],
     proxy (left-most entries are client-controlled and trivially spoofed).
     """
     trusted = tuple(trusted)
+    networks = tuple(t for t in trusted if not isinstance(t, str))
 
     def is_trusted(addr: Address) -> bool:
-        return any(addr in net for net in trusted)
+        return any(addr in net for net in networks)
 
     peer_addr = _address(peer or "")
     if peer_addr is None:
-        return peer or "unknown"
-    if not is_trusted(peer_addr):
+        # A Unix socket: only a proxy trusted as `unix` can say who the client is.
+        if UNIX_SOCKET not in trusted:
+            return peer or "unknown"
+        fallback = peer or "unknown"
+    elif not is_trusted(peer_addr):
         return bucket_key(peer_addr, ipv6_prefix)
+    else:
+        fallback = bucket_key(peer_addr, ipv6_prefix)
     hops = [h for line in forwarded for h in line.split(",") if h.strip()]
     for hop in reversed(hops):
-        addr = _address(hop)
+        addr = _hop_address(hop)
         if addr is None:          # garbage where our proxy should have written
             break                 # an address: fall back to the proxy itself
         if not is_trusted(addr):
             return bucket_key(addr, ipv6_prefix)
-    return bucket_key(peer_addr, ipv6_prefix)
+    return fallback
 
 
 def client_ip(request: Request, trusted_proxies: Iterable[Network | str]) -> str:
@@ -192,6 +216,7 @@ class RequestGuard:
         self._limiter = ip_limiter
         self._trusted = trusted_proxies
         self._max = max_body_bytes
+        self._warned = False
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -200,6 +225,12 @@ class RequestGuard:
             headers = [(k.decode("latin-1").lower(), v.decode("latin-1"))
                        for k, v in scope.get("headers", [])]
             peer = scope.get("client")
+            if not peer and UNIX_SOCKET not in self._trusted and not self._warned:
+                self._warned = True
+                logger.warning(
+                    "per-IP rate limiting sees no client address (Unix socket?): every "
+                    "client shares one bucket. Add 'unix' to SPHRAGIS_TRUSTED_PROXIES "
+                    "so the proxy's X-Forwarded-For is used")
             ip = client_address(peer[0] if peer else None,
                                 [v for k, v in headers if k == "x-forwarded-for"],
                                 self._trusted, self._ipv6_prefix)
@@ -301,6 +332,8 @@ def create_app(
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     event_signer=None,
     ipv6_prefix: int = 64,
+    ready_checks: Mapping[str, Callable[[], object]] | None = None,
+    on_shutdown: Sequence[Callable[[], object]] = (),
 ) -> FastAPI:
     """
     Build the API around an already-configured service.
@@ -308,7 +341,26 @@ def create_app(
     `reader_tokens` maps SHA-256(token) hex -> reader id (see
     `settings.parse_reader_tokens`). Interactive docs are off by default to keep
     the public surface minimal.
+
+    `ready_checks` names callables that raise (or return False) when a
+    dependency is not usable; `/readyz` answers 503 listing the failing names.
+    `on_shutdown` runs in order when the server stops (drain the alert queue,
+    close the stores); a failing step is logged and the next one still runs.
     """
+    checks = dict(ready_checks or {})
+    closers = tuple(on_shutdown)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        yield
+        for step in closers:
+            try:
+                step()
+            except Exception:  # noqa: BLE001 - every step gets its chance
+                logger.exception("shutdown step failed",
+                                 extra={"fields": {"step": getattr(step, "__qualname__",
+                                                                   repr(step))}})
+
     tokens = {k.lower(): v for k, v in (reader_tokens or {}).items()}
     trusted = parse_trusted_proxies(trusted_proxies)
     install_access_log_redaction()
@@ -317,6 +369,7 @@ def create_app(
         docs_url="/docs" if enable_docs else None,
         redoc_url=None,
         openapi_url="/openapi.json" if enable_docs else None,
+        lifespan=lifespan,
     )
 
     @app.middleware("http")
@@ -364,6 +417,23 @@ def create_app(
     def healthz() -> dict:
         return {"status": "ok"}
 
+    @app.get("/readyz")
+    def readyz():
+        failing = []
+        for name, check in checks.items():
+            try:
+                ok = check()
+            except Exception:  # noqa: BLE001 - any failure means not ready
+                logger.warning("readiness check failed", exc_info=True,
+                               extra={"fields": {"check": name}})
+                ok = False
+            if ok is False:
+                failing.append(name)
+        if failing:
+            return JSONResponse({"status": "unavailable", "failing": failing},
+                                status_code=503, headers={"cache-control": "no-store"})
+        return {"status": "ready"}
+
     if event_signer is not None:
         public_key = {"kid": event_signer.kid.decode(), "alg": "EdDSA", "crv": "Ed25519",
                       "x": event_signer.public_key.hex()}
@@ -379,7 +449,7 @@ def create_app(
             return dict(PREVIEW_BODY)
         # The raw query string goes to the parser untouched, so duplicated
         # parameters and encrypted-file-data markers are still detected.
-        outcome = service.verify(request.url.query, reader_id=reader)
+        outcome = service.verify("?" + request.url.query, reader_id=reader)
         return respond(outcome, reader)
 
     @app.post("/v1/verify")

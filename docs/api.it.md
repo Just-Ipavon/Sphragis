@@ -45,6 +45,7 @@ di esso.
 | `GET`  | `/t?picc_data=…&cmac=…` | L'URL a cui punta il tag: il telefono lo apre al tap |
 | `POST` | `/v1/verify` `{"url": "…"}` | Un'app o un backend inoltra l'URL letto |
 | `GET`  | `/healthz` | Sonda di liveness (senza rate limit) |
+| `GET`  | `/readyz` | Readiness: ogni storage risponde a una lettura e la coda del webhook è sotto il 90%; altrimenti `503` con i controlli falliti |
 | `GET`  | `/v1/event-key` | Chiave pubblica degli [eventi firmati](events.it.md), quando sono abilitati |
 
 I verdetti tornano sempre con `200`. Gli altri codici sono `401` (credenziali
@@ -77,7 +78,9 @@ ottiene solo la stessa risposta neutra.
 **Dettagliato**: con `Authorization: Bearer <token lettore>` la risposta
 include anche `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
 `key_version`, `reader_id`, `signals`
-(nome, peso, dettaglio), `detail` e `alerted`. I tap forgiati e quelli
+(nome, peso, dettaglio), `detail` e `alerted` (un sink ha accettato
+l'alert; per il webhook significa in coda, e gli errori di consegna vanno nel
+log). I tap forgiati e quelli
 malformati ricevono anche qui la stessa risposta (`classification: INVALID`,
 niente UID né contatore): distinguerli sarebbe un oracolo sul PICCData
 decifrato. Il log conserva la classificazione reale.
@@ -160,7 +163,11 @@ Tieni il sink SQLite o Postgres come archivio di riferimento.
   dell'header, in ordine, e il client è l'hop non fidato più a destra, quindi
   un proxy che aggiunge la propria riga (HAProxy `option forwardfor`) non può
   essere scavalcato da una riga inviata dal client. I client IPv6 sono limitati
-  per /64.
+  per /64. Gli hop possono essere scritti `ip`, `ip:porta` (Azure Application
+  Gateway), `[v6]` o `[v6]:porta`. Dietro un socket Unix (uvicorn `--uds`) il
+  peer non ha indirizzo: aggiungi `unix` a `SPHRAGIS_TRUSTED_PROXIES`,
+  altrimenti tutti i client condividono un solo bucket (l'API lo segnala una
+  volta nel log).
 - Il limite per IP e un tetto al body (`SPHRAGIS_MAX_BODY_BYTES`, 8 KiB) si
   applicano prima di interpretare la richiesta: i body troppo grandi ricevono
   `413` senza essere letti per intero, e un JSON non valido conta nel limite
@@ -199,18 +206,20 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_DB_URL` | nessuno | URL `postgresql://`; sostituisce SQLite per più host (richiede `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | vuoto | Contesto di diversificazione AN10922 |
 | `SPHRAGIS_READER_TOKENS` | nessuno | `lettore=sha256hex,…` |
-| `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP o CIDR dei proxy autorizzati a impostare `X-Forwarded-For` |
+| `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP o CIDR dei proxy (o `unix` per un socket Unix) autorizzati a impostare `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | bucket per IP |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | bucket per tag |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | soglia di velocità impossibile |
 | `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: bucket per IP e per UID nel database condiviso ([rate limiting](#rate-limiting)) |
 | `SPHRAGIS_IPV6_PREFIX` | `64` | lunghezza del prefisso IPv6 coperto da un bucket (16-128) |
+| `SPHRAGIS_LEDGER_WINDOW` | nessuno (tutti) | conserva gli ultimi N valori del contatore per UID nel registro dei tap ([conservazione](clone-detection.it.md#conservazione)) |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classificazioni che generano un alert |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | body di richiesta più grande accettato |
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | livello di log |
 | `SPHRAGIS_EVENTS_FILE` | nessuno | scrive gli [eventi firmati](events.it.md) in questo file (richiede il segreto `event_signing`) |
+| `SPHRAGIS_EVENT_LOG_ID` | nessuno | concatena gli eventi firmati con questo id di log, uno per replica ([log concatenati](events.it.md#log-concatenati)) |
 | `SPHRAGIS_EVENTS_ON` | tutte | classificazioni da firmare |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | versione della chiave di firma degli eventi |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | versioni di chiave attive, la corrente per prima (es. `2,1`), vedi [gestione delle chiavi](key-management.it.md#versioni-delle-chiavi-e-rotazione) |

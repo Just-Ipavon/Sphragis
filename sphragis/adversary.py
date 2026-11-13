@@ -18,7 +18,7 @@ Two threat classes:
 
 from __future__ import annotations
 
-from urllib.parse import parse_qs, urlparse, urlencode
+from urllib.parse import parse_qs, urlencode
 
 from .emulator import EmulatedTag
 

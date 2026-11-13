@@ -22,7 +22,7 @@ from ..analyzer import TagAnalyzer
 from ..backends import VerificationBackend
 from ..detection import CloneDetector
 from ..encverifier import Ntag424EncBackend
-from ..events import EventSigner, FileEventSink
+from ..events import EventChain, EventSigner, FileEventSink, read_event_file
 from ..keyring import build_keyring
 from ..logs import UidPseudonymizer, configure_logging
 from ..observations import SqliteObservationStore
@@ -49,11 +49,11 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         # One shared database for every replica, on any number of hosts.
         from ..pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore
         history, floor = (PostgresObservationStore(settings.db_url),
-                          PostgresCounterStore(settings.db_url))
+                          PostgresCounterStore(settings.db_url, settings.ledger_window))
         audit: AlertSink = PostgresAlertSink(settings.db_url)
     else:
         history, floor = (SqliteObservationStore(settings.db_path),
-                          SqliteCounterStore(settings.db_path))
+                          SqliteCounterStore(settings.db_path, settings.ledger_window))
         audit = SqliteAlertSink(settings.db_path)
     detector = CloneDetector(min_travel_seconds=settings.min_travel_seconds, store=history)
     factories = {"ntag424-sun-enc": Ntag424EncBackend, "ntag424-sun": Ntag424SunBackend}
@@ -61,18 +61,25 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     analyzer = TagAnalyzer(backends=backends, detector=detector, store=floor)
 
     sinks: list[AlertSink] = [LogAlertSink(), audit]
+    background = None
     if settings.webhook_url:
         # Off the request path: a slow incident endpoint never delays a tap.
-        sinks.append(BackgroundAlertSink(
-            WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook"))))
+        background = BackgroundAlertSink(
+            WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook")))
+        sinks.append(background)
 
     pseudo = UidPseudonymizer(
         None if settings.log_uid == "plain" else secrets.get_key("log_pseudonym")
     )
     signer = sinks_for_events = None
+    chain = None
     if settings.events_file:
         signer = EventSigner(secrets, version=settings.event_key_version)
         sinks_for_events = [FileEventSink(settings.events_file)]
+        if settings.event_log_id:
+            # Continue the chain the file already holds (one log per replica).
+            chain = EventChain.resume(settings.event_log_id,
+                                      read_event_file(settings.events_file))
     service = VerificationService(
         analyzer,
         alert_sinks=sinks,
@@ -82,6 +89,7 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         event_signer=signer,
         event_sinks=sinks_for_events or (),
         events_on=settings.events_on,
+        event_chain=chain,
     )
     return create_app(
         service,
@@ -92,6 +100,12 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         throttle_retry_after=1.0 / settings.uid_rate,
         max_body_bytes=settings.max_body_bytes,
         event_signer=signer,
+        ready_checks=_ready_checks(floor, history, background),
+        # Deliver queued webhook alerts first, then close the stores they
+        # and the requests in flight were using.
+        on_shutdown=[*([lambda: background.close(SHUTDOWN_DRAIN_SECONDS)]
+                       if background is not None else []),
+                     floor.close, history.close, audit.close],
     )
 
 
@@ -104,3 +118,19 @@ def _limiter(settings: ApiSettings, rate: float, burst: int):
         return PostgresRateLimiter(settings.db_url, rate, burst)
     from ..sqlstore import SqliteRateLimiter
     return SqliteRateLimiter(settings.db_path, rate, burst)
+
+
+SHUTDOWN_DRAIN_SECONDS = 10.0
+"""How long shutdown waits for queued webhook alerts (the audit store keeps
+every alert regardless)."""
+
+
+def _ready_checks(floor, history, background) -> dict:
+    checks = {
+        # A read on each store: the database is reachable and the schema there.
+        "counters": lambda: floor.last_counter("00") or True,
+        "history": lambda: history.history("00") is not None,
+    }
+    if background is not None:
+        checks["alert_queue"] = lambda: background.pending < background.capacity * 0.9
+    return checks

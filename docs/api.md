@@ -43,6 +43,7 @@ so it can be tested without HTTP. `sphragis/api/` is a thin adapter on top of it
 | `GET`  | `/t?picc_data=…&cmac=…` | The URL a tag points to: a phone opens it on tap |
 | `POST` | `/v1/verify` `{"url": "…"}` | An app or backend forwards a tapped URL |
 | `GET`  | `/healthz` | Liveness probe (not rate limited) |
+| `GET`  | `/readyz` | Readiness: every store answers a read and the webhook queue is under 90% full; otherwise `503` with the failing checks |
 | `GET`  | `/v1/event-key` | Public key of the [signed events](events.md), when they are enabled |
 
 Verdicts are always returned as `200`. The other status codes are `401` (bad
@@ -74,7 +75,8 @@ not a `REPLAY`. A forged `User-Agent` only gets the same neutral answer.
 **Detailed**: with `Authorization: Bearer <reader token>` the response also
 includes `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
 `key_version`, `reader_id`, `signals`
-(name, weight, detail), `detail` and `alerted`. Forged and malformed taps get
+(name, weight, detail), `detail` and `alerted` (a sink accepted the alert;
+for the webhook that means queued, and delivery failures are logged). Forged and malformed taps get
 the same answer here too (`classification: INVALID`, no UID, no counter):
 telling them apart would be an oracle on the decrypted PICCData. The log keeps
 the real classification.
@@ -154,6 +156,10 @@ record.
   is read, in order, and the client is the right-most untrusted hop, so a
   proxy that appends its own line (HAProxy `option forwardfor`) cannot be
   outvoted by a line the client sent. IPv6 clients are limited per /64.
+  Hops may be written `ip`, `ip:port` (Azure Application Gateway),
+  `[v6]` or `[v6]:port`. Behind a Unix socket (uvicorn `--uds`) the peer has
+  no address: list `unix` in `SPHRAGIS_TRUSTED_PROXIES`, or every client
+  shares one bucket (the API logs a warning once when that happens).
 - The per-IP limit and a body cap (`SPHRAGIS_MAX_BODY_BYTES`, 8 KiB) apply
   before the request is parsed: oversized bodies get `413` without being read
   in full, and invalid JSON counts against the limit like any other request.
@@ -189,18 +195,20 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_DB_URL` | none | `postgresql://` URL; replaces SQLite for multi-host (needs `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | empty | AN10922 diversification context |
 | `SPHRAGIS_READER_TOKENS` | none | `reader=sha256hex,…` |
-| `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs or CIDRs allowed to set `X-Forwarded-For` |
+| `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs or CIDRs (or `unix` for a Unix socket) allowed to set `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | per-IP bucket |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | per-tag bucket |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | impossible-velocity threshold |
 | `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: per-IP and per-UID buckets in the shared database ([rate limiting](#rate-limiting)) |
 | `SPHRAGIS_IPV6_PREFIX` | `64` | IPv6 prefix length one rate-limit bucket covers (16-128) |
+| `SPHRAGIS_LEDGER_WINDOW` | none (keep all) | keep the last N counter values per UID in the tap ledger ([retention](clone-detection.md#retention)) |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classifications that raise an alert |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | largest accepted request body |
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` or `plain` |
 | `SPHRAGIS_LOG_LEVEL` | `INFO` | log level |
 | `SPHRAGIS_EVENTS_FILE` | none | write [signed events](events.md) to this file (needs the `event_signing` secret) |
+| `SPHRAGIS_EVENT_LOG_ID` | none | chain the signed events under this log id, one per replica ([chained logs](events.md#chained-logs)) |
 | `SPHRAGIS_EVENTS_ON` | all | classifications to sign |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | version of the event signing key |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | active key versions, current first (e.g. `2,1`), see [key management](key-management.md#key-versions-and-rotation) |

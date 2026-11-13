@@ -103,6 +103,14 @@ The [REST API](api.md) ships with:
 
 Metrics can be derived from the log stream (count by `classification`).
 
+Probes and shutdown: `/healthz` answers as long as the process runs;
+`/readyz` reads from every store and checks the webhook queue, and answers
+`503` with the failing checks otherwise, so a load balancer stops sending
+taps to a replica whose database is unreachable. On shutdown (SIGTERM under
+uvicorn) the app delivers the queued webhook alerts for up to 10 seconds,
+then closes the stores; alerts still queued then are logged, and the audit
+sink holds every alert regardless.
+
 ## Shared detector history
 
 The clone detector's per-UID history goes through an `ObservationStore`.

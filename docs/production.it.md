@@ -112,6 +112,14 @@ silenzioso. L'[API REST](api.it.md) include:
 Le metriche si possono ricavare dal flusso di log (conteggio per
 `classification`).
 
+Sonde e arresto: `/healthz` risponde finché il processo è attivo; `/readyz`
+legge da ogni storage e controlla la coda del webhook, e altrimenti risponde
+`503` con i controlli falliti, così un load balancer smette di inviare tap a
+una replica il cui database non è raggiungibile. All'arresto (SIGTERM sotto
+uvicorn) l'app consegna gli alert del webhook in coda per al massimo 10
+secondi, poi chiude gli storage; gli alert ancora in coda vengono registrati
+nel log, e il sink di audit conserva comunque ogni alert.
+
 ## Cronologia condivisa del rilevatore
 
 La cronologia per UID del rilevatore passa da un `ObservationStore`.
