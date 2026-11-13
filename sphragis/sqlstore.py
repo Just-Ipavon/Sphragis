@@ -32,7 +32,7 @@ import sqlite3
 import threading
 import time
 
-from .counterstore import TapRecord
+from .counterstore import TapRecord, check_ledger_window, compaction_mark
 from .identity import store_key
 
 
@@ -124,8 +124,10 @@ CREATE TABLE IF NOT EXISTS tap_ledgers (
 
 
 class SqliteCounterStore:
-    def __init__(self, path: str | os.PathLike = "counters.db") -> None:
+    def __init__(self, path: str | os.PathLike = "counters.db",
+                 ledger_window: int | None = None) -> None:
         self._path = str(path)
+        self._window = check_ledger_window(ledger_window)
         secure_db_file(self._path)
         # FULL: an acknowledged floor advance survives a power loss; with
         # NORMAL the last transactions of a WAL can roll back, and the taps
@@ -219,6 +221,12 @@ class SqliteCounterStore:
                     "INSERT INTO counters (uid, counter, updated_at) VALUES (?, ?, ?) "
                     "ON CONFLICT (uid) DO UPDATE SET counter = excluded.counter, "
                     "updated_at = excluded.updated_at", (uid_hex, counter, now))
+                mark = compaction_mark(self._window, counter, since)
+                if mark is not None:            # retention, in the same transaction
+                    conn.execute("UPDATE tap_ledgers SET since = ? WHERE uid = ?",
+                                 (mark, uid_hex))
+                    conn.execute("DELETE FROM tap_counters WHERE uid = ? AND counter <= ?",
+                                 (uid_hex, mark))
             conn.execute("COMMIT")
             return record
         except Exception:

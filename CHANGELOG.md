@@ -14,6 +14,14 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- Tap ledger retention (#56): with `SPHRAGIS_LEDGER_WINDOW=N` (or
+  `ledger_window=N` on the JSON, SQLite and Postgres counter stores) the
+  ledger keeps the counters within N of the floor and summarises older ones
+  by raising the UID's "ledger began" mark, in the same transaction as the
+  tap, so it holds at most N counters per UID. Taps inside the window are
+  classified exactly as before; one at or below the mark is a `REPLAY`
+  (`stale_counter`), so a withheld URL older than N reads is no longer
+  reported as a clone. Unbounded by default.
 - Chained signed events (#71): with `EventChain` (API:
   `SPHRAGIS_EVENT_LOG_ID`) every event is schema 2 and carries its log id,
   a sequence number and the SHA-256 of the previous signed event. The API

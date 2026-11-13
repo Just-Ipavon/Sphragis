@@ -64,6 +64,31 @@ class TapRecord:
         return self.ledger_since is not None and self.counter <= self.ledger_since
 
 
+def check_ledger_window(window: int | None) -> int | None:
+    if window is not None and (isinstance(window, bool) or not isinstance(window, int)
+                               or window < 1):
+        raise ValueError("the ledger window must be a positive number of counter values")
+    return window
+
+
+def compaction_mark(window: int | None, floor: int, since: int | None) -> int | None:
+    """
+    Ledger retention: with a `window`, only the counters within `window` of the
+    floor are kept one by one; everything at or below `floor - window` is
+    summarised by the UID's `since` mark, which only moves up. A counter at or
+    below the mark is then reported as `predates_ledger` (a replay whose
+    earlier submission is no longer on record), exactly as for a store
+    upgraded from a bare floor. Returns the new mark, or None to keep the
+    current one.
+    """
+    if window is None:
+        return None
+    mark = floor - window
+    if mark < 0 or (since is not None and mark <= since):
+        return None
+    return mark
+
+
 @runtime_checkable
 class TapLedger(Protocol):
     """
@@ -108,8 +133,10 @@ class CounterStore:
     `SqliteCounterStore` for anything beyond a single host's tools.
     """
 
-    def __init__(self, path: str | os.PathLike | None = None) -> None:
+    def __init__(self, path: str | os.PathLike | None = None,
+                 ledger_window: int | None = None) -> None:
         self._path = Path(path) if path else None
+        self._window = check_ledger_window(ledger_window)
         self._lock = threading.Lock()
         self._seen: dict[str, int] = {}
         self._taps: dict[str, set[int]] = {}
@@ -268,6 +295,10 @@ class CounterStore:
                 taps[uid_hex].add(counter)
                 if record.fresh:
                     floors[uid_hex] = counter
+                    mark = compaction_mark(self._window, counter, since[uid_hex])
+                    if mark is not None:
+                        taps[uid_hex] = {c for c in taps[uid_hex] if c > mark}
+                        since[uid_hex] = mark
                 dirty = True
             return record, dirty
 

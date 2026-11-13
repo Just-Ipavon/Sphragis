@@ -335,6 +335,26 @@ def test_offline_taps_over_time_are_not_a_rate_anomaly(ledger):
     assert analyzer.analyze(tag.tap(), timestamp=4600).classification == "GENUINE"
 
 
+def test_withheld_tap_older_than_the_window_is_a_replay(tmp_path):
+    tag = _tag()
+    analyzer = _analyzer(tag, SqliteCounterStore(tmp_path / "c.db", ledger_window=5))
+    withheld = tag.tap()                                 # captured, never submitted
+    for i in range(10):
+        assert analyzer.analyze(tag.tap(), timestamp=1000 + i).classification == "GENUINE"
+    late = analyzer.analyze(withheld, timestamp=2000)
+    assert late.classification == "REPLAY"
+    assert "oldest counter the tap ledger keeps" in late.detail
+
+
+def test_withheld_tap_inside_the_window_is_still_a_clone(tmp_path):
+    tag = _tag()
+    analyzer = _analyzer(tag, SqliteCounterStore(tmp_path / "c.db", ledger_window=50))
+    withheld = tag.tap()
+    for i in range(10):
+        analyzer.analyze(tag.tap(), timestamp=1000 + i)
+    assert analyzer.analyze(withheld, timestamp=2000).classification == "CLONE_LIKELY"
+
+
 # --- Ledger and history written in different orders (#62) ---------------------
 
 def _history_store(kind, tmp_path):

@@ -36,6 +36,19 @@ storage aggiornato da un floor semplice registra dove è iniziato il registro di
 ogni UID; i contatori fino a quel punto sono segnalati come `REPLAY`
 (`stale_counter`), perché non si sa se siano già stati inviati.
 
+### Conservazione
+
+Di default il registro conserva ogni contatore mai inviato. Con una finestra
+(`SPHRAGIS_LEDGER_WINDOW=N`, o `ledger_window=N` sugli storage dei contatori)
+conserva uno per uno i contatori entro `N` dal floor, e riassume quelli più
+vecchi spostando lo stesso segno di "inizio del registro" fino a `floor - N`,
+nella stessa transazione del tap. I tap dentro la finestra sono classificati
+esattamente come prima; un contatore pari o inferiore al segno è un `REPLAY`
+(`stale_counter`). Il compromesso: un URL trattenuto più vecchio di `N`
+letture diventa `REPLAY` invece di `CLONE_LIKELY`, quindi scegli `N` sopra il
+numero di letture che una tag può fare mentre un URL catturato viene
+trattenuto. Il registro tiene allora al massimo `N` contatori per UID.
+
 ## Segnali
 
 | Segnale | Peso | Significato |
@@ -44,7 +57,7 @@ ogni UID; i contatori fino a quel punto sono segnalati come `REPLAY`
 | `counter_regression` | 70 | sotto il floor e mai inviato → un secondo dispositivo con il proprio flusso di contatore (clone), o un tap autentico letto e trattenuto (pre-play) |
 | `impossible_velocity` | 60 | un tap nuovo a un lettore mentre un altro lettore ha visto la tag meno di `min_travel_seconds` prima → due tag. Conta ogni osservazione di un lettore autenticato in quella finestra, quindi un tap anonimo in mezzo non nasconde nulla |
 | `large_counter_gap` | 15 | un salto insolitamente grande sopra il floor; debole / informativo |
-| `stale_counter` | 65 | sotto il floor che l'UID aveva quando è iniziato il suo registro (storage aggiornati) |
+| `stale_counter` | 65 | pari o inferiore al contatore più vecchio che il registro conserva per l'UID (storage aggiornati, finestra di conservazione) |
 | `counter_rate` | 40 | più letture non viste dal momento del floor di quante una tag possa produrne (`max_tap_rate`, 25/s, dopo una tolleranza di `rate_slack_seconds`, 2 s, per il jitter): es. +500 in 10 s. Un emulatore o un clone con il contatore impostato, o un URL consegnato molto dopo il suo tap |
 | `prior_divergence` | 35 | un tap nuovo su un UID la cui cronologia contiene già una regressione: il flusso del contatore si è biforcato, quindi può toccare l'uno o l'altro dispositivo |
 | `counter_reordered` | 30 | appena sotto il floor, stesso lettore, pochi istanti dopo: consegna in ordine inverso di due tap rapidi |

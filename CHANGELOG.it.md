@@ -15,6 +15,15 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- Conservazione del registro dei tap (#56): con `SPHRAGIS_LEDGER_WINDOW=N`
+  (o `ledger_window=N` sugli storage dei contatori JSON, SQLite e Postgres) il
+  registro conserva i contatori entro N dal floor e riassume quelli più
+  vecchi alzando il segno di "inizio del registro" dell'UID, nella stessa
+  transazione del tap, quindi tiene al massimo N contatori per UID. I tap
+  dentro la finestra sono classificati esattamente come prima; uno pari o
+  inferiore al segno è un `REPLAY` (`stale_counter`), quindi un URL
+  trattenuto più vecchio di N letture non viene più segnalato come clone.
+  Senza limite di default.
 - Eventi firmati concatenati (#71): con `EventChain` (API:
   `SPHRAGIS_EVENT_LOG_ID`) ogni evento è di schema 2 e porta l'id del log, un
   numero di sequenza e lo SHA-256 dell'evento firmato precedente. L'API

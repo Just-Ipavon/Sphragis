@@ -192,6 +192,7 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | per-IP bucket |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | per-tag bucket |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | impossible-velocity threshold |
+| `SPHRAGIS_LEDGER_WINDOW` | none (keep all) | keep the last N counter values per UID in the tap ledger ([retention](clone-detection.md#retention)) |
 | `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classifications that raise an alert |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | largest accepted request body |
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |
