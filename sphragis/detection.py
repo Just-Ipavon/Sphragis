@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .backends import Provenance
+from .identity import store_key
 from .observations import MemoryObservationStore, Observation, ObservationStore
 
 
@@ -123,7 +124,7 @@ class CloneDetector:
         self._store: ObservationStore = store or MemoryObservationStore()
 
     def history(self, uid_hex: str) -> list[Observation]:
-        return self._store.history(uid_hex.upper())
+        return self._store.history(store_key(uid_hex))
 
     def analyze(
         self,
@@ -133,7 +134,7 @@ class CloneDetector:
         reader_id: str | None = None,
         provenance: Provenance | None = None,
     ) -> DetectionResult:
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time() if timestamp is None else timestamp
         # Read the prior history and record this tap in one atomic step, so
         # concurrent taps for the same UID are scored against each other.
@@ -179,7 +180,7 @@ class CloneDetector:
         ledger (see `assess_stale`), so only the history signals are scored
         here.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time() if timestamp is None else timestamp
         # A fresh tap is never a fork, whatever its place in the history: two
         # concurrent fresh taps can be appended in the opposite order to the
@@ -207,7 +208,7 @@ class CloneDetector:
         floor, at the same reader that set the floor moments ago, is two quick
         taps delivered out of order: weak, and kept out of the history.
         """
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         now = time.time() if timestamp is None else timestamp
         top = _floor_observation(self._store.history(uid_hex), floor)
         if (reader_id is not None and top is not None

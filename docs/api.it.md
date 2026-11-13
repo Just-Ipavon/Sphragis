@@ -160,7 +160,11 @@ Tieni il sink SQLite o Postgres come archivio di riferimento.
   dell'header, in ordine, e il client è l'hop non fidato più a destra, quindi
   un proxy che aggiunge la propria riga (HAProxy `option forwardfor`) non può
   essere scavalcato da una riga inviata dal client. I client IPv6 sono limitati
-  per /64.
+  per /64. Gli hop possono essere scritti `ip`, `ip:porta` (Azure Application
+  Gateway), `[v6]` o `[v6]:porta`. Dietro un socket Unix (uvicorn `--uds`) il
+  peer non ha indirizzo: aggiungi `unix` a `SPHRAGIS_TRUSTED_PROXIES`,
+  altrimenti tutti i client condividono un solo bucket (l'API lo segnala una
+  volta nel log).
 - Il limite per IP e un tetto al body (`SPHRAGIS_MAX_BODY_BYTES`, 8 KiB) si
   applicano prima di interpretare la richiesta: i body troppo grandi ricevono
   `413` senza essere letti per intero, e un JSON non valido conta nel limite
@@ -191,7 +195,7 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_DB_URL` | nessuno | URL `postgresql://`; sostituisce SQLite per più host (richiede `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | vuoto | Contesto di diversificazione AN10922 |
 | `SPHRAGIS_READER_TOKENS` | nessuno | `lettore=sha256hex,…` |
-| `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP o CIDR dei proxy autorizzati a impostare `X-Forwarded-For` |
+| `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP o CIDR dei proxy (o `unix` per un socket Unix) autorizzati a impostare `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | bucket per IP |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | bucket per tag |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | soglia di velocità impossibile |
