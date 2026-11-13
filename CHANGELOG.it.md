@@ -5,6 +5,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ### Corretto
 
 - Due tap autentici dello stesso tag elaborati in contemporanea non rendono
@@ -16,16 +24,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   aggiunta sul posto alle tabelle SQLite e Postgres), e le righe nuove non
   vengono mai prese per una biforcazione; le righe della 2.0.0 sono ancora
   giudicate dall'ordine (#62).
-### Sicurezza
-
-- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
-  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
-  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
-  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
-  tutta a zero. `--allow-known-uid` non scavalca il controllo.
-
-### Corretto
-
 - Storage SQLite (#65): `:memory:` viene rifiutato con un errore chiaro invece
   di fallire con "no such table" alla prima richiesta servita da un altro
   thread; `close()` ora chiude le connessioni di tutti i thread (aperte con

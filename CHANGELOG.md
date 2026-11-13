@@ -5,6 +5,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Fixed
 
 - Two genuine taps of one tag processed concurrently no longer make every
@@ -15,15 +22,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   `regression` column added in place to the SQLite and Postgres
   observation tables), and fresh rows are never taken for a fork; rows from
   2.0.0 are still judged by order (#62).
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
-
-### Fixed
-
 - SQLite stores (#65): `:memory:` is refused with a clear error instead of
   failing with "no such table" on the first request served by another
   thread; `close()` now closes the connections of every thread (they are
