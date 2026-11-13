@@ -22,8 +22,9 @@ verifies the tap and either
 `AuthenticTap.identity` keys every per-tag store (ledger, history, rate limit,
 pseudonymized logs), so it must be stable for a chip and must not collide with
 identities from another backend sharing the same stores. The NTAG 424 DNA
-backends use the bare UID in upper-case hex, as every store already holds;
-other backends should prefix theirs (e.g. `"fido2:<credential id>"`).
+backends use the bare UID in hex, which the stores upper-case
+(`sphragis.identity.store_key`); every other identity is opaque and keeps its
+case, so other backends should prefix theirs (e.g. `"fido2:<credential id>"`).
 
 Backends shipped with the engine:
 - `Ntag424SunBackend` (`sphragis.verifier`): plain SUN, PICCData + SDMMAC.

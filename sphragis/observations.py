@@ -28,6 +28,8 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from .identity import store_key
+
 
 @dataclass
 class Observation:
@@ -57,11 +59,11 @@ class MemoryObservationStore:
 
     def history(self, uid_hex: str) -> list[Observation]:
         with self._lock:
-            return list(self._history.get(uid_hex.upper(), []))
+            return list(self._history.get(store_key(uid_hex), []))
 
     def observe(self, uid_hex: str, obs: Observation, limit: int) -> list[Observation]:
         with self._lock:
-            hist = self._history.setdefault(uid_hex.upper(), [])
+            hist = self._history.setdefault(store_key(uid_hex), [])
             prior = list(hist)
             hist.append(obs)
             if len(hist) > limit:
@@ -123,10 +125,10 @@ class SqliteObservationStore:
                 for c, t, r, b, a, k in rows]
 
     def history(self, uid_hex: str) -> list[Observation]:
-        return self._rows(self._connection(), uid_hex.upper())
+        return self._rows(self._connection(), store_key(uid_hex))
 
     def observe(self, uid_hex: str, obs: Observation, limit: int) -> list[Observation]:
-        uid_hex = uid_hex.upper()
+        uid_hex = store_key(uid_hex)
         conn = self._connection()
         conn.execute("BEGIN IMMEDIATE")
         try:

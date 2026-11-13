@@ -78,6 +78,13 @@ def test_get_tap_genuine_minimal_response():
     assert r.headers["x-content-type-options"] == "nosniff"
 
 
+@pytest.mark.parametrize("extra", ["&next=/a?b=1", "&v=1:2", "&back=https://example.com/x?y=1",
+                                   "&utm=x"])
+def test_extra_parameters_with_url_characters_stay_genuine(extra):
+    tag, client, _ = _rig()
+    assert client.get(_path(tag.tap()) + extra).json()["verdict"] == "GENUINE"
+
+
 def test_forged_and_malformed_are_indistinguishable_publicly():
     tag, client, _ = _rig()
     forged = client.get(_path(KeylessAttacker.forge_mac(tag.tap()))).json()
