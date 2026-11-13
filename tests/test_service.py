@@ -354,8 +354,9 @@ def test_webhook_refuses_redirects(status):
     with pytest.raises(Exception):
         sink.emit(alert)
     assert dispatch(alert, [sink]) == 0                # not counted as delivered
-    hook.shutdown()
-    target.shutdown()
+    for server in (hook, target):
+        server.shutdown()
+        server.server_close()
     assert hook_hits and not target_hits               # never followed
 
 

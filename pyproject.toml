@@ -52,3 +52,10 @@ packages = ["sphragis", "sphragis.api", "sphragis.transport"]
 # namespace. The engine requires pycryptodome and refuses PyCrypto at import
 # time (sphragis/_cryptocheck.py), so the finding does not apply.
 skips = ["B413"]
+
+[tool.pytest.ini_options]
+# A leaked connection, socket or file is a bug (#65), not noise.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]

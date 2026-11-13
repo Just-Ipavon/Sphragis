@@ -108,21 +108,30 @@ class SqliteAlertSink:
 
     def __init__(self, path: str | os.PathLike = "alerts.db") -> None:
         self._path = str(path)
-        self._local = threading.local()
-        from .sqlstore import PROVENANCE_COLUMNS, add_missing_columns, secure_db_file
+        from .sqlstore import (
+            PROVENANCE_COLUMNS,
+            ThreadConnections,
+            add_missing_columns,
+            secure_db_file,
+        )
         secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, (
+            "PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000"))
         conn = self._connection()
         conn.executescript(_SCHEMA)
         add_missing_columns(conn, "alerts", PROVENANCE_COLUMNS)
 
     def _connection(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self._path, isolation_level=None, timeout=30.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            self._local.conn = conn
-        return conn
+        return self._conns.get()
+
+    def close(self) -> None:
+        self._conns.close()
+
+    def __enter__(self) -> "SqliteAlertSink":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def emit(self, alert: Alert) -> None:
         self._connection().execute(
@@ -228,9 +237,13 @@ class WebhookAlertSink:
                 "X-Sphragis-Signature": sign_webhook(self._secret, ts, body),
             },
         )
-        with _opener.open(req, timeout=self._timeout) as resp:  # noqa: S310
-            if not 200 <= resp.status < 300:
-                raise RuntimeError(f"webhook answered HTTP {resp.status}")
+        try:
+            with _opener.open(req, timeout=self._timeout) as resp:  # noqa: S310
+                if not 200 <= resp.status < 300:
+                    raise RuntimeError(f"webhook answered HTTP {resp.status}")
+        except urllib.error.HTTPError as exc:
+            exc.close()                  # it holds the response and its socket
+            raise
 
 
 class BackgroundAlertSink:

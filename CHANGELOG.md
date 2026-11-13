@@ -14,6 +14,15 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- SQLite stores (#65): `:memory:` is refused with a clear error instead of
+  failing with "no such table" on the first request served by another
+  thread; `close()` now closes the connections of every thread (they are
+  opened with `check_same_thread=False`), and `SqliteAlertSink` gains
+  `close()` and context-manager support. `SqliteKeyInventory` closes its
+  connection after every call, the Postgres stores drop and close a broken
+  connection when they replace it, and a refused webhook redirect no longer
+  leaves the response socket open. The test suite now treats
+  `ResourceWarning` as an error.
 - Per-IP rate limiting no longer collapses to one bucket behind a Unix
   socket or a proxy that writes `ip:port`: forwarded hops may be `ip:port`,
   `[v6]` or `[v6]:port`, `unix` in `SPHRAGIS_TRUSTED_PROXIES` trusts the

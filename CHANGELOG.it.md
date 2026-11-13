@@ -15,6 +15,15 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Corretto
 
+- Storage SQLite (#65): `:memory:` viene rifiutato con un errore chiaro invece
+  di fallire con "no such table" alla prima richiesta servita da un altro
+  thread; `close()` ora chiude le connessioni di tutti i thread (aperte con
+  `check_same_thread=False`), e `SqliteAlertSink` ottiene `close()` e il
+  supporto come context manager. `SqliteKeyInventory` chiude la connessione
+  dopo ogni chiamata, gli storage Postgres scartano e chiudono una
+  connessione rotta quando la sostituiscono, e un redirect di webhook
+  rifiutato non lascia più aperto il socket della risposta. La suite di test
+  ora tratta `ResourceWarning` come errore.
 - Il rate limit per IP non si riduce più a un solo bucket dietro un socket
   Unix o un proxy che scrive `ip:porta`: gli hop inoltrati possono essere
   `ip:porta`, `[v6]` o `[v6]:porta`, `unix` in `SPHRAGIS_TRUSTED_PROXIES`
