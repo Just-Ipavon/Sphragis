@@ -356,8 +356,9 @@ def test_webhook_refuses_redirects(status):
     with pytest.raises(urllib.error.HTTPError):
         sink.emit(alert)
     assert dispatch(alert, [sink]) == 0                # not counted as delivered
-    hook.shutdown()
-    target.shutdown()
+    for server in (hook, target):
+        server.shutdown()
+        server.server_close()
     assert hook_hits and not target_hits               # never followed
 
 
@@ -370,6 +371,8 @@ def test_verify_webhook():
     assert not verify_webhook(secret, "1000", sig, body, now=1000 + 301)   # stale
     assert not verify_webhook(secret, "1000", sig.replace("a", "b"), body, now=1000)
     assert not verify_webhook(secret, "x", sig, body, now=1000)
+    assert not verify_webhook(secret, "1000", "sha256=\u00e9", body, now=1000)
+    assert not verify_webhook(secret, "1000", None, body, now=1000)
 
 
 def test_background_sink_does_not_block_and_delivers():

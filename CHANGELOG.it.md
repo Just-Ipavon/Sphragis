@@ -19,6 +19,76 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   correttezza di ruff (`F`, `E9`, `B`, corrette in tutto il codice).
   L'immagine Postgres del servizio è fissata per digest e il suo job gira
   su Python 3.10 (la più vecchia supportata); Dependabot controlla anche `requirements/`.
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
+### Corretto
+
+- La CLI, l'emulatore e i tool non terminano più con un traceback su input
+  errato (#68): `emulate --uid` deve essere di 7 byte esadecimali e
+  `--counter`/`--taps` restano nel contatore a 24 bit, come errori d'uso;
+  `verify --store` con un file vuoto o corrotto stampa un errore.
+  `EmulatedTag` rifiuta un contatore fuori intervallo, si ferma al limite di
+  24 bit come una tag reale, e aggiunge i parametri SUN con `&` a un
+  `base_url` che ha già una query. `tools/provision.py` e `tools/rekey.py`
+  riportano gli errori di lettore, APDU e segreti su una riga (uscita 2);
+  l'esempio di provision senza `--port` è corretto. Il controllo di velocità
+  impossibile ignora la cronologia registrata dopo il tap (salti
+  dell'orologio, sfasamento tra host).
+- Due tap autentici dello stesso tag elaborati in contemporanea non rendono
+  più `SUSPICIOUS` (`prior_divergence`) tutti i tap successivi. Il registro e
+  la cronologia del rilevatore sono scritti in due passi, quindi la
+  cronologia poteva ricevere i due contatori nuovi in ordine inverso e
+  leggerlo come una biforcazione. Ogni riga della cronologia ora registra se
+  il registro l'ha trovata nuova o in regressione (colonna `regression`
+  aggiunta sul posto alle tabelle SQLite e Postgres), e le righe nuove non
+  vengono mai prese per una biforcazione; le righe della 2.0.0 sono ancora
+  giudicate dall'ordine (#62).
+- Storage SQLite (#65): `:memory:` viene rifiutato con un errore chiaro invece
+  di fallire con "no such table" alla prima richiesta servita da un altro
+  thread; `close()` ora chiude le connessioni di tutti i thread (aperte con
+  `check_same_thread=False`), e `SqliteAlertSink` ottiene `close()` e il
+  supporto come context manager. `SqliteKeyInventory` chiude la connessione
+  dopo ogni chiamata, gli storage Postgres scartano e chiudono una
+  connessione rotta quando la sostituiscono, e un redirect di webhook
+  rifiutato non lascia più aperto il socket della risposta. La suite di test
+  ora tratta `ResourceWarning` come errore.
+- Il rate limit per IP non si riduce più a un solo bucket dietro un socket
+  Unix o un proxy che scrive `ip:porta`: gli hop inoltrati possono essere
+  `ip:porta`, `[v6]` o `[v6]:porta`, `unix` in `SPHRAGIS_TRUSTED_PROXIES`
+  rende fidato il proxy davanti a un socket Unix, e l'API registra un avviso
+  quando il peer non ha indirizzo e nulla indica quello del client (#66).
+- L'input malformato non sfugge più con un tipo di eccezione inatteso (#64):
+  un `clientDataJSON` WebAuthn il cui `origin` o `type` non è una stringa dà
+  `ERROR` invece di un `TypeError` che arriva al chiamante; `cbor_decode`
+  solleva `EventError` per una chiave di mappa che non è intero, testo o
+  byte, e per annidamenti oltre gli 8 livelli (prima arrivava a
+  `RecursionError` prima del controllo della firma); `verify_webhook`
+  restituisce `False` per un header di firma non ASCII o assente.
+- Un tap autentico con un parametro di query aggiuntivo contenente `?` o `:`
+  (`&next=/a?b=1`, `v:1&…`) veniva letto come URL e diventava `ERROR`. Una
+  query senza URL ora si riconosce da un `=` prima del primo `?` o `#`, e
+  `/t` passa la sua query in modo esplicito (#67).
+- Il `CounterStore` JSON rilegge il file condiviso anche per `last_counter`,
+  `is_fresh` e `seen`, così un'istanza non riporta più una soglia che un altro
+  processo ha già superato (#67).
+- `check_and_advance` registra il contatore anche nel registro dei tap di un
+  UID, una volta che questo è iniziato, così uno storage usato sia da
+  `Verifier` sia da `TagAnalyzer` valuta un replay esatto come `REPLAY` e non
+  come regressione del contatore (#67).
+- Gli storage non convertono più in maiuscolo ogni identità: solo gli UID
+  esadecimali senza prefisso (NTAG 424 DNA), mentre le identità con prefisso
+  come `fido2:<base64url>` conservano maiuscole e minuscole, così due
+  credenziali WebAuthn i cui id differiscono solo per le maiuscole non
+  condividono più contatore e cronologia (#63). Aggiornamento: i dati NTAG non
+  cambiano. Le righe che la 2.0.0 ha salvato per un'identità non esadecimale
+  erano in maiuscolo; una credenziale con lettere minuscole nell'id inizia una
+  nuova cronologia con il suo id reale.
 
 ## 2.0.0 — 2026-10-18
 

@@ -458,6 +458,46 @@ def test_shared_meta_key_is_no_proof_of_identity():
     assert clone.key_changes == 0
 
 
+def _meta_only_clone(genuine, scheme):
+    """Factory slot 0 claiming the shared meta_read in slot 2, nothing else."""
+    clone = _clone_of(genuine)
+    clone.keys[2], clone.key_versions[2] = scheme.meta_read_key, 0x01
+    return clone
+
+
+@pytest.mark.parametrize("allow_known_uid", [False, True])
+def test_reset_never_sends_the_shared_meta_key(allow_known_uid):
+    # Back to factory, ChangeKey of slot 2 sends 0 XOR meta_read in a session
+    # keyed by the public zero key: the device would learn the fleet-wide key.
+    genuine, scheme = _sun_tag(), _scheme()
+    _rekey(genuine, scheme)
+    clone = _meta_only_clone(genuine, scheme)
+    with pytest.raises(KeyProvisionError, match="public zero key"):
+        _rekey(clone, FactoryKeys(), known=[scheme], inventory=_inventory(genuine),
+               allow_known_uid=allow_known_uid)
+    assert clone.key_changes == 0
+
+
+def test_rotation_never_sends_the_shared_meta_key_under_factory_slot0():
+    genuine, scheme = _sun_tag(), _scheme()
+    _rekey(genuine, scheme)
+    clone = _meta_only_clone(genuine, scheme)
+    with pytest.raises(KeyProvisionError, match="public zero key"):
+        _rekey(clone, _scheme(version=0x02), known=[scheme],
+               inventory=MemoryKeyInventory())              # UID unknown here
+    assert clone.key_changes == 0
+
+
+def test_interrupted_reset_still_completes():
+    # Slots 1-4 go back first, so a cut reset leaves slot 0 keyed: it proves.
+    tag, scheme = _sun_tag(), _scheme()
+    _rekey(tag, scheme)
+    with pytest.raises(ConnectionError):
+        _rekey(_CutAfter(tag, 2), FactoryKeys(), known=[scheme])
+    report = _rekey(tag, FactoryKeys(), known=[scheme])
+    assert report.verified and tag.keys == [ZERO] * 5
+
+
 def test_interrupted_run_is_resumed_on_proof_of_possession():
     tag, scheme = _sun_tag(), _scheme()
     with pytest.raises(ConnectionError):

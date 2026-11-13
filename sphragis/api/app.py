@@ -52,7 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..ratelimit import RateLimiter
 from ..service import VerificationOutcome, VerificationService
-from .settings import parse_trusted_proxies
+from .settings import UNIX_SOCKET, parse_trusted_proxies
 
 PUBLIC_MESSAGES = {
     "GENUINE": "Authentic tag.",
@@ -103,6 +103,8 @@ class RateLimited(Exception):
 DEFAULT_MAX_BODY_BYTES = 8 * 1024
 LIMITED_PATHS = frozenset({"/t", "/v1/verify"})
 
+logger = logging.getLogger("sphragis.api")
+
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -115,6 +117,20 @@ def _address(text: str) -> Address | None:
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
         return addr.ipv4_mapped
     return addr
+
+
+def _hop_address(text: str) -> Address | None:
+    """An address as proxies write it: `ip`, `ip:port`, `[v6]` or `[v6]:port`."""
+    text = text.strip()
+    if text.startswith("["):
+        host, bracket, rest = text[1:].partition("]")
+        if not bracket or (rest and not (rest.startswith(":") and rest[1:].isdigit())):
+            return None
+        return _address(host)
+    host, colon, port = text.partition(":")
+    if colon and ":" not in port and port.isdigit():      # IPv4 with a port
+        return _address(host)
+    return _address(text)
 
 
 def bucket_key(addr: Address) -> str:
@@ -134,23 +150,29 @@ def client_address(peer: str | None, forwarded: list[str],
     proxy (left-most entries are client-controlled and trivially spoofed).
     """
     trusted = tuple(trusted)
+    networks = tuple(t for t in trusted if not isinstance(t, str))
 
     def is_trusted(addr: Address) -> bool:
-        return any(addr in net for net in trusted)
+        return any(addr in net for net in networks)
 
     peer_addr = _address(peer or "")
     if peer_addr is None:
-        return peer or "unknown"
-    if not is_trusted(peer_addr):
+        # A Unix socket: only a proxy trusted as `unix` can say who the client is.
+        if UNIX_SOCKET not in trusted:
+            return peer or "unknown"
+        fallback = peer or "unknown"
+    elif not is_trusted(peer_addr):
         return bucket_key(peer_addr)
+    else:
+        fallback = bucket_key(peer_addr)
     hops = [h for line in forwarded for h in line.split(",") if h.strip()]
     for hop in reversed(hops):
-        addr = _address(hop)
+        addr = _hop_address(hop)
         if addr is None:          # garbage where our proxy should have written
             break                 # an address: fall back to the proxy itself
         if not is_trusted(addr):
             return bucket_key(addr)
-    return bucket_key(peer_addr)
+    return fallback
 
 
 def client_ip(request: Request, trusted_proxies: Iterable[Network | str]) -> str:
@@ -189,6 +211,7 @@ class RequestGuard:
         self._limiter = ip_limiter
         self._trusted = trusted_proxies
         self._max = max_body_bytes
+        self._warned = False
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -197,6 +220,12 @@ class RequestGuard:
             headers = [(k.decode("latin-1").lower(), v.decode("latin-1"))
                        for k, v in scope.get("headers", [])]
             peer = scope.get("client")
+            if not peer and UNIX_SOCKET not in self._trusted and not self._warned:
+                self._warned = True
+                logger.warning(
+                    "per-IP rate limiting sees no client address (Unix socket?): every "
+                    "client shares one bucket. Add 'unix' to SPHRAGIS_TRUSTED_PROXIES "
+                    "so the proxy's X-Forwarded-For is used")
             ip = client_address(peer[0] if peer else None,
                                 [v for k, v in headers if k == "x-forwarded-for"],
                                 self._trusted)
@@ -375,7 +404,7 @@ def create_app(
             return dict(PREVIEW_BODY)
         # The raw query string goes to the parser untouched, so duplicated
         # parameters and encrypted-file-data markers are still detected.
-        outcome = service.verify(request.url.query, reader_id=reader)
+        outcome = service.verify("?" + request.url.query, reader_id=reader)
         return respond(outcome, reader)
 
     @app.post("/v1/verify")

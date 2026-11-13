@@ -333,3 +333,58 @@ def test_offline_taps_over_time_are_not_a_rate_anomaly(ledger):
     analyzer.analyze(tag.tap(), timestamp=1000)
     tag.read_counter += 500                               # +500 over an hour
     assert analyzer.analyze(tag.tap(), timestamp=4600).classification == "GENUINE"
+
+
+# --- Ledger and history written in different orders (#62) ---------------------
+
+def _history_store(kind, tmp_path):
+    from sphragis.observations import MemoryObservationStore, SqliteObservationStore
+    return (SqliteObservationStore(tmp_path / "obs.db") if kind == "sqlite"
+            else MemoryObservationStore())
+
+
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+def test_fresh_taps_appended_out_of_order_are_not_a_fork(kind, tmp_path):
+    # The ledger accepted 5 then 6, but the history received 6 then 5.
+    detector = CloneDetector(store=_history_store(kind, tmp_path))
+    detector.assess_fresh("04AA", 6, timestamp=1000.0, floor_before=4)
+    detector.assess_fresh("04AA", 5, timestamp=1000.0, floor_before=4)
+    later = detector.assess_fresh("04AA", 7, timestamp=1100.0, floor_before=6)
+    assert later.risk_level.value == "GENUINE", later.detail
+
+
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+def test_a_ledger_regression_still_marks_the_fork(kind, tmp_path):
+    detector = CloneDetector(store=_history_store(kind, tmp_path))
+    detector.assess_fresh("04AA", 6, timestamp=1000.0, floor_before=5)
+    detector.assess_stale("04AA", 2, floor=6, timestamp=1100.0)
+    later = detector.assess_fresh("04AA", 7, timestamp=1200.0, floor_before=6)
+    assert "prior_divergence" in {s.name for s in later.signals}
+
+
+def test_concurrent_genuine_taps_never_taint_the_tag(tmp_path):
+    from sphragis.observations import SqliteObservationStore
+    both_fresh = 0
+    for trial in range(60):
+        tag = _tag()
+        store = SqliteCounterStore(tmp_path / f"c{trial}.db")
+        history = SqliteObservationStore(tmp_path / f"o{trial}.db")
+        analyzer = TagAnalyzer(StaticKeys(tag.meta_read_key, tag.file_read_key),
+                               detector=CloneDetector(store=history), store=store)
+        urls, barrier, results = [tag.tap(), tag.tap()], threading.Barrier(2), []
+
+        def submit(url, barrier=barrier, results=results, analyzer=analyzer):
+            barrier.wait()
+            results.append(analyzer.analyze(url, timestamp=1000).classification)
+
+        threads = [threading.Thread(target=submit, args=(u,)) for u in urls]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # A pair the ledger received in reverse order is a regression there,
+        # judged elsewhere; the bug was a pair accepted as fresh tainting the tag.
+        if results == ["GENUINE", "GENUINE"]:
+            both_fresh += 1
+            assert analyzer.analyze(tag.tap(), timestamp=1100).classification == "GENUINE"
+    assert both_fresh

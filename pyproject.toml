@@ -59,3 +59,10 @@ line-length = 100
 [tool.ruff.lint]
 # Correctness only: undefined or unused names, syntax errors, likely bugs.
 select = ["F", "E9", "B"]
+
+[tool.pytest.ini_options]
+# A leaked connection, socket or file is a bug (#65), not noise.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
