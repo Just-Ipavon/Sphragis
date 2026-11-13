@@ -96,7 +96,12 @@ un chip contraffatto) riceverebbe le chiavi dell'UID che dichiara, quindi
   deve autenticarsi con esse, e conta solo uno slot specifico dell'UID (0, 1,
   3, 4): lo slot 2 contiene `meta_read`, condivisa, che non prova nulla
   sull'UID. È ciò che permette di riprendere in sicurezza un'esecuzione
-  interrotta (lo slot 1 cambia per primo).
+  interrotta (lo slot 1 cambia per primo). Il controllo vale anche per un
+  ripristino: con lo slot 0 su chiavi di fabbrica, ChangeKey di uno slot già
+  cambiato invia la sua vecchia chiave sotto la chiave pubblica tutta a zero
+  (verso le chiavi di fabbrica, la vecchia chiave in chiaro), quindi una tag il
+  cui unico slot non di fabbrica è il 2 viene rifiutata anche con
+  `--to-factory` o `--allow-known-uid`.
 - **Conferma.** UID e piano vengono mostrati; senza `--uid` l'operatore digita
   l'UID prima di qualunque scrittura.
 

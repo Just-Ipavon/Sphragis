@@ -3,6 +3,16 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di
