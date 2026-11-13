@@ -5,6 +5,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Added
 
 - Tap ledger retention (#56): with `SPHRAGIS_LEDGER_WINDOW=N` (or
@@ -15,15 +22,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   classified exactly as before; one at or below the mark is a `REPLAY`
   (`stale_counter`), so a withheld URL older than N reads is no longer
   reported as a clone. Unbounded by default.
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
-
-### Added
-
 - Chained signed events (#71): with `EventChain` (API:
   `SPHRAGIS_EVENT_LOG_ID`) every event is schema 2 and carries its log id,
   a sequence number and the SHA-256 of the previous signed event. The API

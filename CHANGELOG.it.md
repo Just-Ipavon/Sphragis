@@ -5,6 +5,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ### Aggiunto
 
 - Conservazione del registro dei tap (#56): con `SPHRAGIS_LEDGER_WINDOW=N`
@@ -16,16 +24,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   inferiore al segno è un `REPLAY` (`stale_counter`), quindi un URL
   trattenuto più vecchio di N letture non viene più segnalato come clone.
   Senza limite di default.
-### Sicurezza
-
-- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
-  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
-  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
-  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
-  tutta a zero. `--allow-known-uid` non scavalca il controllo.
-
-### Aggiunto
-
 - Eventi firmati concatenati (#71): con `EventChain` (API:
   `SPHRAGIS_EVENT_LOG_ID`) ogni evento è di schema 2 e porta l'id del log, un
   numero di sequenza e lo SHA-256 dell'evento firmato precedente. L'API
