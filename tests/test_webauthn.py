@@ -209,6 +209,25 @@ def test_unknown_credentials_and_malformed_input(rig):
         assert service.verify(junk).result.classification == "ERROR"
 
 
+@pytest.mark.parametrize("field,value", [("origin", ["x"]), ("origin", {"a": 1}),
+                                         ("type", ["webauthn.get"]), ("origin", None)])
+def test_client_data_fields_of_the_wrong_type_are_errors(rig, field, value):
+    creds, challenges, service = rig
+    card = SoftAuthenticator()
+    card.register(creds)
+    doc = json.loads(card.assert_(challenges.issue()))
+    pad = "=" * (-len(doc["response"]["clientDataJSON"]) % 4)
+    client = json.loads(base64.urlsafe_b64decode(doc["response"]["clientDataJSON"] + pad))
+    client[field] = value
+    doc["response"]["clientDataJSON"] = b64u(json.dumps(client).encode())
+    assert service.verify(json.dumps(doc)).result.classification == "ERROR"
+
+
+def test_cose_key_with_an_unhashable_map_key_is_a_value_error():
+    with pytest.raises(ValueError, match="invalid COSE key"):
+        RegisteredCredential.from_cose_key(b"id", bytes.fromhex("a18000"))
+
+
 def test_sun_taps_and_assertions_share_one_pipeline():
     tag = EmulatedTag(uid=os.urandom(7), meta_read_key=os.urandom(16),
                       file_read_key=os.urandom(16))

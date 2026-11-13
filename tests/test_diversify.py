@@ -57,7 +57,7 @@ def test_short_input_uses_two_block_padding(length):
     # Explicit AN10922 construction: pad D to 32 bytes, XOR K2, CBC-MAC.
     d = b"\x01" + m + b"\x80" + bytes(30 - length)
     k2 = _dbl(_dbl(AES.new(key, AES.MODE_ECB).encrypt(bytes(16))))
-    d = d[:16] + bytes(a ^ b for a, b in zip(d[16:], k2))
+    d = d[:16] + bytes(a ^ b for a, b in zip(d[16:], k2, strict=True))
     expected = AES.new(key, AES.MODE_CBC, bytes(16)).encrypt(d)[16:]
     assert diversify_key(key, m) == expected
     assert diversify_key(key, m) != _standard_cmac(key, m)

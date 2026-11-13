@@ -150,3 +150,29 @@ def test_tap_verify_enc_with_fake_picc(capsys):
 def test_tap_verify_enc_refuses_emulator():
     with pytest.raises(SystemExit):
         _load("tap_verify").main(["--reader", "emulator", "--enc"])
+
+
+class _Broken(ApduTransport):
+    def __init__(self, exc):
+        self.exc = exc
+
+    def transceive(self, apdu):
+        raise self.exc
+
+
+@pytest.mark.parametrize("name,extra", [
+    ("provision", ["--base-url", "https://example.com/t", "--yes", "--uid", "04" * 7]),
+    ("rekey", ["--secrets-dir", "/nonexistent", "--inventory", "/tmp/x.db", "--yes",
+               "--uid", "04" * 7]),
+])
+def test_tools_report_reader_errors_without_a_traceback(name, extra, capsys, tmp_path):
+    from sphragis.transport import TransportError
+    tool = _load(name)
+    tool.reader_factory = lambda args: (lambda: _Broken(TransportError("reader gone")))
+    if name == "rekey":
+        from sphragis.keyprov import DiversifiedTagKeys
+        tool.scheme_from_args = lambda args: DiversifiedTagKeys(
+            bytes(range(16)), bytes(range(1, 17)), bytes(range(2, 18)))
+        extra = [a.replace("/tmp/x.db", str(tmp_path / "inv.db")) for a in extra]
+    assert tool.main(["--reader", "chameleon", *extra]) == 2
+    assert "reader gone" in capsys.readouterr().out

@@ -121,7 +121,7 @@ def change_key(session: Session, key_no: int, new_key: bytes, version: int, *,
     if key_no != auth_key_no:
         if old_key is None or len(old_key) != 16:
             raise ValueError("changing another key needs its current value")
-        data = (bytes(a ^ b for a, b in zip(new_key, old_key))
+        data = (bytes(a ^ b for a, b in zip(new_key, old_key, strict=True))
                 + bytes([version]) + crc32nk(new_key))
         session.send_full(INS_CHANGE_KEY, header, data)
         return True
@@ -597,6 +597,21 @@ def rekey_tag(transport, target: KeyScheme, known: Sequence[KeyScheme] = (), *,
     if inventory is not None:
         report.inventory = inventory.state(report.uid)
         say(f"inventory    : {report.inventory or 'unknown UID'}")
+    # ChangeKey of slots 1-4 sends new XOR old inside the slot 0 session. With
+    # slot 0 on the public factory key anyone can decrypt that session, and
+    # with a factory target `new` is zero: the old key itself would leave the
+    # station. Slot 2 is the shared meta_read and proves nothing, so a tag
+    # claiming it alone (a state this tool never leaves, since slot 1 changes
+    # first) is refused whatever the inventory says.
+    leaks_old = _is_factory(slot0) and any(
+        not _is_factory(current[n]) for n in report.planned)
+    if leaks_old and not report.proven:
+        raise KeyProvisionError(
+            "slot 0 is on factory keys and no UID-specific slot proves a key of "
+            "its own, yet slots "
+            + ", ".join(str(n) for n in report.planned if not _is_factory(current[n]))
+            + " claim non-factory keys: changing them would send those keys "
+            "under the public zero key. Refusing")
     if (sends_secrets and not report.proven
             and report.inventory in (INVENTORY_KEYING, INVENTORY_KEYED)):
         if not allow_known_uid:

@@ -26,7 +26,7 @@ from sphragis import (  # noqa: E402
     verify_event,
 )
 from sphragis.emulator import EmulatedTag  # noqa: E402
-from sphragis.events import EVENT_CONTENT_TYPE, cbor_decode, cbor_encode  # noqa: E402
+from sphragis.events import cbor_decode, cbor_encode  # noqa: E402
 
 SECRET = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
 
@@ -93,6 +93,20 @@ def test_cbor_encoding_matches_rfc_8949(value, encoded):
 def test_cbor_decoder_is_strict(bad):
     with pytest.raises(EventError):
         cbor_decode(bytes.fromhex(bad))
+
+
+@pytest.mark.parametrize("bad", [
+    bytes.fromhex("a18000"),           # an array as a map key (unhashable)
+    bytes.fromhex("81") * 2000 + b"\x00",   # nested far beyond any real event
+    bytes.fromhex("81") * 9 + b"\x00",      # one level past the limit
+])
+def test_cbor_decoder_refuses_odd_keys_and_deep_nesting(bad):
+    with pytest.raises(EventError):
+        cbor_decode(bad)
+
+
+def test_cbor_nesting_up_to_the_limit_decodes():
+    assert cbor_decode(bytes.fromhex("81") * 8 + b"\x00") is not None
 
 
 # --- Signing and verification ------------------------------------------------------
