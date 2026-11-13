@@ -61,10 +61,12 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     analyzer = TagAnalyzer(backends=backends, detector=detector, store=floor)
 
     sinks: list[AlertSink] = [LogAlertSink(), audit]
+    background = None
     if settings.webhook_url:
         # Off the request path: a slow incident endpoint never delays a tap.
-        sinks.append(BackgroundAlertSink(
-            WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook"))))
+        background = BackgroundAlertSink(
+            WebhookAlertSink(settings.webhook_url, secrets.get_key("webhook")))
+        sinks.append(background)
 
     pseudo = UidPseudonymizer(
         None if settings.log_uid == "plain" else secrets.get_key("log_pseudonym")
@@ -91,4 +93,26 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         throttle_retry_after=1.0 / settings.uid_rate,
         max_body_bytes=settings.max_body_bytes,
         event_signer=signer,
+        ready_checks=_ready_checks(floor, history, background),
+        # Deliver queued webhook alerts first, then close the stores they
+        # and the requests in flight were using.
+        on_shutdown=[*([lambda: background.close(SHUTDOWN_DRAIN_SECONDS)]
+                       if background is not None else []),
+                     floor.close, history.close, audit.close],
     )
+
+
+SHUTDOWN_DRAIN_SECONDS = 10.0
+"""How long shutdown waits for queued webhook alerts (the audit store keeps
+every alert regardless)."""
+
+
+def _ready_checks(floor, history, background) -> dict:
+    checks = {
+        # A read on each store: the database is reachable and the schema there.
+        "counters": lambda: floor.last_counter("00") or True,
+        "history": lambda: history.history("00") is not None,
+    }
+    if background is not None:
+        checks["alert_queue"] = lambda: background.pending < background.capacity * 0.9
+    return checks

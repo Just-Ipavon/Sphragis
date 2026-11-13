@@ -45,6 +45,7 @@ di esso.
 | `GET`  | `/t?picc_data=…&cmac=…` | L'URL a cui punta il tag: il telefono lo apre al tap |
 | `POST` | `/v1/verify` `{"url": "…"}` | Un'app o un backend inoltra l'URL letto |
 | `GET`  | `/healthz` | Sonda di liveness (senza rate limit) |
+| `GET`  | `/readyz` | Readiness: ogni storage risponde a una lettura e la coda del webhook è sotto il 90%; altrimenti `503` con i controlli falliti |
 | `GET`  | `/v1/event-key` | Chiave pubblica degli [eventi firmati](events.it.md), quando sono abilitati |
 
 I verdetti tornano sempre con `200`. Gli altri codici sono `401` (credenziali
@@ -77,7 +78,9 @@ ottiene solo la stessa risposta neutra.
 **Dettagliato**: con `Authorization: Bearer <token lettore>` la risposta
 include anche `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
 `key_version`, `reader_id`, `signals`
-(nome, peso, dettaglio), `detail` e `alerted`. I tap forgiati e quelli
+(nome, peso, dettaglio), `detail` e `alerted` (un sink ha accettato
+l'alert; per il webhook significa in coda, e gli errori di consegna vanno nel
+log). I tap forgiati e quelli
 malformati ricevono anche qui la stessa risposta (`classification: INVALID`,
 niente UID né contatore): distinguerli sarebbe un oracolo sul PICCData
 decifrato. Il log conserva la classificazione reale.

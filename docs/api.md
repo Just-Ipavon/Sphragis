@@ -43,6 +43,7 @@ so it can be tested without HTTP. `sphragis/api/` is a thin adapter on top of it
 | `GET`  | `/t?picc_data=…&cmac=…` | The URL a tag points to: a phone opens it on tap |
 | `POST` | `/v1/verify` `{"url": "…"}` | An app or backend forwards a tapped URL |
 | `GET`  | `/healthz` | Liveness probe (not rate limited) |
+| `GET`  | `/readyz` | Readiness: every store answers a read and the webhook queue is under 90% full; otherwise `503` with the failing checks |
 | `GET`  | `/v1/event-key` | Public key of the [signed events](events.md), when they are enabled |
 
 Verdicts are always returned as `200`. The other status codes are `401` (bad
@@ -74,7 +75,8 @@ not a `REPLAY`. A forged `User-Agent` only gets the same neutral answer.
 **Detailed**: with `Authorization: Bearer <reader token>` the response also
 includes `classification`, `uid`, `read_counter`, `backend`, `algorithm`,
 `key_version`, `reader_id`, `signals`
-(name, weight, detail), `detail` and `alerted`. Forged and malformed taps get
+(name, weight, detail), `detail` and `alerted` (a sink accepted the alert;
+for the webhook that means queued, and delivery failures are logged). Forged and malformed taps get
 the same answer here too (`classification: INVALID`, no UID, no counter):
 telling them apart would be an oracle on the decrypted PICCData. The log keeps
 the real classification.

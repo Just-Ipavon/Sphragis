@@ -5,6 +5,7 @@ a real key-clone, rate limiting and proxy handling.
 
 import hashlib
 import os
+import threading
 import sys
 from urllib.parse import urlsplit
 
@@ -421,3 +422,90 @@ def test_readers_are_verified_whatever_their_user_agent():
     tag, client, _ = _rig()
     r = client.get(_path(tag.tap()), headers={**_auth(TOKEN_A), "User-Agent": "Slackbot"})
     assert r.json()["classification"] == "GENUINE"
+
+
+# --- Readiness and shutdown (#70) -------------------------------------------
+
+def test_readyz_reports_failing_checks():
+    tag, client, _ = _rig()
+    assert client.get("/readyz").json() == {"status": "ready"}
+
+    def broken():
+        raise RuntimeError("database unreachable")
+
+    service = VerificationService(TagAnalyzer(StaticKeys(os.urandom(16), os.urandom(16))))
+    app = create_app(service, ready_checks={"counters": broken, "queue": lambda: False,
+                                            "history": lambda: True})
+    r = TestClient(app).get("/readyz")
+    assert r.status_code == 503
+    assert r.json() == {"status": "unavailable", "failing": ["counters", "queue"]}
+
+
+def test_shutdown_runs_every_step_in_order_even_after_a_failure():
+    calls = []
+
+    def failing():
+        calls.append("drain")
+        raise RuntimeError("boom")
+
+    service = VerificationService(TagAnalyzer(StaticKeys(os.urandom(16), os.urandom(16))))
+    app = create_app(service, on_shutdown=[failing, lambda: calls.append("close")])
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert calls == []
+    assert calls == ["drain", "close"]
+
+
+def test_env_app_is_ready_and_closes_its_stores_on_shutdown(tmp_path, monkeypatch):
+    from sphragis.sqlstore import ThreadConnections
+    for name in ("MASTER_FILE", "META_READ", "LOG_PSEUDONYM"):
+        monkeypatch.setenv("SPHRAGIS_" + name, os.urandom(16).hex())
+    closed = []
+    original = ThreadConnections.close
+
+    def tracking_close(self):
+        closed.append(self._path)
+        original(self)
+
+    monkeypatch.setattr(ThreadConnections, "close", tracking_close)
+    app = create_app_from_env({"SPHRAGIS_DB_PATH": str(tmp_path / "sphragis.db")})
+    with TestClient(app) as client:
+        assert client.get("/readyz").json() == {"status": "ready"}
+        assert closed == []
+    assert len(closed) == 3             # counters, history, audit
+
+
+def test_background_sink_close_delivers_what_was_queued():
+    from sphragis.alerts import Alert, BackgroundAlertSink
+    delivered, gate = [], threading.Event()
+
+    class Slow:
+        def emit(self, alert):
+            gate.wait(5)
+            delivered.append(alert.event_id)
+
+    sink = BackgroundAlertSink(Slow())
+    for i in range(3):
+        sink.emit(Alert(f"e{i}", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d"))
+    assert sink.pending >= 2
+    assert sink.flush(timeout=0.05) is False          # still blocked
+    gate.set()
+    assert sink.close(timeout=5) is True
+    assert delivered == ["e0", "e1", "e2"] and sink.pending == 0
+
+
+def test_background_sink_close_gives_up_after_its_timeout(caplog):
+    from sphragis.alerts import Alert, BackgroundAlertSink
+    gate = threading.Event()
+
+    class Stuck:
+        def emit(self, alert):
+            gate.wait(5)
+
+    sink = BackgroundAlertSink(Stuck())
+    sink.emit(Alert("e1", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d"))
+    sink.emit(Alert("e2", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d"))
+    with caplog.at_level("ERROR", logger="sphragis.alert"):
+        assert sink.close(timeout=0.1) is False
+    assert any("undelivered" in r.getMessage() for r in caplog.records)
+    gate.set()
