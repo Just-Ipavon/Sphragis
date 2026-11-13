@@ -14,6 +14,16 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- The CLI, the emulator and the tools no longer end in a traceback on bad
+  input (#68): `emulate --uid` must be 7 hex bytes and `--counter`/`--taps`
+  stay within the 24-bit counter, as usage errors; `verify --store` with an
+  empty or corrupt file prints an error. `EmulatedTag` refuses a counter out
+  of range, stops at the 24-bit limit like a real tag, and appends its SUN
+  parameters with `&` to a `base_url` that already has a query.
+  `tools/provision.py` and `tools/rekey.py` report reader, APDU and secrets
+  errors as one line (exit 2); the provision example without `--port` is
+  fixed. Impossible-velocity checks skip history recorded after the tap
+  (clock steps, host skew).
 - Two genuine taps of one tag processed concurrently no longer make every
   later tap `SUSPICIOUS` (`prior_divergence`). The ledger and the detector
   history are written in two steps, so the history could receive the two

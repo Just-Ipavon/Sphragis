@@ -3,9 +3,10 @@ In-memory Type 4 tag backed by the software emulator.
 
 Answers the unauthenticated ISO 7816-4 subset a reader uses to fetch a SUN URL:
 ISOSelectFile (NDEF application by DF name, CC / NDEF file by ID) and
-ISOReadBinary. Nothing else is modelled: anything outside that subset returns
-6D00 (instruction not supported), so tools that need secure messaging can only
-be tested here against a ScriptedTransport.
+ISOReadBinary. Nothing else is modelled: another instruction returns 6D00
+(instruction not supported) and a native command (CLA 90h) 6E00 (class not
+supported), so tools that need secure messaging can only be tested here
+against a ScriptedTransport.
 
 SDM model: the first ISOReadBinary after the NDEF file is selected triggers one
 tap of the underlying EmulatedTag (counter +1, fresh PICCData/SDMMAC); further

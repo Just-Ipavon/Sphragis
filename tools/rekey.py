@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _reader import add_reader_args, reader_factory  # noqa: E402
 
+from sphragis.apdu import ApduError  # noqa: E402
 from sphragis.keyprov import (  # noqa: E402
     NXP_NTAG424_ORIGINALITY_KEY,
     DiversifiedTagKeys,
@@ -39,7 +40,8 @@ from sphragis.keyprov import (  # noqa: E402
     SqliteKeyInventory,
     rekey_tag,
 )
-from sphragis.secrets import FileSecretsBackend  # noqa: E402
+from sphragis.secrets import FileSecretsBackend, SecretsError  # noqa: E402
+from sphragis.transport import TransportError  # noqa: E402
 
 ORIGINALITY_KEY = NXP_NTAG424_ORIGINALITY_KEY
 
@@ -112,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
                 allow_known_uid=args.allow_known_uid)
     except KeyProvisionError as exc:
         print(f"REFUSED      : {exc}")
+        return 2
+    except (TransportError, ApduError, SecretsError) as exc:
+        print(f"ERROR        : {exc}")
         return 2
     if args.dry_run:
         return 0
