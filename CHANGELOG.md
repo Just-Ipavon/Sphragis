@@ -12,6 +12,16 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
   under the public zero key. `--allow-known-uid` does not override this.
 
+### Fixed
+
+- Stores no longer upper-case every identity: only bare hex UIDs (NTAG 424
+  DNA) are, and prefixed identities such as `fido2:<base64url>` keep their
+  case, so two WebAuthn credentials whose ids differ only by case no longer
+  share one counter and one history (#63). Upgrading: NTAG data is
+  unaffected. Rows that 2.0.0 stored for a non-hex identity were stored
+  upper-cased; a credential whose id has lower-case letters starts a new
+  history under its real id.
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,

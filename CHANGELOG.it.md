@@ -13,6 +13,17 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
   tutta a zero. `--allow-known-uid` non scavalca il controllo.
 
+### Corretto
+
+- Gli storage non convertono più in maiuscolo ogni identità: solo gli UID
+  esadecimali senza prefisso (NTAG 424 DNA), mentre le identità con prefisso
+  come `fido2:<base64url>` conservano maiuscole e minuscole, così due
+  credenziali WebAuthn i cui id differiscono solo per le maiuscole non
+  condividono più contatore e cronologia (#63). Aggiornamento: i dati NTAG non
+  cambiano. Le righe che la 2.0.0 ha salvato per un'identità non esadecimale
+  erano in maiuscolo; una credenziale con lettere minuscole nell'id inizia una
+  nuova cronologia con il suo id reale.
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di
