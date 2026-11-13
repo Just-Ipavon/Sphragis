@@ -55,12 +55,16 @@ $ python examples/clone_demo.py
 Genuine tag in the field (reader = gate-A):
   authentic tap              GENUINE       score=  0  [-]
   authentic tap              GENUINE       score=  0  [-]
+  authentic tap              GENUINE       score=  0  [-]
 
 Attacker extracts the keys and builds a perfect clone.
 The clone's MACs are all cryptographically VALID — yet:
 
   clone, divergent counter   CLONE_LIKELY  score= 70  [counter_regression]
-  clone, far away seconds later CLONE_LIKELY  score= 60  [impossible_velocity]
+  clone, far away seconds later CLONE_LIKELY  score= 95  [impossible_velocity, prior_divergence]
+
+-> A valid MAC proves key possession, not physical uniqueness.
+   The read counter is what unmasks the clone.
 ```
 
 ## Come funziona la verifica
@@ -130,6 +134,11 @@ python -m sphragis.cli verify \
 python -m sphragis.cli inspect \
   "https://example.com/t?picc_data=EF963FF7828658A599F3041510671E88&cmac=94EED9EE65337086"
 ```
+
+`verify` esce con 0 per AUTHENTIC, 1 per ERROR (input malformato), 3 per
+REPLAY e 4 per FORGED; 2 è un errore d'uso. Un tap con un parametro `enc`
+viene verificato automaticamente come tap SDMENCFileData, e `--sqlite DB`
+tiene la soglia anti-replay in SQLite invece di `--store FILE` (JSON).
 
 ## API REST
 

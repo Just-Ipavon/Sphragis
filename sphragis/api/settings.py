@@ -10,7 +10,7 @@ Key material (SDM keys, pseudonymization key, webhook secret) is read through a
 | SPHRAGIS_DB_URL               | (none)          | postgresql:// URL; replaces SQLite (multi-host)|
 | SPHRAGIS_KEY_CONTEXT          | (empty)         | AN10922 diversification context            |
 | SPHRAGIS_READER_TOKENS        | (none)          | `reader=sha256hex,...` authenticated readers|
-| SPHRAGIS_TRUSTED_PROXIES      | (none)          | proxy IPs or CIDRs allowed to set X-Forwarded-For |
+| SPHRAGIS_TRUSTED_PROXIES      | (none)          | proxy IPs or CIDRs (or `unix`) allowed to set X-Forwarded-For |
 | SPHRAGIS_IP_RATE / _IP_BURST  | 5 / 20          | per-client-IP token bucket                 |
 | SPHRAGIS_UID_RATE / _UID_BURST| 0.2 / 10        | per-tag token bucket (authentic taps only) |
 | SPHRAGIS_MIN_TRAVEL_SECONDS   | 60              | impossible-velocity threshold              |
@@ -45,10 +45,20 @@ BACKENDS = ("ntag424-sun-enc", "ntag424-sun")
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
+UNIX_SOCKET = "unix"
+"""Trusted-proxy entry for a server listening on a Unix socket (uvicorn
+`--uds`): the peer has no address, so the proxy in front must be trusted by
+name for `X-Forwarded-For` to be read."""
+
+
 def parse_trusted_proxies(entries: Iterable[str]) -> tuple:
-    """Proxy addresses or CIDR networks; anything else is a configuration error."""
+    """Proxy addresses or CIDR networks, or `unix`; anything else is a
+    configuration error."""
     out = []
     for entry in entries:
+        if entry.strip().lower() == UNIX_SOCKET:
+            out.append(UNIX_SOCKET)
+            continue
         try:
             out.append(ipaddress.ip_network(entry.strip(), strict=False))
         except ValueError as exc:

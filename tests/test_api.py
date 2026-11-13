@@ -5,6 +5,7 @@ a real key-clone, rate limiting and proxy handling.
 
 import hashlib
 import os
+import threading
 import sys
 from urllib.parse import urlsplit
 
@@ -76,6 +77,13 @@ def test_get_tap_genuine_minimal_response():
     assert tag.uid.hex().upper() not in r.text
     assert r.headers["cache-control"] == "no-store"
     assert r.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize("extra", ["&next=/a?b=1", "&v=1:2", "&back=https://example.com/x?y=1",
+                                   "&utm=x"])
+def test_extra_parameters_with_url_characters_stay_genuine(extra):
+    tag, client, _ = _rig()
+    assert client.get(_path(tag.tap()) + extra).json()["verdict"] == "GENUINE"
 
 
 def test_forged_and_malformed_are_indistinguishable_publicly():
@@ -275,6 +283,46 @@ def test_duplicate_forwarded_for_lines_cannot_mint_buckets():
     assert client_address("8.8.8.8", ["1.1.1.1"], proxy) == "8.8.8.8"   # untrusted peer
 
 
+@pytest.mark.parametrize("hop,expected", [
+    ("1.1.1.1:51234", "1.1.1.1"),                          # Azure Application Gateway
+    ("[2001:db8:1:2::1]:443", "2001:db8:1:2::/64"),
+    ("[2001:db8:1:2::1]", "2001:db8:1:2::/64"),
+    ("2001:db8:1:2::1", "2001:db8:1:2::/64"),
+    ("[2001:db8::1]junk", "10.0.0.2"),                      # garbage: the proxy itself
+    ("1.1.1.1:http", "10.0.0.2"),
+])
+def test_forwarded_hops_with_ports_and_brackets(hop, expected):
+    from sphragis.api.app import client_address, parse_trusted_proxies
+    proxy = parse_trusted_proxies(["10.0.0.0/8"])
+    assert client_address("10.0.0.2", [hop], proxy) == expected
+
+
+def test_unix_socket_peer_reads_the_forwarded_header_only_when_trusted():
+    from sphragis.api.app import client_address, parse_trusted_proxies
+    assert client_address(None, ["1.1.1.1"], ()) == "unknown"
+    unix = parse_trusted_proxies(["unix"])
+    assert client_address(None, ["1.1.1.1"], unix) == "1.1.1.1"
+    assert client_address(None, ["6.6.6.6, 2.2.2.2:80"], unix) == "2.2.2.2"
+    assert client_address(None, [], unix) == "unknown"
+
+
+def test_unix_socket_clients_get_separate_buckets_end_to_end(caplog):
+    limiter = TokenBucketLimiter(rate=0.01, burst=1)
+    tag, client, _ = _rig(ip_limiter=limiter, peer=None, trusted_proxies=["unix"])
+    assert client.get("/t", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
+    assert client.get("/t", headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 200
+    assert client.get("/t", headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 429
+
+
+def test_unix_socket_without_trust_warns_once(caplog):
+    limiter = TokenBucketLimiter(rate=0.01, burst=5)
+    tag, client, _ = _rig(ip_limiter=limiter, peer=None)
+    with caplog.at_level("WARNING", logger="sphragis.api"):
+        client.get("/t")
+        client.get("/t")
+    assert sum("no client address" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_duplicate_forwarded_for_header_end_to_end():
     limiter = TokenBucketLimiter(rate=0.01, burst=1)
     tag, client, _ = _rig(ip_limiter=limiter, peer=("10.0.0.2", 50000),
@@ -421,3 +469,90 @@ def test_readers_are_verified_whatever_their_user_agent():
     tag, client, _ = _rig()
     r = client.get(_path(tag.tap()), headers={**_auth(TOKEN_A), "User-Agent": "Slackbot"})
     assert r.json()["classification"] == "GENUINE"
+
+
+# --- Readiness and shutdown (#70) -------------------------------------------
+
+def test_readyz_reports_failing_checks():
+    tag, client, _ = _rig()
+    assert client.get("/readyz").json() == {"status": "ready"}
+
+    def broken():
+        raise RuntimeError("database unreachable")
+
+    service = VerificationService(TagAnalyzer(StaticKeys(os.urandom(16), os.urandom(16))))
+    app = create_app(service, ready_checks={"counters": broken, "queue": lambda: False,
+                                            "history": lambda: True})
+    r = TestClient(app).get("/readyz")
+    assert r.status_code == 503
+    assert r.json() == {"status": "unavailable", "failing": ["counters", "queue"]}
+
+
+def test_shutdown_runs_every_step_in_order_even_after_a_failure():
+    calls = []
+
+    def failing():
+        calls.append("drain")
+        raise RuntimeError("boom")
+
+    service = VerificationService(TagAnalyzer(StaticKeys(os.urandom(16), os.urandom(16))))
+    app = create_app(service, on_shutdown=[failing, lambda: calls.append("close")])
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert calls == []
+    assert calls == ["drain", "close"]
+
+
+def test_env_app_is_ready_and_closes_its_stores_on_shutdown(tmp_path, monkeypatch):
+    from sphragis.sqlstore import ThreadConnections
+    for name in ("MASTER_FILE", "META_READ", "LOG_PSEUDONYM"):
+        monkeypatch.setenv("SPHRAGIS_" + name, os.urandom(16).hex())
+    closed = []
+    original = ThreadConnections.close
+
+    def tracking_close(self):
+        closed.append(self._path)
+        original(self)
+
+    monkeypatch.setattr(ThreadConnections, "close", tracking_close)
+    app = create_app_from_env({"SPHRAGIS_DB_PATH": str(tmp_path / "sphragis.db")})
+    with TestClient(app) as client:
+        assert client.get("/readyz").json() == {"status": "ready"}
+        assert closed == []
+    assert len(closed) == 3             # counters, history, audit
+
+
+def test_background_sink_close_delivers_what_was_queued():
+    from sphragis.alerts import Alert, BackgroundAlertSink
+    delivered, gate = [], threading.Event()
+
+    class Slow:
+        def emit(self, alert):
+            gate.wait(5)
+            delivered.append(alert.event_id)
+
+    sink = BackgroundAlertSink(Slow())
+    for i in range(3):
+        sink.emit(Alert(f"e{i}", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d"))
+    assert sink.pending >= 2
+    assert sink.flush(timeout=0.05) is False          # still blocked
+    gate.set()
+    assert sink.close(timeout=5) is True
+    assert delivered == ["e0", "e1", "e2"] and sink.pending == 0
+
+
+def test_background_sink_close_gives_up_after_its_timeout(caplog):
+    from sphragis.alerts import Alert, BackgroundAlertSink
+    gate = threading.Event()
+
+    class Stuck:
+        def emit(self, alert):
+            gate.wait(5)
+
+    sink = BackgroundAlertSink(Stuck())
+    sink.emit(Alert("e1", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d"))
+    sink.emit(Alert("e2", 1.0, "CLONE_LIKELY", 70, None, 1, None, (), "d"))
+    with caplog.at_level("ERROR", logger="sphragis.alert"):
+        assert sink.close(timeout=0.1) is False
+    assert any("undelivered" in r.getMessage() for r in caplog.records)
+    gate.set()
