@@ -5,13 +5,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
-### Aggiunto
-
-- CLI (#75): `--version`; `verify` riconosce i tap SDMENCFileData dal
-  parametro `enc` (`--enc` lo forza ancora), accetta `--sqlite DB` in
-  alternativa allo `--store` JSON, ed esce con 0 AUTHENTIC, 1 ERROR,
-  3 REPLAY, 4 FORGED (2 resta l'errore d'uso), come documentato nel README
-  e in `--help`.
 ### Sicurezza
 
 - `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
@@ -22,6 +15,11 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- CLI (#75): `--version`; `verify` riconosce i tap SDMENCFileData dal
+  parametro `enc` (`--enc` lo forza ancora), accetta `--sqlite DB` in
+  alternativa allo `--store` JSON, ed esce con 0 AUTHENTIC, 1 ERROR,
+  3 REPLAY, 4 FORGED (2 resta l'errore d'uso), come documentato nel README
+  e in `--help`.
 - `/readyz`: ogni storage risponde a una lettura e la coda degli alert del
   webhook è sotto il 90%, altrimenti `503` con i controlli falliti.
   All'arresto l'API consegna gli alert del webhook in coda (fino a 10 s) e
