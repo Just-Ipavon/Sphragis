@@ -173,7 +173,10 @@ def verify_webhook(secret: bytes, timestamp: str, signature: str, body: bytes,
     current = time.time() if now is None else now
     if abs(current - ts) > tolerance:
         return False
-    return hmac.compare_digest(sign_webhook(secret, timestamp, body), signature or "")
+    if not isinstance(signature, str):
+        return False
+    return hmac.compare_digest(sign_webhook(secret, timestamp, body).encode(),
+                               signature.encode("utf-8", "surrogatepass"))
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

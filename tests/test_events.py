@@ -95,6 +95,20 @@ def test_cbor_decoder_is_strict(bad):
         cbor_decode(bytes.fromhex(bad))
 
 
+@pytest.mark.parametrize("bad", [
+    bytes.fromhex("a18000"),           # an array as a map key (unhashable)
+    bytes.fromhex("81") * 2000 + b"\x00",   # nested far beyond any real event
+    bytes.fromhex("81") * 9 + b"\x00",      # one level past the limit
+])
+def test_cbor_decoder_refuses_odd_keys_and_deep_nesting(bad):
+    with pytest.raises(EventError):
+        cbor_decode(bad)
+
+
+def test_cbor_nesting_up_to_the_limit_decodes():
+    assert cbor_decode(bytes.fromhex("81") * 8 + b"\x00") is not None
+
+
 # --- Signing and verification ------------------------------------------------------
 
 def test_known_answer_vector():

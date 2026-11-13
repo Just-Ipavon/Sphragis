@@ -14,6 +14,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- Malformed input no longer escapes as an unexpected exception type
+  (#64): a WebAuthn `clientDataJSON` whose `origin` or `type` is not a
+  string is `ERROR` instead of a `TypeError` reaching the caller;
+  `cbor_decode` raises `EventError` for a map key that is not an integer,
+  text or bytes, and for nesting deeper than 8 levels (it used to hit
+  `RecursionError` before the signature check); `verify_webhook` returns
+  `False` for a non-ASCII or missing signature header.
 - A genuine tap with an extra query parameter containing `?` or `:`
   (`&next=/a?b=1`, `v:1&…`) was read as a URL and became `ERROR`. A bare
   query is now recognised by a `=` before its first `?` or `#`, and `/t`
