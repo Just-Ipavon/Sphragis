@@ -3,6 +3,16 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Corretto
+
+- Il rate limit per IP non si riduce più a un solo bucket dietro un socket
+  Unix o un proxy che scrive `ip:porta`: gli hop inoltrati possono essere
+  `ip:porta`, `[v6]` o `[v6]:porta`, `unix` in `SPHRAGIS_TRUSTED_PROXIES`
+  rende fidato il proxy davanti a un socket Unix, e l'API registra un avviso
+  quando il peer non ha indirizzo e nulla indica quello del client (#66).
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di

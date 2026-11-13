@@ -3,6 +3,16 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Per-IP rate limiting no longer collapses to one bucket behind a Unix
+  socket or a proxy that writes `ip:port`: forwarded hops may be `ip:port`,
+  `[v6]` or `[v6]:port`, `unix` in `SPHRAGIS_TRUSTED_PROXIES` trusts the
+  proxy in front of a Unix socket, and the API logs a warning when the peer
+  has no address and nothing tells it the client's (#66).
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,
