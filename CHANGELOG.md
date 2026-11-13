@@ -5,6 +5,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Security
+
+- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
+  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
+  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
+  under the public zero key. `--allow-known-uid` does not override this.
+
 ### Fixed
 
 - Packaging, docs and CI (#69): a `MANIFEST.in` puts in the sdist what its
@@ -18,15 +25,6 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   now runs ruff's correctness rules (`F`, `E9`, `B`, fixed across the
   code). The Postgres service image is pinned by digest and its job runs
   on Python 3.10 (the oldest supported); Dependabot also watches `requirements/`.
-### Security
-
-- `rekey_tag` (and `tools/rekey.py --to-factory`) no longer changes a keyed
-  slot while slot 0 is on factory keys and no UID-specific slot proves a key:
-  ChangeKey would send the old key, for slot 2 the fleet-wide `meta_read`,
-  under the public zero key. `--allow-known-uid` does not override this.
-
-### Fixed
-
 - The CLI, the emulator and the tools no longer end in a traceback on bad
   input (#68): `emulate --uid` must be 7 hex bytes and `--counter`/`--taps`
   stay within the 24-bit counter, as usage errors; `verify --store` with an

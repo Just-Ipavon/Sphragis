@@ -5,6 +5,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ## Non rilasciato
 
+### Sicurezza
+
+- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
+  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
+  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
+  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
+  tutta a zero. `--allow-known-uid` non scavalca il controllo.
+
 ### Corretto
 
 - Packaging, documentazione e CI (#69): un `MANIFEST.in` mette nella sdist
@@ -19,16 +27,6 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   correttezza di ruff (`F`, `E9`, `B`, corrette in tutto il codice).
   L'immagine Postgres del servizio è fissata per digest e il suo job gira
   su Python 3.10 (la più vecchia supportata); Dependabot controlla anche `requirements/`.
-### Sicurezza
-
-- `rekey_tag` (e `tools/rekey.py --to-factory`) non cambia più uno slot già
-  cambiato mentre lo slot 0 è su chiavi di fabbrica e nessuno slot specifico
-  dell'UID prova una chiave: ChangeKey invierebbe la vecchia chiave, per lo
-  slot 2 la `meta_read` comune a tutta la flotta, sotto la chiave pubblica
-  tutta a zero. `--allow-known-uid` non scavalca il controllo.
-
-### Corretto
-
 - La CLI, l'emulatore e i tool non terminano più con un traceback su input
   errato (#68): `emulate --uid` deve essere di 7 byte esadecimali e
   `--counter`/`--taps` restano nel contatore a 24 bit, come errori d'uso;
