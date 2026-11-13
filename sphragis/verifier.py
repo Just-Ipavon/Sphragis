@@ -92,12 +92,20 @@ def _query_of(url_or_query: str) -> str:
     The query string of a full URL, or the input itself when it is a bare
     query. A URL without a query has none: its fragment or path is never read
     as one, so a tap has a single encoding.
+
+    Input is a bare query when the text before its first `?` or `#` holds a
+    `=` (a parameter): a URL's scheme, host and path do not, while a query's
+    own values may contain `?`, `:` or `://` (`next=/a?b=1`, `v:1`). A
+    leading `?` marks a query explicitly, which is how `/t` passes it.
     """
     try:
         parsed = urlparse(url_or_query)
     except ValueError as exc:           # e.g. an unbalanced IPv6 bracket
         raise SdmError(f"unparsable URL: {exc}") from exc
-    if parsed.scheme or parsed.netloc or "?" in url_or_query or "#" in url_or_query:
+    head = url_or_query.split("?", 1)[0].split("#", 1)[0]
+    if url_or_query.startswith(("/", "?", "#")) or (
+            "=" not in head and (parsed.scheme or parsed.netloc
+                                 or "?" in url_or_query or "#" in url_or_query)):
         return parsed.query
     return url_or_query
 

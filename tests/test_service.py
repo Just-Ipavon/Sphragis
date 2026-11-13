@@ -369,6 +369,8 @@ def test_verify_webhook():
     assert not verify_webhook(secret, "1000", sig, body, now=1000 + 301)   # stale
     assert not verify_webhook(secret, "1000", sig.replace("a", "b"), body, now=1000)
     assert not verify_webhook(secret, "x", sig, body, now=1000)
+    assert not verify_webhook(secret, "1000", "sha256=\u00e9", body, now=1000)
+    assert not verify_webhook(secret, "1000", None, body, now=1000)
 
 
 def test_background_sink_does_not_block_and_delivers():

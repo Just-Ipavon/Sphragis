@@ -154,6 +154,10 @@ record.
   is read, in order, and the client is the right-most untrusted hop, so a
   proxy that appends its own line (HAProxy `option forwardfor`) cannot be
   outvoted by a line the client sent. IPv6 clients are limited per /64.
+  Hops may be written `ip`, `ip:port` (Azure Application Gateway),
+  `[v6]` or `[v6]:port`. Behind a Unix socket (uvicorn `--uds`) the peer has
+  no address: list `unix` in `SPHRAGIS_TRUSTED_PROXIES`, or every client
+  shares one bucket (the API logs a warning once when that happens).
 - The per-IP limit and a body cap (`SPHRAGIS_MAX_BODY_BYTES`, 8 KiB) apply
   before the request is parsed: oversized bodies get `413` without being read
   in full, and invalid JSON counts against the limit like any other request.
@@ -182,7 +186,7 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_DB_URL` | none | `postgresql://` URL; replaces SQLite for multi-host (needs `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | empty | AN10922 diversification context |
 | `SPHRAGIS_READER_TOKENS` | none | `reader=sha256hex,…` |
-| `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs or CIDRs allowed to set `X-Forwarded-For` |
+| `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs or CIDRs (or `unix` for a Unix socket) allowed to set `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | per-IP bucket |
 | `SPHRAGIS_UID_RATE` / `_UID_BURST` | `0.2` / `10` | per-tag bucket |
 | `SPHRAGIS_MIN_TRAVEL_SECONDS` | `60` | impossible-velocity threshold |
