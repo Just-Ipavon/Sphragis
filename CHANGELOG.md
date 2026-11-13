@@ -3,6 +3,20 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- SQLite stores (#65): `:memory:` is refused with a clear error instead of
+  failing with "no such table" on the first request served by another
+  thread; `close()` now closes the connections of every thread (they are
+  opened with `check_same_thread=False`), and `SqliteAlertSink` gains
+  `close()` and context-manager support. `SqliteKeyInventory` closes its
+  connection after every call, the Postgres stores drop and close a broken
+  connection when they replace it, and a refused webhook redirect no longer
+  leaves the response socket open. The test suite now treats
+  `ResourceWarning` as an error.
+
 ## 2.0.0 — 2026-10-18
 
 The engine opens to several chip families behind one verification interface,

@@ -71,10 +71,18 @@ class _PgBase:
     def _connection(self):
         conn = getattr(self._local, "conn", None)
         if conn is None or conn.closed or conn.broken:
+            stale = conn
             conn = psycopg.connect(self._dsn, autocommit=True)
             self._local.conn = conn
             with self._conns_lock:
+                if stale is not None and stale in self._all_conns:
+                    self._all_conns.remove(stale)
                 self._all_conns.append(conn)
+            if stale is not None:
+                try:
+                    stale.close()
+                except Exception:
+                    pass
         return conn
 
     def close(self) -> None:

@@ -91,26 +91,22 @@ class SqliteObservationStore:
 
     def __init__(self, path: str | os.PathLike = "observations.db") -> None:
         self._path = str(path)
-        self._local = threading.local()
-        self._all_conns: list[sqlite3.Connection] = []
-        self._conns_lock = threading.Lock()
-        from .sqlstore import PROVENANCE_COLUMNS, add_missing_columns, secure_db_file
+        from .sqlstore import (
+            PROVENANCE_COLUMNS,
+            ThreadConnections,
+            add_missing_columns,
+            secure_db_file,
+        )
         secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, (
+            "PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000",
+            "PRAGMA synchronous=NORMAL"))
         conn = self._connection()
         conn.executescript(_SCHEMA)
         add_missing_columns(conn, "observations", PROVENANCE_COLUMNS)
 
     def _connection(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self._path, isolation_level=None, timeout=30.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            self._local.conn = conn
-            with self._conns_lock:
-                self._all_conns.append(conn)
-        return conn
+        return self._conns.get()
 
     @staticmethod
     def _rows(conn: sqlite3.Connection, uid_hex: str) -> list[Observation]:
@@ -150,14 +146,7 @@ class SqliteObservationStore:
         return prior
 
     def close(self) -> None:
-        with self._conns_lock:
-            for conn in self._all_conns:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            self._all_conns.clear()
-        self._local = threading.local()
+        self._conns.close()
 
     def __enter__(self) -> "SqliteObservationStore":
         return self

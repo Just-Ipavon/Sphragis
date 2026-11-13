@@ -64,6 +64,7 @@ import sqlite3
 import threading
 import time
 import zlib
+from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Callable, Protocol, Sequence
 from urllib.parse import parse_qs, urlparse
@@ -256,7 +257,7 @@ class SqliteKeyInventory:
     def __init__(self, path: str) -> None:
         self._path = path
         self._lock = threading.Lock()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS keyed_uids ("
                 " uid TEXT PRIMARY KEY, state TEXT NOT NULL,"
@@ -268,7 +269,7 @@ class SqliteKeyInventory:
         return conn
 
     def state(self, uid: bytes) -> str | None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn, conn:
             row = conn.execute("SELECT state FROM keyed_uids WHERE uid = ?",
                                (uid.hex().upper(),)).fetchone()
         return row[0] if row else None
@@ -276,7 +277,7 @@ class SqliteKeyInventory:
     def record(self, uid: bytes, state: str, version: int) -> None:
         if state not in (INVENTORY_KEYING, INVENTORY_KEYED, INVENTORY_FACTORY):
             raise ValueError(f"unknown inventory state {state!r}")
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn, conn:
             conn.execute(
                 "INSERT INTO keyed_uids (uid, state, version, updated_at) "
                 "VALUES (?, ?, ?, ?) ON CONFLICT (uid) DO UPDATE SET "

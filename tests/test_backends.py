@@ -389,3 +389,67 @@ def test_same_tap_from_many_processes_is_new_once(backend):
             start.set()
             results = [p.get(timeout=60) for p in pending]
     assert results.count(True) == 1, results
+
+
+# --- SQLite store lifecycle across threads (#65) -------------------------------
+
+@pytest.mark.parametrize("factory", ["counters", "observations", "alerts"])
+def test_sqlite_stores_refuse_in_memory_databases(factory):
+    from sphragis.alerts import SqliteAlertSink
+    from sphragis.observations import SqliteObservationStore
+    cls = {"counters": SqliteCounterStore, "observations": SqliteObservationStore,
+           "alerts": SqliteAlertSink}[factory]
+    for path in (":memory:", "file::memory:?cache=shared"):
+        with pytest.raises(ValueError, match="database file"):
+            cls(path)
+
+
+def _in_thread(fn):
+    import threading
+    out = []
+    t = threading.Thread(target=lambda: out.append(fn()))
+    t.start()
+    t.join()
+    return out[0]
+
+
+def test_close_reaches_connections_of_other_threads(tmp_path):
+    import sqlite3
+    from sphragis.alerts import SqliteAlertSink
+    from sphragis.observations import SqliteObservationStore
+    stores = [SqliteCounterStore(tmp_path / "c.db"), SqliteObservationStore(tmp_path / "o.db"),
+              SqliteAlertSink(tmp_path / "a.db")]
+    worker_conns = [_in_thread(s._connection) for s in stores]
+    for store in stores:
+        store.close()
+    for conn in worker_conns:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
+
+
+def test_a_store_serves_worker_threads_and_reopens_after_close(tmp_path):
+    store = SqliteCounterStore(tmp_path / "c.db")
+    assert _in_thread(lambda: store.check_and_advance("04AA", 1))
+    store.close()
+    assert store.last_counter("04AA") == 1          # a fresh connection after close
+
+
+def test_key_inventory_closes_every_connection(tmp_path, monkeypatch):
+    import sqlite3
+    from sphragis import keyprov
+    opened = []
+    real_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(keyprov.sqlite3, "connect", connect)
+    inventory = keyprov.SqliteKeyInventory(str(tmp_path / "inv.db"))
+    for _ in range(20):
+        inventory.state(b"\x04" * 7)
+    inventory.record(b"\x04" * 7, keyprov.INVENTORY_KEYED, 1)
+    for conn in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
