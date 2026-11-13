@@ -3,6 +3,21 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
+## Non rilasciato
+
+### Corretto
+- Un tap autentico con un parametro di query aggiuntivo contenente `?` o `:`
+  (`&next=/a?b=1`, `v:1&…`) veniva letto come URL e diventava `ERROR`. Una
+  query senza URL ora si riconosce da un `=` prima del primo `?` o `#`, e
+  `/t` passa la sua query in modo esplicito (#67).
+- Il `CounterStore` JSON rilegge il file condiviso anche per `last_counter`,
+  `is_fresh` e `seen`, così un'istanza non riporta più una soglia che un altro
+  processo ha già superato (#67).
+- `check_and_advance` registra il contatore anche nel registro dei tap di un
+  UID, una volta che questo è iniziato, così uno storage usato sia da
+  `Verifier` sia da `TagAnalyzer` valuta un replay esatto come `REPLAY` e non
+  come regressione del contatore (#67).
+
 ## 2.0.0 — 2026-10-18
 
 Il motore si apre a più famiglie di chip dietro un'unica interfaccia di

@@ -97,7 +97,7 @@ class CounterStore:
     """
     JSON-file floor and tap ledger (in memory when `path` is None).
 
-    Durability: every change re-reads the file under an exclusive lock
+    Durability: every read and change re-reads the file under an exclusive lock
     (`fcntl.flock` on `<path>.lock`, POSIX), writes a temporary file, fsyncs
     it, renames it over the old one and fsyncs the directory; memory is
     updated only once the file is on disk. Several processes may share one
@@ -202,9 +202,14 @@ class CounterStore:
             return result
 
     # -- floor ---------------------------------------------------------------------
+    def _view(self, read):
+        """`read(floors, taps)` on the latest state: the file may have moved on
+        under another process sharing it."""
+        return self._mutate(lambda floors, taps, since: (read(floors, taps), False))
+
     def last_counter(self, uid_hex: str) -> int | None:
-        with self._lock:
-            return self._seen.get(uid_hex.upper())
+        uid_hex = uid_hex.upper()
+        return self._view(lambda floors, taps: floors.get(uid_hex))
 
     def is_fresh(self, uid_hex: str, counter: int) -> bool:
         """True if this counter is strictly greater than the last one seen."""
@@ -224,6 +229,8 @@ class CounterStore:
             if last is not None and counter <= last:
                 return False, False
             floors[uid_hex] = counter
+            if uid_hex in taps:          # keep a started ledger complete
+                taps[uid_hex].add(counter)
             return True, True
 
         return self._mutate(change)
@@ -242,8 +249,8 @@ class CounterStore:
 
     # -- tap ledger -----------------------------------------------------------------
     def seen(self, uid_hex: str, counter: int) -> bool:
-        with self._lock:
-            return counter in self._taps.get(uid_hex.upper(), ())
+        uid_hex = uid_hex.upper()
+        return self._view(lambda floors, taps: counter in taps.get(uid_hex, ()))
 
     def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
         uid_hex = uid_hex.upper()
