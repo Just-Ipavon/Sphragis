@@ -5,6 +5,14 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ## Unreleased
 
+### Added
+
+- CLI (#75): `--version`; `verify` detects SDMENCFileData taps by their
+  `enc` parameter (`--enc` still forces it), takes `--sqlite DB` as an
+  alternative to the JSON `--store`, and exits 0 AUTHENTIC, 1 ERROR,
+  3 REPLAY, 4 FORGED (2 stays the usage error), as documented in the README
+  and `--help`.
+
 ### Fixed
 
 - The CLI, the emulator and the tools no longer end in a traceback on bad

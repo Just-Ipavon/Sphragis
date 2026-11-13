@@ -21,6 +21,13 @@ Examples:
     # Decode what a tag emits (diagnostic; keys default to all-zero)
     python -m sphragis.cli inspect "https://example.com/t?picc_data=...&cmac=..."
 
+    # Keep the anti-replay floor in SQLite, shareable with the API's database
+    python -m sphragis.cli verify --secrets-dir ~/.sphragis/keys --sqlite sphragis.db "<url>"
+
+Exit status of verify: 0 AUTHENTIC, 1 ERROR (malformed input), 3 REPLAY,
+4 FORGED; 2 is a usage error for every command. Taps with an `enc`
+parameter are verified as SDMENCFileData taps automatically.
+
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
 """
@@ -32,14 +39,24 @@ import getpass
 import json
 import os
 import sys
+from urllib.parse import parse_qs
 
+from . import __version__
 from .counterstore import CounterStore, CounterStoreError
 from .diagnostics import ZERO_KEY, inspect_tap
 from .emulator import EmulatedTag
 from .encverifier import EncFileVerifier
 from .sdm import SdmError
 from .secrets import FileSecretsBackend, SecretsError, build_diversified_keys
-from .verifier import StaticKeys, Verdict, Verifier
+from .verifier import _ENC_MARKERS, StaticKeys, Verdict, Verifier, _query_of
+
+EXIT_CODES = {
+    Verdict.AUTHENTIC: 0,
+    Verdict.ERROR: 1,          # malformed input: not a tap at all
+    Verdict.REPLAY: 3,         # valid MAC, stale counter
+    Verdict.FORGED: 4,         # MAC does not verify
+}
+"""verify's exit status; 2 is argparse's usage error, as for every command."""
 
 _VERDICT_LABEL = {
     Verdict.AUTHENTIC: "AUTHENTIC  - genuine tag, fresh tap",
@@ -121,12 +138,19 @@ def _resolve_keys(args: argparse.Namespace):
 
 def _cmd_verify(args: argparse.Namespace) -> int:
     keys = _resolve_keys(args)
-    verifier_cls = EncFileVerifier if args.enc else Verifier
+    verifier_cls = EncFileVerifier if args.enc or _mirrors_file_data(args.url) else Verifier
     try:
-        store = CounterStore(args.store)
-    except CounterStoreError as exc:
+        if args.sqlite:
+            from .sqlstore import SqliteCounterStore
+            store = SqliteCounterStore(args.sqlite)
+        else:
+            store = CounterStore(args.store)
+    except (CounterStoreError, ValueError, OSError) as exc:
         raise SystemExit(f"error: {exc}") from None
-    result = verifier_cls(keys, store).verify(args.url)
+    try:
+        result = verifier_cls(keys, store).verify(args.url)
+    finally:
+        getattr(store, "close", lambda: None)()
     print(_VERDICT_LABEL[result.verdict])
     if result.uid:
         print(f"UID        : {result.uid}")
@@ -135,7 +159,16 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if getattr(result, "file_data", None) is not None:
         print(f"FileData   : {result.file_data.hex().upper()}")
     print(f"Detail     : {result.detail}")
-    return 0 if result.ok else 1
+    return EXIT_CODES[result.verdict]
+
+
+def _mirrors_file_data(url: str) -> bool:
+    """Whether the tap carries SDMENCFileData (an `enc` parameter)."""
+    try:
+        query = _query_of(url)
+    except SdmError:
+        return False
+    return any(k.lower() in _ENC_MARKERS for k in parse_qs(query, keep_blank_values=True))
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
@@ -182,16 +215,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sphragis",
         description="NTAG 424 DNA SUN/SDM verification toolkit",
+        epilog="verify exits 0 AUTHENTIC, 1 ERROR (malformed), 3 REPLAY, 4 FORGED; "
+               "2 is a usage error for every command",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     v = sub.add_parser("verify", help="verify a tapped SUN URL")
     v.add_argument("url", help="the full URL (or query string) emitted by the tag")
     _add_key_args(v)
-    v.add_argument("--store", default=None, help="path to the JSON counter store")
+    stores = v.add_mutually_exclusive_group()
+    stores.add_argument("--store", default=None,
+                        help="JSON counter store (default: in memory, nothing kept)")
+    stores.add_argument("--sqlite", default=None, metavar="DB",
+                        help="SQLite counter store, shareable with the API's database")
     v.add_argument("--enc", action="store_true",
-                   help="the URL mirrors SDMENCFileData (picc_data, enc, cmac); "
-                        "print the decrypted file data")
+                   help="treat the URL as mirroring SDMENCFileData even without an "
+                        "'enc' parameter (detected automatically otherwise)")
     v.set_defaults(func=_cmd_verify)
 
     i = sub.add_parser(

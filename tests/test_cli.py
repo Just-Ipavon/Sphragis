@@ -92,3 +92,46 @@ def test_velocity_ignores_history_recorded_after_the_tap():
     detector.analyze("04AA", 1, timestamp=2000.0, reader_id="gate-B")
     later = detector.analyze("04AA", 2, timestamp=1000.0, reader_id="gate-A")
     assert "impossible_velocity" not in {s.name for s in later.signals}
+
+
+# --- CLI polish (#75) ------------------------------------------------------------
+
+def test_version(capsys):
+    from sphragis import __version__
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0 and __version__ in capsys.readouterr().out
+
+
+def _zero_tap(counter=0, enc=False):
+    cls = EmulatedEncTag if enc else EmulatedTag
+    return cls(uid=bytes.fromhex(UID), meta_read_key=bytes(16), file_read_key=bytes(16),
+               read_counter=counter).tap()
+
+
+def test_verify_exit_codes_tell_verdicts_apart(tmp_path):
+    store = str(tmp_path / "c.json")
+    url = _zero_tap()
+    assert main(["verify", *KEYS, "--store", store, url]) == 0          # AUTHENTIC
+    assert main(["verify", *KEYS, "--store", store, url]) == 3          # REPLAY
+    forged = url[:-1] + ("0" if url[-1] != "0" else "1")
+    assert main(["verify", *KEYS, "--store", store, forged]) == 4       # FORGED
+    assert main(["verify", *KEYS, "https://example.com/t?x=1"]) == 1   # ERROR
+
+
+def test_verify_detects_enc_taps(capsys):
+    assert main(["verify", *KEYS, _zero_tap(enc=True)]) == 0
+    assert "FileData" in capsys.readouterr().out
+
+
+def test_verify_with_a_sqlite_store_remembers_counters(tmp_path):
+    db = str(tmp_path / "floor.db")
+    url = _zero_tap()
+    assert main(["verify", *KEYS, "--sqlite", db, url]) == 0
+    assert main(["verify", *KEYS, "--sqlite", db, url]) == 3
+
+
+def test_store_options_are_exclusive(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["verify", *KEYS, "--store", "a.json", "--sqlite", "b.db", "x"])
+    assert exc.value.code == 2
