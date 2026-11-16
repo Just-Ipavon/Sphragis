@@ -27,12 +27,13 @@ replay. SQLite keeps this repo dependency-free while showing the pattern.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
 import time
 
-from .counterstore import TapRecord, check_ledger_window, compaction_mark
+from .counterstore import PendingTap, TapRecord, check_ledger_window, compaction_mark
 from .identity import store_key
 
 
@@ -120,6 +121,13 @@ CREATE TABLE IF NOT EXISTS tap_ledgers (
     uid         TEXT PRIMARY KEY,
     since       INTEGER
 );
+CREATE TABLE IF NOT EXISTS tap_pending (
+    uid           TEXT NOT NULL,
+    counter       INTEGER NOT NULL,
+    floor_before  INTEGER,
+    note          TEXT NOT NULL,
+    PRIMARY KEY (uid, counter)
+);
 """
 
 
@@ -195,10 +203,12 @@ class SqliteCounterStore:
             (store_key(uid_hex), counter),
         ).fetchone() is not None
 
-    def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
+    def record_tap(self, uid_hex: str, counter: int,
+                   note: dict | None = None) -> TapRecord:
         """
-        Tap ledger (`counterstore.TapLedger`): record `counter` for the UID and
-        advance the floor if it is new and higher, in one IMMEDIATE transaction.
+        Tap ledger (`counterstore.SettlingLedger`): record `counter` for the
+        UID, advance the floor if it is new and higher, and keep `note` until
+        `settle`, in one IMMEDIATE transaction.
         """
         uid_hex = store_key(uid_hex)
         now = time.time()
@@ -215,7 +225,16 @@ class SqliteCounterStore:
             new = conn.execute(
                 "INSERT OR IGNORE INTO tap_counters (uid, counter, first_seen) "
                 "VALUES (?, ?, ?)", (uid_hex, counter, now)).rowcount == 1
-            record = TapRecord(counter, new, floor, since)
+            unsettled = tuple(
+                PendingTap(int(c), None if f is None else int(f), json.loads(n))
+                for c, f, n in conn.execute(
+                    "SELECT counter, floor_before, note FROM tap_pending "
+                    "WHERE uid = ? ORDER BY counter", (uid_hex,)))
+            record = TapRecord(counter, new, floor, since, unsettled)
+            if new and note is not None:
+                conn.execute("INSERT OR REPLACE INTO tap_pending (uid, counter, floor_before, "
+                             "note) VALUES (?, ?, ?, ?)",
+                             (uid_hex, counter, floor, json.dumps(note)))
             if record.fresh:
                 conn.execute(
                     "INSERT INTO counters (uid, counter, updated_at) VALUES (?, ?, ?) "
@@ -232,6 +251,11 @@ class SqliteCounterStore:
         except Exception:
             conn.execute("ROLLBACK")
             raise
+
+    def settle(self, uid_hex: str, counter: int) -> None:
+        """The history write for `counter` succeeded: drop its pending note."""
+        self._connection().execute("DELETE FROM tap_pending WHERE uid = ? AND counter = ?",
+                                   (store_key(uid_hex), counter))
 
     def close(self) -> None:
         self._conns.close()

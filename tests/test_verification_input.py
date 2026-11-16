@@ -132,7 +132,7 @@ def test_key_context_is_limited_in_the_settings():
 
 def test_backend_failures_are_logged_and_fail_closed(caplog):
     class BrokenStore(CounterStore):
-        def record_tap(self, uid_hex, counter):
+        def record_tap(self, uid_hex, counter, note=None):
             raise RuntimeError("database unavailable")
 
     tag = EmulatedTag(uid=os.urandom(7), meta_read_key=META, file_read_key=FILE)

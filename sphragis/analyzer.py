@@ -28,6 +28,7 @@ because the ledger lets each counter value through only once.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from typing import Callable, Sequence
 
@@ -38,7 +39,7 @@ from .backends import (
     VerificationBackend,
     select_backend,
 )
-from .counterstore import CounterStore, TapLedger
+from .counterstore import CounterStore, SettlingLedger, TapLedger
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
 from .revocation import RevocationList
 from .sdm import SdmError
@@ -132,6 +133,7 @@ class TagAnalyzer:
         if not isinstance(self._store, TapLedger):
             raise TypeError("TagAnalyzer needs a tap ledger store "
                             "(last_counter, record_tap)")
+        self._settling = isinstance(self._store, SettlingLedger)
         self._revocations = revocations
         self._policy = counter_policy if counter_policy is not None else CounterPolicy()
 
@@ -216,7 +218,67 @@ class TagAnalyzer:
                 tap.backend, tap.algorithm, key_version=tap.key_version,
             )
 
-        record = self._store.record_tap(uid_hex, counter)
+        # The ledger keeps a note of this tap until its history write is
+        # settled; a note left by a crash or a failing history store is
+        # completed by the next tap of the UID (#86).
+        timestamp = time.time() if timestamp is None else timestamp
+        provenance = Provenance.of(tap)
+        if self._settling:
+            note = {"timestamp": timestamp, "reader_id": reader_id,
+                    "backend": provenance.backend, "algorithm": provenance.algorithm,
+                    "key_version": provenance.key_version}
+            record = self._store.record_tap(uid_hex, counter, note)
+        else:
+            record = self._store.record_tap(uid_hex, counter)
+        recovered = self._complete(uid_hex, record.pending) if record.pending else ()
+        result = self._scored(tap, record, timestamp, reader_id, provenance)
+        if self._settling and record.new:
+            self._store.settle(uid_hex, counter)
+        return self._with_recovered(result, recovered)
+
+    def _complete(self, uid_hex: str, pending) -> tuple[Signal, ...]:
+        """Finish the history writes a crash or a store failure left behind;
+        a regression found that way is reported with the current tap."""
+        signals: list[Signal] = []
+        written = {o.counter for o in self._detector.history(uid_hex)}
+        for p in pending:
+            n = p.note
+            provenance = Provenance(n.get("backend"), n.get("algorithm"), n.get("key_version"))
+            if p.counter not in written:
+                if p.floor_before is not None and p.counter <= p.floor_before:
+                    det = self._detector.assess_stale(
+                        uid_hex, p.counter, p.floor_before, timestamp=n.get("timestamp"),
+                        reader_id=n.get("reader_id"), provenance=provenance)
+                    if any(s.name == "counter_regression" for s in det.signals):
+                        signals.append(Signal(
+                            "counter_regression", 70,
+                            f"read counter {p.counter} was below the floor "
+                            f"({p.floor_before}) and never submitted before; its tap was "
+                            "not scored at the time (the history write did not complete)"))
+                else:
+                    self._detector.assess_fresh(
+                        uid_hex, p.counter, timestamp=n.get("timestamp"),
+                        reader_id=n.get("reader_id"), floor_before=p.floor_before,
+                        provenance=provenance)
+            self._store.settle(uid_hex, p.counter)
+        return tuple(signals)
+
+    @staticmethod
+    def _with_recovered(result: AnalysisResult, recovered) -> AnalysisResult:
+        if not recovered:
+            return result
+        level = RiskLevel.CLONE_LIKELY.value
+        if result.classification not in (RiskLevel.GENUINE.value, RiskLevel.SUSPICIOUS.value,
+                                         RiskLevel.REPLAY.value):
+            level = result.classification
+        return replace(result, classification=level,
+                       risk_score=max(result.risk_score, max(s.weight for s in recovered)),
+                       signals=result.signals + tuple(recovered),
+                       detail="; ".join([result.detail, *(s.detail for s in recovered)]))
+
+    def _scored(self, tap: AuthenticTap, record, timestamp: float,
+                reader_id: str | None, provenance: Provenance) -> AnalysisResult:
+        uid_hex, counter = tap.identity, tap.counter
         if not record.new:                       # already submitted (or a racing copy)
             return self._replay(tap, record.floor_before)
         if not record.fresh:
@@ -226,15 +288,14 @@ class TagAnalyzer:
                                     "keeps for this UID: treated as a replay")
             det = self._detector.assess_stale(
                 uid_hex, counter, record.floor_before,
-                timestamp=timestamp, reader_id=reader_id,
-                provenance=Provenance.of(tap),
+                timestamp=timestamp, reader_id=reader_id, provenance=provenance,
             )
             return self._result(tap, det)
 
         # 5: a fresh counter: score velocity and gap, and keep it in the history.
         det: DetectionResult = self._detector.assess_fresh(
             uid_hex, counter, timestamp=timestamp, reader_id=reader_id,
-            floor_before=record.floor_before, provenance=Provenance.of(tap),
+            floor_before=record.floor_before, provenance=provenance,
         )
         warn_at = self._policy.warn_at
         if (warn_at is not None and counter >= warn_at

@@ -33,6 +33,15 @@ bare floor records where each UID's ledger began; counters at or below that
 point are reported as `REPLAY` (`stale_counter`), since whether they were
 submitted before is unknown.
 
+The ledger and the detector history are two writes, often in two stores. So
+that a crash or a failing history store between them cannot consume a
+counter that never reaches the history (or swallow a regression alert), the
+ledger keeps a note of each new tap in the same transaction and drops it
+once the history write succeeds. The next tap of that UID, a retry of the
+same URL included, finishes any note left behind; a regression found that way
+is reported with that tap, as `CLONE_LIKELY` with `counter_regression`, so its
+alert is raised late rather than never.
+
 ### Retention
 
 By default the ledger keeps every counter ever submitted. With a window

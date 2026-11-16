@@ -94,6 +94,14 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Corretto
 
+- Una scrittura della cronologia persa dopo quella del registro dei tap (un
+  crash, o lo storage della cronologia che fallisce) non consuma più il
+  contatore a vuoto (#86). Il registro conserva una nota di ogni tap nuovo
+  nella stessa transazione e la elimina quando la scrittura della cronologia
+  riesce; il tap successivo dell'UID completa quanto rimasto, e una regressione
+  recuperata così genera comunque il suo alert. I registri JSON, SQLite e
+  Postgres lo implementano (`SettlingLedger`); un `TapLedger` personalizzato
+  senza `settle` funziona come prima.
 - Packaging, documentazione e CI (#69): un `MANIFEST.in` mette nella sdist
   ciò che i suoi test leggono (helper dei test, documentazione, tool, esempi,
   lock, workflow), e un nuovo job di CI costruisce sdist e wheel ed esegue la

@@ -35,7 +35,7 @@ import threading
 import time
 
 from .alerts import Alert
-from .counterstore import TapRecord, check_ledger_window, compaction_mark
+from .counterstore import PendingTap, TapRecord, check_ledger_window, compaction_mark
 from .identity import store_key
 from .observations import Observation
 
@@ -126,6 +126,13 @@ class PostgresCounterStore(_PgBase):
         uid         TEXT PRIMARY KEY,
         since       BIGINT
     );
+    CREATE TABLE IF NOT EXISTS sphragis_tap_pending (
+        uid           TEXT NOT NULL,
+        counter       BIGINT NOT NULL,
+        floor_before  BIGINT,
+        note          JSONB NOT NULL,
+        PRIMARY KEY (uid, counter)
+    );
     """
 
     def last_counter(self, uid_hex: str) -> int | None:
@@ -168,10 +175,12 @@ class PostgresCounterStore(_PgBase):
             (store_key(uid_hex), counter),
         ).fetchone() is not None
 
-    def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
+    def record_tap(self, uid_hex: str, counter: int,
+                   note: dict | None = None) -> TapRecord:
         """
-        Tap ledger (`counterstore.TapLedger`): record `counter` and advance the
-        floor if it is new and higher, in one transaction serialized per UID.
+        Tap ledger (`counterstore.SettlingLedger`): record `counter`, advance
+        the floor if it is new and higher, and keep `note` until `settle`, in
+        one transaction serialized per UID.
         """
         uid_hex = store_key(uid_hex)
         now = time.time()
@@ -190,7 +199,19 @@ class PostgresCounterStore(_PgBase):
                 "INSERT INTO sphragis_tap_counters (uid, counter, first_seen) "
                 "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING 1",
                 (uid_hex, counter, now)).fetchone() is not None
-            record = TapRecord(counter, new, floor, None if since is None else int(since))
+            unsettled = tuple(
+                PendingTap(int(c), None if f is None else int(f), dict(n))
+                for c, f, n in conn.execute(
+                    "SELECT counter, floor_before, note FROM sphragis_tap_pending "
+                    "WHERE uid = %s ORDER BY counter", (uid_hex,)).fetchall())
+            record = TapRecord(counter, new, floor, None if since is None else int(since),
+                               unsettled)
+            if new and note is not None:
+                conn.execute(
+                    "INSERT INTO sphragis_tap_pending (uid, counter, floor_before, note) "
+                    "VALUES (%s, %s, %s, %s::jsonb) ON CONFLICT (uid, counter) DO UPDATE "
+                    "SET floor_before = EXCLUDED.floor_before, note = EXCLUDED.note",
+                    (uid_hex, counter, floor, json.dumps(note)))
             if record.fresh:
                 conn.execute(
                     "INSERT INTO sphragis_counters AS c (uid, counter, updated_at) "
@@ -206,6 +227,12 @@ class PostgresCounterStore(_PgBase):
                     conn.execute("DELETE FROM sphragis_tap_counters "
                                  "WHERE uid = %s AND counter <= %s", (uid_hex, mark))
         return record
+
+    def settle(self, uid_hex: str, counter: int) -> None:
+        """The history write for `counter` succeeded: drop its pending note."""
+        self._connection().execute(
+            "DELETE FROM sphragis_tap_pending WHERE uid = %s AND counter = %s",
+            (store_key(uid_hex), counter))
 
 
 class PostgresObservationStore(_PgBase):
