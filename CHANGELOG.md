@@ -14,6 +14,15 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- WebAuthn in the REST API (#57): `SPHRAGIS_BACKENDS=fido2-webauthn` with
+  `SPHRAGIS_WEBAUTHN_RP_ID`, `_ORIGINS` and `_USER_VERIFICATION` (validated
+  at startup). Credentials live in `SqliteCredentialStore` /
+  `PostgresCredentialStore` (import, revoke, list with `sphragis credentials`;
+  a credential can be bound to its RP ID). `POST /v1/webauthn/challenge`
+  serves the request options, rate limited per IP and naming no credential;
+  challenges are shared by every replica, single use and bounded
+  (`SPHRAGIS_WEBAUTHN_MAX_CHALLENGES`). `/v1/verify` also takes
+  `{"assertion": {...}}`.
 - Tag lifecycle (#73):
   - Revocation list: `REVOKED` answers taps from retired or revoked tags,
     checked on authentic taps before any state is touched. Memory, SQLite and
