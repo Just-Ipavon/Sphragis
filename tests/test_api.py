@@ -519,7 +519,7 @@ def test_env_app_is_ready_and_closes_its_stores_on_shutdown(tmp_path, monkeypatc
     with TestClient(app) as client:
         assert client.get("/readyz").json() == {"status": "ready"}
         assert closed == []
-    assert len(closed) == 3             # counters, history, audit
+    assert len(closed) == 4             # counters, history, audit, revocations
 
 
 def test_background_sink_close_delivers_what_was_queued():

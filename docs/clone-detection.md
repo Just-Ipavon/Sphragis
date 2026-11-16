@@ -78,6 +78,49 @@ ahead. That costs the owner nothing: the next genuine tap is fresh, and the
 jump raises at most `large_counter_gap` and, if fast, `counter_rate` —
 `SUSPICIOUS`, never a lasting block.
 
+## Tag lifecycle
+
+**Revocation list.** A lost, stolen or returned tag still holds its keys and
+keeps producing valid taps. Put it on the revocation list and its taps answer
+`REVOKED`, checked once the MAC has verified and before the ledger or the
+detector are touched (so a made-up UID learns nothing):
+
+```bash
+sphragis revoke 04DE5F1EACC040 --sqlite sphragis.db --reason "reported stolen"
+sphragis revoke 04DE5F1EACC040 --sqlite sphragis.db --retire --reason returned
+sphragis revocations --sqlite sphragis.db
+sphragis reinstate 04DE5F1EACC040 --sqlite sphragis.db
+```
+
+(`--db-url postgresql://…` for the shared database.) `revoked` and `retired`
+both answer `REVOKED`; the signal (`revoked` or `retired`) and the detail
+carry the status and reason. `REVOKED` raises an alert by default.
+
+**Counter rollover.** `SDMReadCtr` is 24-bit: at 16 777 215 the tag stops
+emitting taps. `CounterPolicy(warn_at=…)` (`SPHRAGIS_COUNTER_WARN_AT`, default
+65 536 taps before the limit) adds the `counter_near_limit` signal to the
+first fresh tap that reaches the threshold, and the service alerts on it.
+The ledger accepts each counter value once, so the alert fires once per tag,
+on every replica together. A clone that holds the keys can also jump a UID
+to the maximum, after which every genuine tap is a regression.
+`refuse_at` (`SPHRAGIS_COUNTER_REFUSE_AT`, off by default) answers
+`COUNTER_LIMIT` for taps at or above it and leaves the floor where it was, so
+such a jump cannot pin the floor. Recovery in both cases: retire the tag
+(`sphragis revoke --retire`) and issue a new one; a rekey does not reset
+`SDMReadCtr`.
+
+**Alert throttling.** `AlertThrottle` (on by default in the API) drops an
+alert identical to one sent for the same tag in the last
+`SPHRAGIS_ALERT_DEDUP_SECONDS` (300) and allows each tag
+`SPHRAGIS_ALERT_UID_BURST` (5) alerts per `SPHRAGIS_ALERT_UID_WINDOW` (3600 s).
+Someone replaying a stack of withheld URLs for one tag therefore cannot fill
+the webhook queue and push out the alerts for other tags. Suppressed alerts
+are logged (`alert_suppressed`) and counted; the signed events and the
+verification log still record every tap. The counts, and the alerts the
+webhook queue dropped, are at `GET /v1/alert-stats` (reader token). The
+throttle is per process: with N replicas a tag can raise up to N times the
+budget.
+
 ## Scoring
 
 Weights aggregate into a 0–100 risk score mapped to a classification:

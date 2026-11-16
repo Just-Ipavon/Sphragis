@@ -80,8 +80,10 @@ freschezza.
   Una cattura radio passiva di un cambio chiavi da fabbrica ne rivela comunque
   le chiavi: cambia le chiavi in un luogo schermato, con una fornitura
   controllata.
-- **Esaurimento del contatore**: `SDMReadCtr` è a 24 bit. La gestione del
-  rollover è una questione di deployment e non è modellata qui.
+- **Esaurimento del contatore**: `SDMReadCtr` è a 24 bit. Il primo tap vicino
+  al limite genera un alert (`counter_near_limit`), e `refuse_at` impedisce a
+  un clone che possiede le chiavi di bloccare il floor al massimo; il rimedio è
+  ritirare la tag ([ciclo di vita](docs/clone-detection.it.md#ciclo-di-vita-delle-tag)).
 - `TagAnalyzer` mantiene un floor anti-replay persistente (`CounterBackend`)
   *e* un rilevatore a punteggio la cui cronologia vive in un `ObservationStore`.
   Con lo store in memoria di default lo scoring si ricostruisce dal flusso dal

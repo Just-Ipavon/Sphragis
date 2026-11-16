@@ -82,6 +82,49 @@ avanti. Al proprietario non costa nulla: il tap autentico successivo è nuovo, e
 il salto genera al massimo `large_counter_gap` e, se rapido, `counter_rate` —
 `SUSPICIOUS`, mai un blocco duraturo.
 
+## Ciclo di vita delle tag
+
+**Lista di revoca.** Una tag persa, rubata o restituita conserva le sue chiavi
+e continua a produrre tap validi. Mettila nella lista di revoca e i suoi tap
+rispondono `REVOKED`; il controllo avviene dopo la verifica del MAC e prima di
+toccare il registro o il rilevatore (un UID inventato non scopre nulla):
+
+```bash
+sphragis revoke 04DE5F1EACC040 --sqlite sphragis.db --reason "denunciata rubata"
+sphragis revoke 04DE5F1EACC040 --sqlite sphragis.db --retire --reason restituita
+sphragis revocations --sqlite sphragis.db
+sphragis reinstate 04DE5F1EACC040 --sqlite sphragis.db
+```
+
+(`--db-url postgresql://…` per il database condiviso.) `revoked` e `retired`
+rispondono entrambi `REVOKED`; il segnale (`revoked` o `retired`) e il
+dettaglio riportano stato e motivo. `REVOKED` genera un alert per default.
+
+**Rollover del contatore.** `SDMReadCtr` è a 24 bit: a 16 777 215 la tag
+smette di emettere tap. `CounterPolicy(warn_at=…)` (`SPHRAGIS_COUNTER_WARN_AT`,
+default 65 536 tap prima del limite) aggiunge il segnale `counter_near_limit`
+al primo tap nuovo che raggiunge la soglia, e il servizio genera un alert.
+Il registro accetta ogni valore del contatore una volta sola, quindi l'alert
+scatta una volta per tag, su tutte le repliche insieme. Un clone che possiede
+le chiavi può anche portare un UID al massimo, dopo di che ogni tap autentico
+è una regressione. `refuse_at` (`SPHRAGIS_COUNTER_REFUSE_AT`, disattivato per
+default) risponde `COUNTER_LIMIT` ai tap da quella soglia in su e lascia il
+floor dov'era, così quel salto non può bloccare il floor. In entrambi i casi il
+rimedio è ritirare la tag (`sphragis revoke --retire`) ed emetterne una nuova:
+un cambio chiavi non azzera `SDMReadCtr`.
+
+**Limitazione degli alert.** `AlertThrottle` (attivo per default nell'API)
+scarta un alert identico a uno inviato per la stessa tag negli ultimi
+`SPHRAGIS_ALERT_DEDUP_SECONDS` (300) e concede a ogni tag
+`SPHRAGIS_ALERT_UID_BURST` (5) alert ogni `SPHRAGIS_ALERT_UID_WINDOW` (3600 s).
+Chi rinvia una pila di URL trattenuti di una tag non può quindi riempire la
+coda del webhook e scalzare gli alert delle altre tag. Gli alert soppressi
+vengono registrati nel log (`alert_suppressed`) e contati; gli eventi firmati e
+il log delle verifiche registrano comunque ogni tap. I conteggi, insieme agli
+alert scartati dalla coda del webhook, sono in `GET /v1/alert-stats` (token di
+lettore). La limitazione è per processo: con N repliche una tag può generare
+fino a N volte il budget.
+
 ## Punteggio
 
 I pesi si aggregano in un punteggio di rischio 0–100 mappato su una classe:

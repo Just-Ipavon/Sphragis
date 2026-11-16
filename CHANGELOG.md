@@ -14,6 +14,21 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- Tag lifecycle (#73):
+  - Revocation list: `REVOKED` answers taps from retired or revoked tags,
+    checked on authentic taps before any state is touched. Memory, SQLite and
+    Postgres implementations; `sphragis revoke`, `reinstate` and `revocations`
+    manage it. `REVOKED` raises an alert by default.
+  - Counter rollover: the first fresh tap at `SPHRAGIS_COUNTER_WARN_AT`
+    (65 536 before the 24-bit limit) carries `counter_near_limit` and raises
+    one alert per tag. `SPHRAGIS_COUNTER_REFUSE_AT` answers `COUNTER_LIMIT`
+    without moving the floor, so a clone with the keys cannot pin it at the
+    maximum.
+  - Alert throttling: `AlertThrottle` de-duplicates alerts and caps them per
+    tag (`SPHRAGIS_ALERT_UID_BURST`, `_UID_WINDOW`, `_DEDUP_SECONDS`), so a
+    flood for one tag cannot push out the others. `GET /v1/alert-stats`
+    (reader token) reports suppressed and dropped alerts;
+    `BackgroundAlertSink.dropped` counts a full queue.
 - Shared rate limits and challenges for several replicas (#72):
   `SPHRAGIS_RATE_LIMIT_STORE=db` keeps the per-IP and per-UID token buckets
   in the shared database (`PostgresRateLimiter`, or `SqliteRateLimiter` for

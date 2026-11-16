@@ -28,6 +28,13 @@ Exit status of verify: 0 AUTHENTIC, 1 ERROR (malformed input), 3 REPLAY,
 4 FORGED; 2 is a usage error for every command. Taps with an `enc`
 parameter are verified as SDMENCFileData taps automatically.
 
+    # Withdraw a lost tag, list the withdrawn ones, put it back
+    python -m sphragis.cli revoke 04DE5F1EACC040 --sqlite sphragis.db --reason "reported stolen"
+    python -m sphragis.cli revoke 04DE5F1EACC040 --sqlite sphragis.db --retire --reason returned
+    python -m sphragis.cli revocations --sqlite sphragis.db
+    python -m sphragis.cli reinstate 04DE5F1EACC040 --sqlite sphragis.db
+    (--db-url postgresql://... instead of --sqlite for the shared database)
+
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
 """
@@ -221,6 +228,82 @@ def _cmd_verify_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("limit must be an integer") from None
+    if limit < 1:
+        raise argparse.ArgumentTypeError("limit must be at least 1")
+    return limit
+
+
+def _revocation_list(args: argparse.Namespace):
+    if args.db_url:
+        from .pgstore import PostgresRevocationList
+        return PostgresRevocationList(args.db_url)
+    from .sqlstore import SqliteRevocationList
+    if not os.path.exists(args.sqlite):
+        raise SystemExit(f"error: {args.sqlite} does not exist (the API's database)")
+    return SqliteRevocationList(args.sqlite)
+
+
+def _identity(value: str) -> str:
+    value = value.strip()
+    if not value or len(value) > 128 or any(c.isspace() for c in value):
+        raise argparse.ArgumentTypeError("an identity (a UID in hex, or a backend's "
+                                         "prefixed identity)")
+    return value
+
+
+def _cmd_revoke(args: argparse.Namespace) -> int:
+    from .revocation import RevocationStatus
+    status = RevocationStatus.RETIRED if args.retire else RevocationStatus.REVOKED
+    store = _revocation_list(args)
+    try:
+        entry = store.revoke(args.identity, status, args.reason)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    finally:
+        store.close()
+    print(f"{entry.status.value.upper():<8}: {entry.identity}"
+          + (f"  ({entry.reason})" if entry.reason else ""))
+    return 0
+
+
+def _cmd_reinstate(args: argparse.Namespace) -> int:
+    store = _revocation_list(args)
+    try:
+        removed = store.reinstate(args.identity)
+    finally:
+        store.close()
+    print(("REINSTATED: " if removed else "NOT LISTED: ") + args.identity)
+    return 0 if removed else 1
+
+
+def _cmd_revocations(args: argparse.Namespace) -> int:
+    import datetime
+    store = _revocation_list(args)
+    try:
+        entries = store.entries(args.limit)
+    finally:
+        store.close()
+    if args.json:
+        print(json.dumps([{"identity": e.identity, "status": e.status.value,
+                           "reason": e.reason, "since": e.since} for e in entries]))
+        return 0
+    for e in entries:
+        when = datetime.datetime.fromtimestamp(e.since, datetime.timezone.utc)
+        print(f"{e.identity}  {e.status.value:<7}  {when:%Y-%m-%d %H:%M}Z  {e.reason}")
+    return 0
+
+
+def _add_db_args(parser: argparse.ArgumentParser) -> None:
+    db = parser.add_mutually_exclusive_group(required=True)
+    db.add_argument("--sqlite", metavar="DB", help="the API's SQLite database")
+    db.add_argument("--db-url", metavar="URL", help="the API's postgresql:// database")
+
+
 def _add_key_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--secrets-dir", help="directory with master_file and meta_read "
                                               "(hex, 0600): per-UID diversified keys")
@@ -274,6 +357,25 @@ def build_parser() -> argparse.ArgumentParser:
                     help="raw Ed25519 public key (hex), as served at /v1/event-key")
     ve.add_argument("--log-id", default=None, help="expected log id (default: the first)")
     ve.set_defaults(func=_cmd_verify_events)
+
+    r = sub.add_parser("revoke", help="withdraw a tag: its taps answer REVOKED")
+    r.add_argument("identity", type=_identity, help="UID (hex) or backend identity")
+    r.add_argument("--retire", action="store_true",
+                   help="mark it retired (taken out of service) instead of revoked")
+    r.add_argument("--reason", default="", help="one line, kept with the entry")
+    _add_db_args(r)
+    r.set_defaults(func=_cmd_revoke)
+
+    ri = sub.add_parser("reinstate", help="take a tag off the revocation list")
+    ri.add_argument("identity", type=_identity, help="UID (hex) or backend identity")
+    _add_db_args(ri)
+    ri.set_defaults(func=_cmd_reinstate)
+
+    rl = sub.add_parser("revocations", help="list retired and revoked tags")
+    rl.add_argument("--limit", type=_limit, default=1000, help="most recent first")
+    rl.add_argument("--json", action="store_true", help="machine-readable output")
+    _add_db_args(rl)
+    rl.set_defaults(func=_cmd_revocations)
 
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     _add_key_args(e)

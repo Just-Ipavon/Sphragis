@@ -399,3 +399,50 @@ class PostgresChallengeStore(_PgBase):
             "AND expires >= extract(epoch FROM clock_timestamp()) RETURNING 1",
             (bytes(challenge),)).fetchone()
         return row is not None
+
+
+# --- Revocation list (#73) --------------------------------------------------------
+
+class PostgresRevocationList(_PgBase):
+    """Retired and revoked identities, shared by every replica."""
+
+    _SCHEMA = """
+    CREATE TABLE IF NOT EXISTS sphragis_revocations (
+        identity  TEXT PRIMARY KEY,
+        status    TEXT NOT NULL,
+        reason    TEXT NOT NULL,
+        since     DOUBLE PRECISION NOT NULL
+    );
+    """
+
+    def get(self, identity: str):
+        from .revocation import Revocation, RevocationStatus
+        row = self._connection().execute(
+            "SELECT identity, status, reason, since FROM sphragis_revocations "
+            "WHERE identity = %s", (store_key(identity),)).fetchone()
+        return None if row is None else Revocation(row[0], RevocationStatus(row[1]),
+                                                   row[2], row[3])
+
+    def revoke(self, identity: str, status="revoked", reason: str = ""):
+        from .revocation import Revocation, check_entry
+        key, status, reason = check_entry(identity, status, reason)
+        since = self._connection().execute(
+            "INSERT INTO sphragis_revocations (identity, status, reason, since) "
+            "VALUES (%s, %s, %s, extract(epoch FROM clock_timestamp())) "
+            "ON CONFLICT (identity) DO UPDATE SET status = EXCLUDED.status, "
+            "reason = EXCLUDED.reason, since = EXCLUDED.since RETURNING since",
+            (key, status.value, reason)).fetchone()[0]
+        return Revocation(key, status, reason, since)
+
+    def reinstate(self, identity: str) -> bool:
+        row = self._connection().execute(
+            "DELETE FROM sphragis_revocations WHERE identity = %s RETURNING 1",
+            (store_key(identity),)).fetchone()
+        return row is not None
+
+    def entries(self, limit: int = 1000):
+        from .revocation import Revocation, RevocationStatus
+        rows = self._connection().execute(
+            "SELECT identity, status, reason, since FROM sphragis_revocations "
+            "ORDER BY since DESC LIMIT %s", (limit,)).fetchall()
+        return [Revocation(r[0], RevocationStatus(r[1]), r[2], r[3]) for r in rows]
