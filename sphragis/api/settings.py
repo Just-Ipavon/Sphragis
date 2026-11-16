@@ -14,7 +14,12 @@ Key material (SDM keys, pseudonymization key, webhook secret) is read through a
 | SPHRAGIS_IP_RATE / _IP_BURST  | 5 / 20          | per-client-IP token bucket                 |
 | SPHRAGIS_UID_RATE / _UID_BURST| 0.2 / 10        | per-tag token bucket (authentic taps only) |
 | SPHRAGIS_MIN_TRAVEL_SECONDS   | 60              | impossible-velocity threshold              |
-| SPHRAGIS_ALERT_ON             | CLONE_LIKELY    | classifications that raise an alert        |
+| SPHRAGIS_ALERT_ON             | CLONE_LIKELY,REVOKED | classifications that raise an alert   |
+| SPHRAGIS_ALERT_UID_BURST      | 5               | alerts per tag before throttling           |
+| SPHRAGIS_ALERT_UID_WINDOW     | 3600            | seconds to refill a tag's alert budget     |
+| SPHRAGIS_ALERT_DEDUP_SECONDS  | 300             | identical alerts for a tag within this are dropped |
+| SPHRAGIS_COUNTER_WARN_AT      | 16711680        | counter that raises `counter_near_limit` (`off`) |
+| SPHRAGIS_COUNTER_REFUSE_AT    | off             | counter from which taps are COUNTER_LIMIT  |
 | SPHRAGIS_MAX_BODY_BYTES       | 8192            | largest accepted request body              |
 | SPHRAGIS_WEBHOOK_URL          | (none)          | HMAC-signed alert webhook (https)          |
 | SPHRAGIS_LOG_UID              | hmac            | `hmac` (pseudonymized) or `plain`          |
@@ -24,6 +29,11 @@ Key material (SDM keys, pseudonymization key, webhook secret) is read through a
 | SPHRAGIS_PKCS11_TOKEN         | (none)          | token label (with pkcs11)                  |
 | SPHRAGIS_PKCS11_KEY_PREFIX    | sphragis.       | prefix of the key labels on the token      |
 | SPHRAGIS_PKCS11_CACHE_SECONDS | 60              | per-UID key cache lifetime (0: off)        |
+| SPHRAGIS_WEBAUTHN_RP_ID       | (none)          | relying party ID (with fido2-webauthn)     |
+| SPHRAGIS_WEBAUTHN_ORIGINS     | (none)          | allowed origins, comma-separated (https)   |
+| SPHRAGIS_WEBAUTHN_USER_VERIFICATION | preferred | required, preferred or discouraged       |
+| SPHRAGIS_WEBAUTHN_CHALLENGE_TTL | 120           | seconds a challenge stays valid            |
+| SPHRAGIS_WEBAUTHN_MAX_CHALLENGES | 100000       | outstanding challenges before 503          |
 
 Every value is validated at startup: a typo or an out-of-range number stops
 the service instead of silently disabling a limit or an alert.
@@ -47,9 +57,11 @@ from typing import Iterable, Mapping
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = frozenset({"GENUINE", "SUSPICIOUS", "REPLAY", "CLONE_LIKELY",
-                             "FORGED", "ERROR", "THROTTLED"})
-# Verification backends selectable with SPHRAGIS_BACKENDS.
-BACKENDS = ("ntag424-sun-enc", "ntag424-sun")
+                             "FORGED", "ERROR", "THROTTLED", "REVOKED",
+                             "COUNTER_LIMIT"})
+MAX_READ_COUNTER = 0xFFFFFF
+# Verification backends selectable with SPHRAGIS_BACKENDS, most specific first.
+BACKENDS = ("fido2-webauthn", "ntag424-sun-enc", "ntag424-sun")
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
@@ -116,7 +128,7 @@ class ApiSettings:
     uid_rate: float = 0.2
     uid_burst: int = 10
     min_travel_seconds: float = 60.0
-    alert_on: frozenset[str] = frozenset({"CLONE_LIKELY"})
+    alert_on: frozenset[str] = frozenset({"CLONE_LIKELY", "REVOKED"})
     max_body_bytes: int = 8192
     webhook_url: str | None = None
     log_uid: str = "hmac"
@@ -135,6 +147,16 @@ class ApiSettings:
     pkcs11_token: str | None = None
     pkcs11_key_prefix: str = "sphragis."
     pkcs11_cache_seconds: float = 60.0
+    webauthn_rp_id: str | None = None
+    webauthn_origins: tuple[str, ...] = ()
+    webauthn_user_verification: str = "preferred"
+    webauthn_challenge_ttl: float = 120.0
+    webauthn_max_challenges: int = 100_000
+    alert_uid_burst: int = 5
+    alert_uid_window: float = 3600.0
+    alert_dedup_seconds: float = 300.0
+    counter_warn_at: int | None = MAX_READ_COUNTER - 0xFFFF
+    counter_refuse_at: int | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -152,7 +174,7 @@ class ApiSettings:
         log_uid = get("LOG_UID", "hmac").lower()
         if log_uid not in ("hmac", "plain"):
             raise ValueError("SPHRAGIS_LOG_UID must be 'hmac' or 'plain'")
-        alert_on = frozenset(c.upper() for c in csv("ALERT_ON", "CLONE_LIKELY"))
+        alert_on = frozenset(c.upper() for c in csv("ALERT_ON", "CLONE_LIKELY,REVOKED"))
         unknown = alert_on - CLASSIFICATIONS
         if not alert_on or unknown:
             raise ValueError("SPHRAGIS_ALERT_ON must list classifications among "
@@ -227,6 +249,48 @@ class ApiSettings:
         if not 0 <= pkcs11_cache < math.inf:
             raise ValueError("SPHRAGIS_PKCS11_CACHE_SECONDS must be a number of "
                              "seconds >= 0")
+        webauthn_rp_id = get("WEBAUTHN_RP_ID", "").lower() or None
+        webauthn_origins = tuple(csv("WEBAUTHN_ORIGINS"))
+        webauthn_uv = get("WEBAUTHN_USER_VERIFICATION", "preferred").lower()
+        if webauthn_uv not in ("required", "preferred", "discouraged"):
+            raise ValueError("SPHRAGIS_WEBAUTHN_USER_VERIFICATION must be required, "
+                             "preferred or discouraged")
+        if "fido2-webauthn" in backends:
+            if not webauthn_rp_id or not webauthn_origins:
+                raise ValueError("fido2-webauthn needs SPHRAGIS_WEBAUTHN_RP_ID and "
+                                 "SPHRAGIS_WEBAUTHN_ORIGINS")
+            from ..webauthn import check_rp_id
+            try:
+                check_rp_id(webauthn_rp_id, webauthn_origins)
+            except ValueError as exc:
+                raise ValueError(f"SPHRAGIS_WEBAUTHN_ORIGINS: {exc}") from None
+        def counter(name: str, default: str) -> int | None:
+            raw = get(name, default).lower()
+            if raw == "off":
+                return None
+            try:
+                value = int(raw, 0)
+            except ValueError:
+                value = 0
+            if not 1 <= value <= MAX_READ_COUNTER:
+                raise ValueError(f"SPHRAGIS_{name} must be a counter between 1 and "
+                                 f"{MAX_READ_COUNTER}, or 'off'")
+            return value
+
+        counter_warn_at = counter("COUNTER_WARN_AT", str(MAX_READ_COUNTER - 0xFFFF))
+        counter_refuse_at = counter("COUNTER_REFUSE_AT", "off")
+        if (counter_warn_at is not None and counter_refuse_at is not None
+                and counter_warn_at >= counter_refuse_at):
+            raise ValueError("SPHRAGIS_COUNTER_WARN_AT must be below "
+                             "SPHRAGIS_COUNTER_REFUSE_AT")
+        dedup_raw = get("ALERT_DEDUP_SECONDS", "300")
+        try:
+            alert_dedup_seconds = float(dedup_raw)
+        except ValueError:
+            alert_dedup_seconds = -1.0
+        if not 0 <= alert_dedup_seconds < math.inf:
+            raise ValueError("SPHRAGIS_ALERT_DEDUP_SECONDS must be a number of "
+                             "seconds >= 0")
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -263,4 +327,16 @@ class ApiSettings:
             pkcs11_token=pkcs11_token,
             pkcs11_key_prefix=get("PKCS11_KEY_PREFIX", "sphragis."),
             pkcs11_cache_seconds=pkcs11_cache,
+            webauthn_rp_id=webauthn_rp_id,
+            webauthn_origins=webauthn_origins,
+            webauthn_user_verification=webauthn_uv,
+            webauthn_challenge_ttl=_positive("WEBAUTHN_CHALLENGE_TTL",
+                                             get("WEBAUTHN_CHALLENGE_TTL", "120")),
+            webauthn_max_challenges=_positive("WEBAUTHN_MAX_CHALLENGES",
+                                              get("WEBAUTHN_MAX_CHALLENGES", "100000"), int),
+            alert_uid_burst=_positive("ALERT_UID_BURST", get("ALERT_UID_BURST", "5"), int),
+            alert_uid_window=_positive("ALERT_UID_WINDOW", get("ALERT_UID_WINDOW", "3600")),
+            alert_dedup_seconds=alert_dedup_seconds,
+            counter_warn_at=counter_warn_at,
+            counter_refuse_at=counter_refuse_at,
         )

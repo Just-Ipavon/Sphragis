@@ -32,6 +32,17 @@ parameter are verified as SDMENCFileData taps automatically.
     # SPHRAGIS_PKCS11_PIN, or asked for)
     python -m sphragis.cli hsm-import --module /usr/lib/softhsm/libsofthsm2.so \
         --token sphragis --secrets-dir ~/.sphragis/keys --versions 1,2
+    # Import a WebAuthn credential the relying party registered, list, revoke
+    python -m sphragis.cli credentials import --sqlite sphragis.db \
+        --credential-id=<base64url> --cose-key=<base64url> --rp-id verify.example.com
+    python -m sphragis.cli credentials list --sqlite sphragis.db
+    python -m sphragis.cli credentials revoke --sqlite sphragis.db --credential-id=<base64url>
+    # Withdraw a lost tag, list the withdrawn ones, put it back
+    python -m sphragis.cli revoke 04DE5F1EACC040 --sqlite sphragis.db --reason "reported stolen"
+    python -m sphragis.cli revoke 04DE5F1EACC040 --sqlite sphragis.db --retire --reason returned
+    python -m sphragis.cli revocations --sqlite sphragis.db
+    python -m sphragis.cli reinstate 04DE5F1EACC040 --sqlite sphragis.db
+    (--db-url postgresql://... instead of --sqlite for the shared database)
 
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
@@ -261,6 +272,135 @@ def _cmd_hsm_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _b64url(value: str) -> bytes:
+    from .webauthn import b64url_decode
+    try:
+        data = b64url_decode(value.strip())
+    except Exception:  # noqa: BLE001 - SdmError or ValueError: a usage error
+        raise argparse.ArgumentTypeError("expected unpadded base64url") from None
+    if not data:
+        raise argparse.ArgumentTypeError("expected unpadded base64url")
+    return data
+
+
+def _credential_store(args: argparse.Namespace):
+    if args.db_url:
+        from .pgstore import PostgresCredentialStore
+        return PostgresCredentialStore(args.db_url)
+    from .sqlstore import SqliteCredentialStore
+    if not os.path.exists(args.sqlite):
+        raise SystemExit(f"error: {args.sqlite} does not exist (the API's database)")
+    return SqliteCredentialStore(args.sqlite)
+
+
+def _cmd_credentials(args: argparse.Namespace) -> int:
+    import datetime
+
+    from .webauthn import b64url_encode
+    store = _credential_store(args)
+    try:
+        if args.action == "import":
+            try:
+                store.add(args.credential_id, args.cose_key, args.rp_id)
+            except ValueError as exc:
+                raise SystemExit(f"error: {exc}") from None
+            print(f"IMPORTED  : {b64url_encode(args.credential_id)}"
+                  + (f"  (RP ID {args.rp_id})" if args.rp_id else ""))
+            return 0
+        if args.action == "revoke":
+            done = store.revoke(args.credential_id)
+            print(("REVOKED   : " if done else "NOT ACTIVE: ")
+                  + b64url_encode(args.credential_id))
+            return 0 if done else 1
+        records = store.entries(args.limit)
+    finally:
+        store.close()
+    if args.json:
+        print(json.dumps([{"credential_id": b64url_encode(r.credential_id),
+                           "rp_id": r.rp_id, "created": r.created,
+                           "revoked": r.revoked} for r in records]))
+        return 0
+    for r in records:
+        when = datetime.datetime.fromtimestamp(r.created, datetime.timezone.utc)
+        state = "revoked" if r.revoked is not None else "active"
+        print(f"{b64url_encode(r.credential_id)}  {state:<7}  {when:%Y-%m-%d %H:%M}Z  "
+              f"{r.rp_id or '-'}")
+def _limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("limit must be an integer") from None
+    if limit < 1:
+        raise argparse.ArgumentTypeError("limit must be at least 1")
+    return limit
+
+
+def _revocation_list(args: argparse.Namespace):
+    if args.db_url:
+        from .pgstore import PostgresRevocationList
+        return PostgresRevocationList(args.db_url)
+    from .sqlstore import SqliteRevocationList
+    if not os.path.exists(args.sqlite):
+        raise SystemExit(f"error: {args.sqlite} does not exist (the API's database)")
+    return SqliteRevocationList(args.sqlite)
+
+
+def _identity(value: str) -> str:
+    value = value.strip()
+    if not value or len(value) > 128 or any(c.isspace() for c in value):
+        raise argparse.ArgumentTypeError("an identity (a UID in hex, or a backend's "
+                                         "prefixed identity)")
+    return value
+
+
+def _cmd_revoke(args: argparse.Namespace) -> int:
+    from .revocation import RevocationStatus
+    status = RevocationStatus.RETIRED if args.retire else RevocationStatus.REVOKED
+    store = _revocation_list(args)
+    try:
+        entry = store.revoke(args.identity, status, args.reason)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    finally:
+        store.close()
+    print(f"{entry.status.value.upper():<8}: {entry.identity}"
+          + (f"  ({entry.reason})" if entry.reason else ""))
+    return 0
+
+
+def _cmd_reinstate(args: argparse.Namespace) -> int:
+    store = _revocation_list(args)
+    try:
+        removed = store.reinstate(args.identity)
+    finally:
+        store.close()
+    print(("REINSTATED: " if removed else "NOT LISTED: ") + args.identity)
+    return 0 if removed else 1
+
+
+def _cmd_revocations(args: argparse.Namespace) -> int:
+    import datetime
+    store = _revocation_list(args)
+    try:
+        entries = store.entries(args.limit)
+    finally:
+        store.close()
+    if args.json:
+        print(json.dumps([{"identity": e.identity, "status": e.status.value,
+                           "reason": e.reason, "since": e.since} for e in entries]))
+        return 0
+    for e in entries:
+        when = datetime.datetime.fromtimestamp(e.since, datetime.timezone.utc)
+        print(f"{e.identity}  {e.status.value:<7}  {when:%Y-%m-%d %H:%M}Z  {e.reason}")
+    return 0
+
+
+def _add_db_args(parser: argparse.ArgumentParser) -> None:
+    db = parser.add_mutually_exclusive_group(required=True)
+    db.add_argument("--sqlite", metavar="DB", help="the API's SQLite database")
+    db.add_argument("--db-url", metavar="URL", help="the API's postgresql:// database")
+
+
 def _add_key_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--secrets-dir", help="directory with master_file and meta_read "
                                               "(hex, 0600): per-UID diversified keys")
@@ -327,6 +467,44 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--prefix", default="sphragis.",
                    help="label prefix (SPHRAGIS_PKCS11_KEY_PREFIX)")
     h.set_defaults(func=_cmd_hsm_import)
+    c = sub.add_parser("credentials", help="WebAuthn credentials the API accepts")
+    actions = c.add_subparsers(dest="action", required=True)
+    ci = actions.add_parser("import", help="import a credential the relying party "
+                                           "registered (attestation is its job)")
+    ci.add_argument("--credential-id", type=_b64url, required=True,
+                    help="base64url; write --credential-id=ID, since an id may start with '-'")
+    ci.add_argument("--cose-key", type=_b64url, required=True,
+                    help="COSE_Key from the registration, base64url (ES256 or EdDSA); "
+                         "write --cose-key=KEY")
+    ci.add_argument("--rp-id", default=None,
+                    help="only accept it for this RP ID (recommended)")
+    cr = actions.add_parser("revoke", help="stop accepting a credential")
+    cr.add_argument("--credential-id", type=_b64url, required=True,
+                    help="base64url; write --credential-id=ID, since an id may start with '-'")
+    cl = actions.add_parser("list", help="list imported credentials, newest first")
+    cl.add_argument("--limit", type=_taps, default=1000)
+    cl.add_argument("--json", action="store_true", help="machine-readable output")
+    for action in (ci, cr, cl):
+        _add_db_args(action)
+    c.set_defaults(func=_cmd_credentials)
+    r = sub.add_parser("revoke", help="withdraw a tag: its taps answer REVOKED")
+    r.add_argument("identity", type=_identity, help="UID (hex) or backend identity")
+    r.add_argument("--retire", action="store_true",
+                   help="mark it retired (taken out of service) instead of revoked")
+    r.add_argument("--reason", default="", help="one line, kept with the entry")
+    _add_db_args(r)
+    r.set_defaults(func=_cmd_revoke)
+
+    ri = sub.add_parser("reinstate", help="take a tag off the revocation list")
+    ri.add_argument("identity", type=_identity, help="UID (hex) or backend identity")
+    _add_db_args(ri)
+    ri.set_defaults(func=_cmd_reinstate)
+
+    rl = sub.add_parser("revocations", help="list retired and revoked tags")
+    rl.add_argument("--limit", type=_limit, default=1000, help="most recent first")
+    rl.add_argument("--json", action="store_true", help="machine-readable output")
+    _add_db_args(rl)
+    rl.set_defaults(func=_cmd_revocations)
 
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     _add_key_args(e)

@@ -24,6 +24,37 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
   estraibili e a uso singolo; le versioni delle chiavi ruotano come prima. Un
   `KeyProvider` può ora definire `decrypt_picc(enc)` invece di esporre
   `meta_read_key()`. Un job di CI esegue i test contro SoftHSM2.
+- WebAuthn nella REST API (#57): `SPHRAGIS_BACKENDS=fido2-webauthn` con
+  `SPHRAGIS_WEBAUTHN_RP_ID`, `_ORIGINS` e `_USER_VERIFICATION` (validati
+  all'avvio). Le credenziali vivono in `SqliteCredentialStore` /
+  `PostgresCredentialStore` (importa, revoca ed elenca con
+  `sphragis credentials`; una credenziale può essere legata al suo RP ID).
+  `POST /v1/webauthn/challenge` fornisce le opzioni della richiesta, limitato
+  per IP e senza nominare credenziali; le challenge sono condivise da tutte le
+  repliche, monouso e in numero limitato (`SPHRAGIS_WEBAUTHN_MAX_CHALLENGES`).
+  `/v1/verify` accetta anche `{"assertion": {...}}`.
+- Ciclo di vita delle tag (#73):
+  - Lista di revoca: `REVOKED` risponde ai tap di tag ritirate o revocate,
+    controllato sui tap autentici prima di toccare qualsiasi stato.
+    Implementazioni in memoria, SQLite e Postgres; si gestisce con
+    `sphragis revoke`, `reinstate` e `revocations`. `REVOKED` genera un alert
+    per default.
+  - Rollover del contatore: il primo tap nuovo a `SPHRAGIS_COUNTER_WARN_AT`
+    (65 536 prima del limite a 24 bit) porta `counter_near_limit` e genera un
+    alert per tag. `SPHRAGIS_COUNTER_REFUSE_AT` risponde `COUNTER_LIMIT` senza
+    spostare il floor, così un clone con le chiavi non può bloccarlo al massimo.
+  - Limitazione degli alert: `AlertThrottle` elimina i duplicati e limita gli
+    alert per tag (`SPHRAGIS_ALERT_UID_BURST`, `_UID_WINDOW`,
+    `_DEDUP_SECONDS`), così una raffica per una tag non scalza le altre.
+    `GET /v1/alert-stats` (token di lettore) riporta gli alert soppressi e
+    scartati; `BackgroundAlertSink.dropped` conta la coda piena.
+- Simulatore NTAG 424 DNA nel package (#74): `sphragis.simulator.SimulatedNtag424`,
+  prima `tests/fake_ntag424.py`, modella autenticazione EV2, ChangeKey,
+  ChangeFileSettings, WriteData e mirroring SDM. Con
+  `--reader emulator --emulator-state FILE` i tool eseguono provisioning, tap,
+  rekey e reset di un tag simulato conservato in FILE (modo 0600), così
+  l'intero ciclo di vita gira in CI senza hardware. `tap_verify.py` segnala un
+  tag illeggibile invece di un traceback.
 - Limiti di frequenza e challenge condivisi tra repliche (#72):
   `SPHRAGIS_RATE_LIMIT_STORE=db` tiene i token bucket per IP e per UID nel
   database condiviso (`PostgresRateLimiter`, o `SqliteRateLimiter` per più

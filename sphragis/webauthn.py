@@ -28,8 +28,14 @@ non-zero counter before, in which case the drop to 0 is scored as the
 regression it is.
 
 Registration (attestation) is out of scope: credentials are registered by the
-relying party and looked up here by credential id. The identity of a tap is
-`fido2:<credential id, base64url>`.
+relying party and imported here (`SqliteCredentialStore`,
+`PostgresCredentialStore`, `sphragis credentials import`), then looked up by
+credential id. A credential stored with an RP ID only verifies for that RP
+ID. The identity of a tap is `fido2:<credential id, base64url>`.
+
+`ChallengeIssuer` turns a `ChallengeStore` into the options the browser passes
+to `navigator.credentials.get()`; the REST API serves them at
+`POST /v1/webauthn/challenge`.
 
 Trade-off: a WebAuthn credential is bound to its relying party ID (a domain).
 If the domain that verifies the cards changes, existing credentials stop
@@ -56,6 +62,7 @@ from .backends import AuthenticTap, ForgedTap
 from .events import EventError, cbor_decode
 from .sdm import SdmError
 
+MAX_CREDENTIAL_ID = 1023          # WebAuthn: at most 1023 bytes
 COSE_ALG_ES256 = -7
 COSE_ALG_EDDSA = -8
 _FLAG_UP = 0x01
@@ -82,9 +89,11 @@ class RegisteredCredential:
     credential_id: bytes
     algorithm: int          # COSE algorithm: -7 (ES256) or -8 (EdDSA)
     public_key: object      # pycryptodome key
+    rp_id: str | None = None   # set: only valid for this relying party ID
 
     @classmethod
-    def from_cose_key(cls, credential_id: bytes, cose_key: bytes) -> "RegisteredCredential":
+    def from_cose_key(cls, credential_id: bytes, cose_key: bytes,
+                      rp_id: str | None = None) -> "RegisteredCredential":
         """Build from the COSE_Key the authenticator returned at registration."""
         try:
             key = cbor_decode(cose_key)
@@ -107,7 +116,9 @@ class RegisteredCredential:
             public = eddsa.import_public_key(x)
         else:
             raise ValueError("unsupported COSE key (ES256 on P-256 or EdDSA on Ed25519)")
-        return cls(bytes(credential_id), alg, public)
+        if not credential_id or len(credential_id) > MAX_CREDENTIAL_ID:
+            raise ValueError(f"a credential id is 1 to {MAX_CREDENTIAL_ID} bytes")
+        return cls(bytes(credential_id), alg, public, rp_id)
 
 
 @runtime_checkable
@@ -124,6 +135,22 @@ class MemoryCredentialStore:
 
     def get(self, credential_id: bytes) -> RegisteredCredential | None:
         return self._creds.get(credential_id)
+
+
+@dataclass(frozen=True)
+class CredentialRecord:
+    """A stored credential, as listed by the durable stores."""
+
+    credential_id: bytes
+    rp_id: str | None
+    created: float
+    revoked: float | None
+
+
+def checked_credential(credential_id: bytes, cose_key: bytes,
+                       rp_id: str | None) -> RegisteredCredential:
+    """Parse before storing, so a store only ever holds usable keys."""
+    return RegisteredCredential.from_cose_key(credential_id, cose_key, rp_id)
 
 
 @runtime_checkable
@@ -163,6 +190,48 @@ class MemoryChallengeStore:
         return expires is not None and self._clock() <= expires
 
 
+class ChallengeIssuer:
+    """
+    The request options for `navigator.credentials.get()`: a fresh challenge,
+    the RP ID, the timeout and the user verification requirement. No
+    `allowCredentials`: the answer is the same whoever asks, so it says
+    nothing about which credentials are registered.
+    """
+
+    def __init__(self, challenges: ChallengeStore, rp_id: str,
+                 ttl_seconds: float = 120.0,
+                 user_verification: str = "preferred") -> None:
+        if user_verification not in ("required", "preferred", "discouraged"):
+            raise ValueError("user_verification must be required, preferred or discouraged")
+        self._challenges, self.rp_id = challenges, rp_id
+        self._timeout_ms = int(ttl_seconds * 1000)
+        self.user_verification = user_verification
+
+    def options(self) -> dict:
+        """Raises RuntimeError when too many challenges are outstanding."""
+        return {"challenge": b64url_encode(self._challenges.issue()),
+                "rpId": self.rp_id, "timeout": self._timeout_ms,
+                "userVerification": self.user_verification}
+
+
+def check_rp_id(rp_id: str, origins: Iterable[str]) -> None:
+    """The RP ID must be each origin's host or a parent domain of it (WebAuthn
+    §5.1.4.1), and origins must be https (http only for localhost)."""
+    from urllib.parse import urlsplit
+    rp_id = rp_id.strip().lower()
+    if not rp_id or "/" in rp_id or ":" in rp_id or rp_id != rp_id.strip("."):
+        raise ValueError("the RP ID is a domain, e.g. verify.example.com")
+    for origin in origins:
+        parts = urlsplit(origin)
+        host = (parts.hostname or "").lower()
+        if parts.path or parts.query or parts.fragment or not host:
+            raise ValueError(f"origin {origin!r} must be scheme://host[:port]")
+        if parts.scheme != "https" and not (parts.scheme == "http" and host == "localhost"):
+            raise ValueError(f"origin {origin!r} must be https (http only for localhost)")
+        if host != rp_id and not host.endswith("." + rp_id):
+            raise ValueError(f"origin {origin!r} is not within RP ID {rp_id!r}")
+
+
 class WebAuthnBackend:
     """Verifies WebAuthn assertions from registered FIDO2 credentials."""
 
@@ -171,6 +240,8 @@ class WebAuthnBackend:
     def __init__(self, rp_id: str, origins: Iterable[str], credentials: CredentialStore,
                  challenges: ChallengeStore, *, require_user_verification: bool = False,
                  max_size: int = 4096) -> None:
+        self.rp_id = rp_id
+        self.require_user_verification = require_user_verification
         self._rp_id_hash = hashlib.sha256(rp_id.encode()).digest()
         self._origins = frozenset(origins)
         if not self._origins:
@@ -211,6 +282,8 @@ class WebAuthnBackend:
         credential = self._creds.get(raw_id)
         if credential is None:
             raise ForgedTap("unknown credential")
+        if credential.rp_id is not None and credential.rp_id != self.rp_id:
+            raise ForgedTap("credential registered for another RP ID")
         if kind != "webauthn.get":
             raise ForgedTap("clientDataJSON is not an assertion")
         if origin not in self._origins:

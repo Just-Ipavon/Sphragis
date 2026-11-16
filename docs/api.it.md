@@ -43,10 +43,12 @@ di esso.
 | Metodo | Path | Uso |
 |--------|------|-----|
 | `GET`  | `/t?picc_data=…&cmac=…` | L'URL a cui punta il tag: il telefono lo apre al tap |
-| `POST` | `/v1/verify` `{"url": "…"}` | Un'app o un backend inoltra l'URL letto |
+| `POST` | `/v1/verify` `{"url": "…"}` o `{"assertion": {…}}` | Un'app o un backend inoltra l'URL letto, o un'asserzione WebAuthn |
 | `GET`  | `/healthz` | Sonda di liveness (senza rate limit) |
 | `GET`  | `/readyz` | Readiness: ogni storage risponde a una lettura e la coda del webhook è sotto il 90%; altrimenti `503` con i controlli falliti |
 | `GET`  | `/v1/event-key` | Chiave pubblica degli [eventi firmati](events.it.md), quando sono abilitati |
+| `POST` | `/v1/webauthn/challenge` | Opzioni per `navigator.credentials.get()`, con `fido2-webauthn` abilitato ([WebAuthn](backends.it.md#con-la-rest-api)) |
+| `GET`  | `/v1/alert-stats` | Alert soppressi dalla [limitazione](clone-detection.it.md#ciclo-di-vita-delle-tag) e scartati dalla coda del webhook (token di lettore) |
 
 I verdetti tornano sempre con `200`. Gli altri codici sono `401` (credenziali
 non valide), `422` (body malformato o campi sconosciuti) e `429` (rate limit,
@@ -131,8 +133,11 @@ della stdlib (`sphragis.logs.JsonFormatter`):
 
 ## Alert
 
-`CLONE_LIKELY` (configurabile con `SPHRAGIS_ALERT_ON`, es. `CLONE_LIKELY,REPLAY`)
-viene inviato a ogni `AlertSink` configurato:
+`CLONE_LIKELY` e `REVOKED` (configurabili con `SPHRAGIS_ALERT_ON`, es.
+`CLONE_LIKELY,REVOKED,REPLAY`), e il primo tap vicino al limite del contatore
+(`counter_near_limit`), vengono inviati a ogni `AlertSink` configurato,
+attraverso una limitazione per tag
+([ciclo di vita](clone-detection.it.md#ciclo-di-vita-delle-tag)):
 
 | Sink | Scopo |
 |------|-------|
@@ -218,7 +223,11 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: bucket per IP e per UID nel database condiviso ([rate limiting](#rate-limiting)) |
 | `SPHRAGIS_IPV6_PREFIX` | `64` | lunghezza del prefisso IPv6 coperto da un bucket (16-128) |
 | `SPHRAGIS_LEDGER_WINDOW` | nessuno (tutti) | conserva gli ultimi N valori del contatore per UID nel registro dei tap ([conservazione](clone-detection.it.md#conservazione)) |
-| `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classificazioni che generano un alert |
+| `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY,REVOKED` | classificazioni che generano un alert |
+| `SPHRAGIS_ALERT_UID_BURST` / `_UID_WINDOW` | `5` / `3600` | alert per tag per finestra prima della limitazione |
+| `SPHRAGIS_ALERT_DEDUP_SECONDS` | `300` | alert identici per una tag entro questo intervallo vengono scartati (`0`: disattivato) |
+| `SPHRAGIS_COUNTER_WARN_AT` | `16711680` | contatore che genera `counter_near_limit` una volta per tag (`off`) |
+| `SPHRAGIS_COUNTER_REFUSE_AT` | `off` | contatore da cui i tap rispondono `COUNTER_LIMIT` senza spostare il floor |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | body di richiesta più grande accettato |
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |
@@ -228,7 +237,10 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_EVENTS_ON` | tutte | classificazioni da firmare |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | versione della chiave di firma degli eventi |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | versioni di chiave attive, la corrente per prima (es. `2,1`), vedi [gestione delle chiavi](key-management.it.md#versioni-delle-chiavi-e-rotazione) |
-| `SPHRAGIS_BACKENDS` | `ntag424-sun` | backend di verifica da abilitare (`ntag424-sun`, `ntag424-sun-enc`), vedi [backend](backends.it.md) |
+| `SPHRAGIS_BACKENDS` | `ntag424-sun` | backend di verifica da abilitare (`ntag424-sun`, `ntag424-sun-enc`, `fido2-webauthn`), vedi [backend](backends.it.md) |
+| `SPHRAGIS_WEBAUTHN_RP_ID` / `_ORIGINS` | nessuno | relying party ID e origini ammesse (obbligatori con `fido2-webauthn`) |
+| `SPHRAGIS_WEBAUTHN_USER_VERIFICATION` | `preferred` | `required` rifiuta le asserzioni senza verifica dell'utente |
+| `SPHRAGIS_WEBAUTHN_CHALLENGE_TTL` / `_MAX_CHALLENGES` | `120` / `100000` | durata di una challenge (s) e quante possono essere in sospeso |
 
 Ogni valore viene validato all'avvio: rate, burst e tempo di viaggio devono
 essere finiti e positivi, `SPHRAGIS_ALERT_ON` deve elencare classificazioni

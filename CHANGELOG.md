@@ -22,6 +22,37 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
   keys in as sensitive, non-extractable, single-purpose objects; key versions
   rotate as before. A `KeyProvider` may now define `decrypt_picc(enc)` instead
   of exposing `meta_read_key()`. A CI job runs the tests against SoftHSM2.
+- WebAuthn in the REST API (#57): `SPHRAGIS_BACKENDS=fido2-webauthn` with
+  `SPHRAGIS_WEBAUTHN_RP_ID`, `_ORIGINS` and `_USER_VERIFICATION` (validated
+  at startup). Credentials live in `SqliteCredentialStore` /
+  `PostgresCredentialStore` (import, revoke, list with `sphragis credentials`;
+  a credential can be bound to its RP ID). `POST /v1/webauthn/challenge`
+  serves the request options, rate limited per IP and naming no credential;
+  challenges are shared by every replica, single use and bounded
+  (`SPHRAGIS_WEBAUTHN_MAX_CHALLENGES`). `/v1/verify` also takes
+  `{"assertion": {...}}`.
+- Tag lifecycle (#73):
+  - Revocation list: `REVOKED` answers taps from retired or revoked tags,
+    checked on authentic taps before any state is touched. Memory, SQLite and
+    Postgres implementations; `sphragis revoke`, `reinstate` and `revocations`
+    manage it. `REVOKED` raises an alert by default.
+  - Counter rollover: the first fresh tap at `SPHRAGIS_COUNTER_WARN_AT`
+    (65 536 before the 24-bit limit) carries `counter_near_limit` and raises
+    one alert per tag. `SPHRAGIS_COUNTER_REFUSE_AT` answers `COUNTER_LIMIT`
+    without moving the floor, so a clone with the keys cannot pin it at the
+    maximum.
+  - Alert throttling: `AlertThrottle` de-duplicates alerts and caps them per
+    tag (`SPHRAGIS_ALERT_UID_BURST`, `_UID_WINDOW`, `_DEDUP_SECONDS`), so a
+    flood for one tag cannot push out the others. `GET /v1/alert-stats`
+    (reader token) reports suppressed and dropped alerts;
+    `BackgroundAlertSink.dropped` counts a full queue.
+- Packaged NTAG 424 DNA simulator (#74): `sphragis.simulator.SimulatedNtag424`,
+  formerly `tests/fake_ntag424.py`, models EV2 authentication, ChangeKey,
+  ChangeFileSettings, WriteData and SDM mirroring. With
+  `--reader emulator --emulator-state FILE` the tools provision, tap, rekey
+  and reset a simulated tag kept in FILE (mode 0600), so the whole lifecycle
+  runs in CI without hardware. `tap_verify.py` reports a tag it cannot read
+  instead of a traceback.
 - Shared rate limits and challenges for several replicas (#72):
   `SPHRAGIS_RATE_LIMIT_STORE=db` keeps the per-IP and per-UID token buckets
   in the shared database (`PostgresRateLimiter`, or `SqliteRateLimiter` for

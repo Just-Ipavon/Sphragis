@@ -254,6 +254,16 @@ CREATE TABLE IF NOT EXISTS rate_buckets (
 );
 """
 
+_CREDENTIAL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    credential_id  BLOB PRIMARY KEY,
+    cose_key       BLOB NOT NULL,
+    rp_id          TEXT,
+    created        REAL NOT NULL,
+    revoked        REAL
+);
+"""
+
 _CHALLENGE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS webauthn_challenges (
     challenge  BLOB PRIMARY KEY,
@@ -314,11 +324,13 @@ class SqliteRateLimiter:
 
 
 class SqliteChallengeStore:
-    """Single-use WebAuthn challenges shared by every process on one database."""
+    """Single-use WebAuthn challenges shared by every process on one database,
+    at most `max_outstanding` unexpired at a time."""
 
     def __init__(self, path: str | os.PathLike, ttl_seconds: float = 120.0,
-                 size: int = 32, clock=time.time) -> None:
+                 size: int = 32, clock=time.time, max_outstanding: int = 100_000) -> None:
         self._ttl, self._size, self._clock = ttl_seconds, size, clock
+        self._max = max_outstanding
         self._path = str(path)
         secure_db_file(self._path)
         self._conns = ThreadConnections(self._path, ("PRAGMA journal_mode=WAL",
@@ -330,9 +342,18 @@ class SqliteChallengeStore:
         challenge = secrets.token_bytes(self._size)
         now = self._clock()
         conn = self._conns.get()
-        conn.execute("DELETE FROM webauthn_challenges WHERE expires < ?", (now,))
-        conn.execute("INSERT INTO webauthn_challenges (challenge, expires) VALUES (?, ?)",
-                     (challenge, now + self._ttl))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("DELETE FROM webauthn_challenges WHERE expires < ?", (now,))
+            (count,) = conn.execute("SELECT count(*) FROM webauthn_challenges").fetchone()
+            if count >= self._max:
+                raise RuntimeError("too many outstanding challenges")
+            conn.execute("INSERT INTO webauthn_challenges (challenge, expires) "
+                         "VALUES (?, ?)", (challenge, now + self._ttl))
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
         return challenge
 
     def consume(self, challenge: bytes) -> bool:
@@ -341,6 +362,115 @@ class SqliteChallengeStore:
             "DELETE FROM webauthn_challenges WHERE challenge = ? AND expires >= ? "
             "RETURNING 1", (bytes(challenge), self._clock())).fetchone()
         return row is not None
+
+    def close(self) -> None:
+        self._conns.close()
+
+
+class SqliteCredentialStore:
+    """
+    Registered WebAuthn credentials (credential id -> COSE public key, RP ID),
+    imported from the relying party's registration and revocable. A revoked
+    credential is kept, so its id cannot be imported again by mistake.
+    """
+
+    def __init__(self, path: str | os.PathLike, clock=time.time) -> None:
+        self._path, self._clock = str(path), clock
+        secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, ("PRAGMA journal_mode=WAL",
+                                                     "PRAGMA busy_timeout=5000"))
+        self._conns.get().executescript(_CREDENTIAL_SCHEMA)
+
+    def add(self, credential_id: bytes, cose_key: bytes, rp_id: str | None = None):
+        from .webauthn import checked_credential
+        credential = checked_credential(credential_id, cose_key, rp_id)
+        cur = self._conns.get().execute(
+            "INSERT INTO webauthn_credentials (credential_id, cose_key, rp_id, created) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT (credential_id) DO NOTHING",
+            (credential.credential_id, bytes(cose_key), rp_id, self._clock()))
+        if cur.rowcount == 0:
+            raise ValueError("credential id already imported")
+        return credential
+
+    def get(self, credential_id: bytes):
+        from .webauthn import RegisteredCredential
+        row = self._conns.get().execute(
+            "SELECT cose_key, rp_id FROM webauthn_credentials "
+            "WHERE credential_id = ? AND revoked IS NULL", (bytes(credential_id),)).fetchone()
+        if row is None:
+            return None
+        return RegisteredCredential.from_cose_key(bytes(credential_id), row[0], row[1])
+
+    def revoke(self, credential_id: bytes) -> bool:
+        cur = self._conns.get().execute(
+            "UPDATE webauthn_credentials SET revoked = ? "
+            "WHERE credential_id = ? AND revoked IS NULL",
+            (self._clock(), bytes(credential_id)))
+        return cur.rowcount > 0
+
+    def entries(self, limit: int = 1000):
+        from .webauthn import CredentialRecord
+        rows = self._conns.get().execute(
+            "SELECT credential_id, rp_id, created, revoked FROM webauthn_credentials "
+            "ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+        return [CredentialRecord(bytes(r[0]), r[1], r[2], r[3]) for r in rows]
+
+    def close(self) -> None:
+        self._conns.close()
+
+
+# --- Revocation list (#73) --------------------------------------------------------
+
+_REVOCATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS revocations (
+    identity  TEXT PRIMARY KEY,
+    status    TEXT NOT NULL,
+    reason    TEXT NOT NULL,
+    since     REAL NOT NULL
+);
+"""
+
+
+class SqliteRevocationList:
+    """Retired and revoked identities, shared by every process on one database."""
+
+    def __init__(self, path: str | os.PathLike, clock=time.time) -> None:
+        self._path, self._clock = str(path), clock
+        secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, ("PRAGMA journal_mode=WAL",
+                                                     "PRAGMA busy_timeout=5000"))
+        self._conns.get().executescript(_REVOCATION_SCHEMA)
+
+    def get(self, identity: str):
+        from .revocation import Revocation, RevocationStatus
+        row = self._conns.get().execute(
+            "SELECT identity, status, reason, since FROM revocations WHERE identity = ?",
+            (store_key(identity),)).fetchone()
+        return None if row is None else Revocation(row[0], RevocationStatus(row[1]),
+                                                   row[2], row[3])
+
+    def revoke(self, identity: str, status="revoked", reason: str = ""):
+        from .revocation import Revocation, check_entry
+        key, status, reason = check_entry(identity, status, reason)
+        since = self._clock()
+        self._conns.get().execute(
+            "INSERT INTO revocations (identity, status, reason, since) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (identity) DO UPDATE SET status = excluded.status, "
+            "reason = excluded.reason, since = excluded.since",
+            (key, status.value, reason, since))
+        return Revocation(key, status, reason, since)
+
+    def reinstate(self, identity: str) -> bool:
+        cur = self._conns.get().execute("DELETE FROM revocations WHERE identity = ?",
+                                        (store_key(identity),))
+        return cur.rowcount > 0
+
+    def entries(self, limit: int = 1000):
+        from .revocation import Revocation, RevocationStatus
+        rows = self._conns.get().execute(
+            "SELECT identity, status, reason, since FROM revocations "
+            "ORDER BY since DESC LIMIT ?", (limit,)).fetchall()
+        return [Revocation(r[0], RevocationStatus(r[1]), r[2], r[3]) for r in rows]
 
     def close(self) -> None:
         self._conns.close()

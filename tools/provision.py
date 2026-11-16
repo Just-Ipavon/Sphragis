@@ -23,6 +23,8 @@ encrypted file data (SDMENCFileData, a multiple of 16 bytes).
         --base-url https://example.com/t --yes
     python tools/provision.py --reader chameleon --port /dev/ttyACM0 \\
         --base-url https://example.com/t --enc-data 0123456789ABCDEF --dry-run
+    python tools/provision.py --reader emulator --emulator-state tag.json \\
+        --base-url https://example.com/t --yes          # simulated tag, no hardware
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _reader import add_reader_args, reader_factory  # noqa: E402
+from _reader import add_reader_args, reader_factory, simulated  # noqa: E402
 
 from sphragis.apdu import ApduError  # noqa: E402
 from sphragis.keyprov import (  # noqa: E402
@@ -115,9 +117,10 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--reader is required unless --dry-run is given")
         provision_tag(None, args.base_url, dry_run=True, log=print, **options)
         return 0
-    if args.reader == "emulator":
-        parser.error("the emulator backend cannot provision (no secure messaging); "
-                     "use --dry-run without --reader for the offline plan")
+    if args.reader == "emulator" and not simulated(args):
+        parser.error("the read-only emulator cannot provision (no secure messaging); "
+                     "add --emulator-state FILE for the simulated tag, or use "
+                     "--dry-run without --reader for the offline plan")
     if not args.dry_run and not args.yes:
         parser.error("refusing to write without --yes (or use --dry-run)")
 
