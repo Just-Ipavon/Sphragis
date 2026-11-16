@@ -210,6 +210,11 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_DB_PATH` | `sphragis.db` | File SQLite: floor, cronologia, alert |
 | `SPHRAGIS_DB_URL` | nessuno | URL `postgresql://`; sostituisce SQLite per più host (richiede `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | vuoto | Contesto di diversificazione AN10922 |
+| `SPHRAGIS_KEY_PROVIDER` | `secrets` | `pkcs11`: master key in un HSM ([gestione delle chiavi](key-management.it.md#master-key-in-un-hsm-pkcs11)) |
+| `SPHRAGIS_PKCS11_MODULE` / `_TOKEN` | nessuno | libreria PKCS#11 ed etichetta del token (con `pkcs11`) |
+| `SPHRAGIS_PKCS11_PIN` / `_PIN_FILE` | nessuno | PIN del token, o un file che lo contiene (con `pkcs11`) |
+| `SPHRAGIS_PKCS11_KEY_PREFIX` | `sphragis.` | prefisso delle etichette delle chiavi sul token |
+| `SPHRAGIS_PKCS11_CACHE_SECONDS` | `60` | durata della cache delle chiavi per UID (`0`: disattivata) |
 | `SPHRAGIS_READER_TOKENS` | nessuno | `lettore=sha256hex,…` |
 | `SPHRAGIS_TRUSTED_PROXIES` | nessuno | IP o CIDR dei proxy (o `unix` per un socket Unix) autorizzati a impostare `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | bucket per IP |

@@ -49,7 +49,7 @@ def _read(*parts):
 
 def test_ci_installs_only_locked_hashed_dependencies():
     ci = _read(".github", "workflows", "ci.yml")
-    assert ci.count("--require-hashes -r requirements/ci.lock") == 3     # test, pg, package
+    assert ci.count("--require-hashes -r requirements/ci.lock") == 4     # test, pg, hsm, package
     assert "pip install -e" not in ci                   # nothing resolved on the fly
     lock = _read("requirements", "ci.lock")
     pins = re.findall(r"^([A-Za-z0-9_.-]+)==", lock, re.M)

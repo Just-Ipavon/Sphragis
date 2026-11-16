@@ -212,10 +212,53 @@ rifirmarli o rimarcarli temporalmente con un nuovo algoritmo (es. ML-DSA)
 usando questi campi, mentre le vecchie tag continuano a verificarsi con la
 versione con cui sono state configurate.
 
-## Limite onesto
+## Master key in un HSM (PKCS#11)
 
-Un backend software porta la chiave nella memoria del processo, dove i `bytes`
-di Python non possono essere azzerati in modo affidabile. Un vero HSM tiene la
-chiave residente ed esegue la crittografia dentro il modulo; `KmsSecretsBackend`
-è il punto dove va quell'integrazione. Per NTAG 424 DNA la master key dovrebbe
-vivere in un HSM/KMS e dovrebbe transitare solo materiale diversificato.
+Un backend dei segreti porta le chiavi nella memoria del processo, dove i
+`bytes` di Python non possono essere azzerati in modo affidabile. Con
+`SPHRAGIS_KEY_PROVIDER=pkcs11` le master restano in un token PKCS#11 come
+chiavi non estraibili (`pip install "sphragis[hsm]"`):
+
+- la diversificazione AN10922 avviene nel token (due operazioni AES con la
+  master file key) e torna indietro solo la **chiave per UID**;
+- il PICCData viene decifrato nel token con la chiave meta-read, quindi anche
+  questa chiave comune a tutta la flotta non arriva mai al processo.
+
+```bash
+# Una volta, dalla copia offline delle chiavi (etichette sphragis.master_file, ...)
+SPHRAGIS_PKCS11_PIN=... sphragis hsm-import --module /usr/lib/softhsm/libsofthsm2.so \
+    --token sphragis --secrets-dir ~/.sphragis/keys --versions 1
+
+SPHRAGIS_KEY_PROVIDER=pkcs11
+SPHRAGIS_PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so   # la libreria del tuo HSM
+SPHRAGIS_PKCS11_TOKEN=sphragis
+SPHRAGIS_PKCS11_PIN_FILE=/run/secrets/pkcs11_pin         # oppure SPHRAGIS_PKCS11_PIN
+```
+
+`hsm-import` crea ogni chiave `CKA_SENSITIVE`, non `CKA_EXTRACTABLE`, abilitata
+solo all'operazione che serve al verificatore (`CKA_ENCRYPT` per la master
+file key, `CKA_DECRYPT` per la chiave meta-read), e rifiuta di sovrascrivere
+un'etichetta. Le versioni seguono `SPHRAGIS_KEY_VERSIONS`
+(`sphragis.master_file_v2`, …), quindi la
+[rotazione](#versioni-delle-chiavi-e-rotazione) funziona senza modifiche. I
+test girano contro SoftHSM2 in CI.
+
+Cosa transita ancora:
+
+- **Le chiavi per UID** sono nella memoria del processo mentre un tap viene
+  verificato, e restano in cache per `SPHRAGIS_PKCS11_CACHE_SECONDS` (60; `0`
+  disattiva la cache). Un processo compromesso scopre le chiavi delle tag che
+  vede, non le master.
+- **Un oracolo di cifratura.** Un processo compromesso può comunque chiedere al
+  token la chiave di qualsiasi UID finché gira. L'HSM limita il danno nel tempo
+  (revocato l'accesso, l'oracolo sparisce; le master non sono mai state
+  copiate), non nella portata.
+- **Il provisioning** scrive le chiavi sulle tag, quindi `tools/rekey.py` ha
+  bisogno delle chiavi stesse: conserva la copia offline da cui hai importato,
+  con i controlli di [cambiare le chiavi in sicurezza](#cambiare-le-chiavi-in-sicurezza).
+
+I servizi KMS cloud che espongono solo HMAC o cifratura di alto livello (AWS
+KMS `GenerateMac`, per esempio, è HMAC) non possono calcolare AN10922; usa la
+loro interfaccia PKCS#11 (CloudHSM, Cloud HSM), o un motore transit stile Vault
+con AES grezzo, dietro un tuo `KeyProvider` (`file_read_key(uid)` più
+`decrypt_picc(enc)`).

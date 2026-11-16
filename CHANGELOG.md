@@ -14,6 +14,14 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- Master keys in an HSM (#58): `SPHRAGIS_KEY_PROVIDER=pkcs11` with
+  `sphragis.hsm.Pkcs11KeyProvider` (extra `sphragis[hsm]`). The AN10922
+  diversification and the PICCData decryption run in the token, so neither
+  `master_file` nor `meta_read` reaches the process; only per-UID keys do,
+  cached for `SPHRAGIS_PKCS11_CACHE_SECONDS`. `sphragis hsm-import` copies the
+  keys in as sensitive, non-extractable, single-purpose objects; key versions
+  rotate as before. A `KeyProvider` may now define `decrypt_picc(enc)` instead
+  of exposing `meta_read_key()`. A CI job runs the tests against SoftHSM2.
 - WebAuthn in the REST API (#57): `SPHRAGIS_BACKENDS=fido2-webauthn` with
   `SPHRAGIS_WEBAUTHN_RP_ID`, `_ORIGINS` and `_USER_VERIFICATION` (validated
   at startup). Credentials live in `SqliteCredentialStore` /

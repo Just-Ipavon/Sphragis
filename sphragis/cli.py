@@ -28,6 +28,10 @@ Exit status of verify: 0 AUTHENTIC, 1 ERROR (malformed input), 3 REPLAY,
 4 FORGED; 2 is a usage error for every command. Taps with an `enc`
 parameter are verified as SDMENCFileData taps automatically.
 
+    # Copy the master keys into an HSM as non-extractable keys (PIN from
+    # SPHRAGIS_PKCS11_PIN, or asked for)
+    python -m sphragis.cli hsm-import --module /usr/lib/softhsm/libsofthsm2.so \
+        --token sphragis --secrets-dir ~/.sphragis/keys --versions 1,2
     # Import a WebAuthn credential the relying party registered, list, revoke
     python -m sphragis.cli credentials import --sqlite sphragis.db \
         --credential-id=<base64url> --cose-key=<base64url> --rp-id verify.example.com
@@ -233,6 +237,41 @@ def _cmd_verify_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _versions(value: str) -> tuple[int, ...]:
+    try:
+        versions = tuple(int(v) for v in value.split(",") if v.strip())
+    except ValueError:
+        versions = ()
+    if not versions or min(versions) < 1 or len(set(versions)) != len(versions):
+        raise argparse.ArgumentTypeError("distinct key versions >= 1, e.g. 1 or 2,1")
+    return versions
+
+
+def _cmd_hsm_import(args: argparse.Namespace) -> int:
+    try:
+        from .hsm import Pkcs11Token, import_keys
+    except ImportError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    pin = os.environ.get("SPHRAGIS_PKCS11_PIN") or getpass.getpass("Token PIN: ")
+    try:
+        secrets = FileSecretsBackend(args.secrets_dir)
+        token = Pkcs11Token(args.module, args.token, pin, rw=True)
+    except SecretsError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    except Exception as exc:  # noqa: BLE001 - library or token errors: report them
+        raise SystemExit(f"error: cannot open token {args.token!r}: "
+                         f"{type(exc).__name__} {exc}") from None
+    try:
+        labels = import_keys(token, secrets, args.versions, prefix=args.prefix)
+    except (ValueError, KeyError, SecretsError) as exc:
+        raise SystemExit(f"error: {exc}") from None
+    finally:
+        token.close()
+    for label in labels:
+        print(f"IMPORTED  : {label} (sensitive, not extractable)")
+    return 0
+
+
 def _b64url(value: str) -> bytes:
     from .webauthn import b64url_decode
     try:
@@ -416,6 +455,18 @@ def build_parser() -> argparse.ArgumentParser:
     ve.add_argument("--log-id", default=None, help="expected log id (default: the first)")
     ve.set_defaults(func=_cmd_verify_events)
 
+    h = sub.add_parser("hsm-import",
+                       help="copy master_file and meta_read into a PKCS#11 token as "
+                            "non-extractable keys (sphragis[hsm])")
+    h.add_argument("--module", required=True, help="PKCS#11 library path")
+    h.add_argument("--token", required=True, help="token label")
+    h.add_argument("--secrets-dir", required=True,
+                   help="directory with master_file, meta_read (hex, 0600)")
+    h.add_argument("--versions", type=_versions, default=(1,),
+                   help="key versions to import (default 1)")
+    h.add_argument("--prefix", default="sphragis.",
+                   help="label prefix (SPHRAGIS_PKCS11_KEY_PREFIX)")
+    h.set_defaults(func=_cmd_hsm_import)
     c = sub.add_parser("credentials", help="WebAuthn credentials the API accepts")
     actions = c.add_subparsers(dest="action", required=True)
     ci = actions.add_parser("import", help="import a credential the relying party "

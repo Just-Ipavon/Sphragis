@@ -45,7 +45,17 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     secrets = secrets or EnvSecretsBackend()
     configure_logging(getattr(logging, settings.log_level, logging.INFO))
 
-    keys = build_keyring(secrets, settings.key_versions, context=settings.key_context)
+    token = None
+    if settings.key_provider == "pkcs11":
+        from ..hsm import Pkcs11Token, build_pkcs11_keyring
+        token = Pkcs11Token(settings.pkcs11_module, settings.pkcs11_token,
+                            _pkcs11_pin(env))
+        keys = build_pkcs11_keyring(token, settings.key_versions,
+                                    context=settings.key_context,
+                                    prefix=settings.pkcs11_key_prefix,
+                                    cache_seconds=settings.pkcs11_cache_seconds)
+    else:
+        keys = build_keyring(secrets, settings.key_versions, context=settings.key_context)
     if settings.db_url:
         # One shared database for every replica, on any number of hosts.
         from ..pgstore import (
@@ -126,7 +136,8 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         on_shutdown=[*([lambda: background.close(SHUTDOWN_DRAIN_SECONDS)]
                        if background is not None else []),
                      floor.close, history.close, audit.close, revocations.close,
-                     *(store.close for store in webauthn_stores)],
+                     *(store.close for store in webauthn_stores),
+                     *([token.close] if token is not None else [])],
     )
 
 
@@ -149,6 +160,23 @@ def _webauthn(settings: ApiSettings):
                               creds, challenges, require_user_verification=uv == "required")
     issuer = ChallengeIssuer(challenges, settings.webauthn_rp_id, ttl, uv)
     return backend, issuer, [creds, challenges]
+
+
+def _pkcs11_pin(env: Mapping[str, str] | None) -> str:
+    """The token PIN, from SPHRAGIS_PKCS11_PIN or the file SPHRAGIS_PKCS11_PIN_FILE
+    names (a mounted secret); never stored in the settings."""
+    import os
+    e = os.environ if env is None else env
+    path = e.get("SPHRAGIS_PKCS11_PIN_FILE", "").strip()
+    if path:
+        with open(path) as f:
+            pin = f.read().strip()
+    else:
+        pin = e.get("SPHRAGIS_PKCS11_PIN", "").strip()
+    if not pin:
+        raise ValueError("SPHRAGIS_KEY_PROVIDER=pkcs11 needs SPHRAGIS_PKCS11_PIN or "
+                         "SPHRAGIS_PKCS11_PIN_FILE")
+    return pin
 
 
 def _limiter(settings: ApiSettings, rate: float, burst: int):

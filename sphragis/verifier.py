@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 from .backends import AuthenticTap, ForgedTap
 from .counterstore import CounterBackend, CounterStore
 from .keyring import KeyRing
-from .sdm import SdmError, compute_sdmmac, decrypt_picc_data
+from .sdm import SdmError, compute_sdmmac, decrypt_picc_data, parse_picc_plain
 
 
 class Verdict(str, Enum):
@@ -44,7 +44,13 @@ class VerificationResult:
 
 
 class KeyProvider(Protocol):
-    """Supplies the SDM keys. Split so the file key can be diversified by UID."""
+    """
+    Supplies the SDM keys. Split so the file key can be diversified by UID.
+
+    A provider that keeps the meta-read key out of the process (an HSM) may
+    also define `decrypt_picc(enc_picc: bytes) -> bytes`, returning the
+    decrypted 16-byte block; it is then used instead of `meta_read_key()`.
+    """
 
     def meta_read_key(self) -> bytes: ...
     def file_read_key(self, uid: bytes) -> bytes: ...
@@ -184,6 +190,15 @@ class Ntag424SunBackend:
                             self.algorithm, key_version=version)
 
 
+def open_picc(keys, enc_picc: bytes):
+    """Decrypt PICCData with the provider's own `decrypt_picc` when it has one
+    (the key never leaves the HSM), else with its meta-read key."""
+    decrypt = getattr(keys, "decrypt_picc", None)
+    if decrypt is not None:
+        return parse_picc_plain(decrypt(enc_picc))
+    return decrypt_picc_data(enc_picc, keys.meta_read_key())
+
+
 def _first_verifying(ring: KeyRing, enc_picc: bytes, cmac: bytes, mac_of,
                      picc_check=None):
     """
@@ -196,7 +211,7 @@ def _first_verifying(ring: KeyRing, enc_picc: bytes, cmac: bytes, mac_of,
     parsed = False
     for version, keys in ring:
         try:
-            picc = decrypt_picc_data(enc_picc, keys.meta_read_key())
+            picc = open_picc(keys, enc_picc)
             if picc_check is not None:
                 picc_check(picc)
             _require_standard_picc(picc)

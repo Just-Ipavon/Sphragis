@@ -30,6 +30,8 @@ hw = ["pyserial>=3.5"]
 # Postgres backends (counter floor, detector history, alert audit) for
 # multi-host deployments; see docs/production.md.
 pg = ["psycopg[binary]>=3.1"]
+# Master keys in an HSM through PKCS#11 (sphragis.hsm); see docs/key-management.md.
+hsm = ["python-pkcs11>=0.7"]
 # cwt (python-cwt) is an independent COSE implementation the signed-event
 # tests check against; cbor2 and cryptography drive the WebAuthn test
 # authenticator.
