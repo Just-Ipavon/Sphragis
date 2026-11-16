@@ -19,6 +19,7 @@ pip install -e ".[hw]"         # pyserial (Chameleon Ultra)
 |---------|------------|-------|
 | Chameleon Ultra (seriale USB) | `chameleon --port /dev/ttyACM0` | validato su firmware v2.1 |
 | Tag software | `emulator` | sottoinsieme ISO in sola lettura, senza hardware |
+| NTAG 424 DNA simulata | `emulator --emulator-state tag.json` | secure messaging EV2, senza hardware |
 
 Il Chameleon Ultra fa da semplice tubo di frame ISO 14443-A. Sphragis parla
 direttamente il suo protocollo seriale (non serve il client del produttore) e
@@ -32,6 +33,35 @@ Le chiavi non arrivano mai al dispositivo. Note dall'hardware:
   firmware risponde `STATUS_PAR_ERR`). Il FSC è limitato a 64, qualunque valore
   annunci la carta, e gli APDU più lunghi vengono inviati con il chaining ISO-DEP.
 - Su Linux l'utente deve poter accedere alla porta seriale (gruppo `dialout`).
+
+## Tag simulato (senza hardware)
+
+`sphragis.simulator.SimulatedNtag424` modella il lato PICC del chip: mirroring
+SDM, AuthenticateEV2First, ChangeFileSettings, ChangeKey, WriteData,
+GetKeyVersion, GetCardUID e Read_Sig, con gli status word del chip (6D00 per
+un'istruzione ISO sconosciuta, 6E00 per una classe sconosciuta, 911C per un
+comando nativo sconosciuto). La sua metà EV2 è scritta indipendentemente da
+`sphragis.ev2`, così le due si controllano a vicenda. Con `--emulator-state
+FILE` tutti i tool la usano: il tag nasce con le chiavi di fabbrica se FILE non
+esiste e viene salvato dopo ogni connessione, quindi l'intero ciclo di vita
+gira su un portatile o in CI:
+
+```bash
+S="--reader emulator --emulator-state tag.json"
+python tools/provision.py $S --base-url https://example.com/t --dry-run   # mostra l'UID
+python tools/provision.py $S --base-url https://example.com/t --yes --uid <UID>
+python tools/tap_verify.py $S --taps 2
+python tools/rekey.py $S --secrets-dir keys --inventory inv.db --uid <UID> --yes
+python tools/tap_verify.py $S --secrets-dir keys
+python tools/rekey.py $S --secrets-dir keys --inventory inv.db --uid <UID> --to-factory --yes
+```
+
+Il file di stato contiene le chiavi del tag, quindi viene scritto con modo
+0600. La firma di originalità simulata usa una chiave di test: `rekey.py` la
+verifica con quella chiave, mai con quella NXP, e un tag simulato non supera
+mai il controllo di originalità NXP. Tempi, RF e anti-tearing non sono
+modellati: il simulatore serve per i flussi e il protocollo, non per il
+comportamento dell'hardware.
 
 ## Configurazione SDM congelata
 

@@ -12,6 +12,11 @@ flagged verification. Sinks are deliberately small and composable:
 - `BackgroundAlertSink` — delivers through another sink on a worker thread, so
                        a slow endpoint never delays a verification.
 
+`AlertThrottle` sits in front of the sinks (see `VerificationService`): it
+de-duplicates repeated alerts and caps the alerts per UID, so a holder of
+many withheld URLs for one tag cannot flood the queue and push out the alerts
+for every other tag.
+
 Sinks must never break verification: `dispatch` isolates each sink and logs its
 failure instead of raising.
 """
@@ -29,6 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import Counter, OrderedDict
 from dataclasses import asdict, dataclass
 from typing import Iterable, Protocol, runtime_checkable
 from urllib.parse import urlparse
@@ -77,6 +83,70 @@ def dispatch(alert: Alert, sinks: Iterable[AlertSink]) -> int:
                                   "sink": type(sink).__name__}},
             )
     return delivered
+
+
+class AlertThrottle:
+    """
+    Per-UID de-duplication and rate limiting of alerts, in this process.
+
+    - An alert identical to one let through for the same UID within
+      `dedup_seconds` (same classification and signals) is suppressed.
+    - Each UID gets a token bucket of `per_uid_burst` alerts refilled over
+      `per_uid_window` seconds; alerts past it are suppressed.
+
+    Alerts without a UID (none are raised by default) share one bucket.
+    Suppressed alerts are counted by reason (`suppressed`) and logged; the
+    signed events and the verification log still record every tap. At most
+    `max_uids` UIDs are tracked; the least recently alerted are forgotten.
+    """
+
+    def __init__(self, per_uid_burst: int = 5, per_uid_window: float = 3600.0,
+                 dedup_seconds: float = 300.0, max_uids: int = 100_000,
+                 clock=time.monotonic) -> None:
+        if per_uid_burst < 1 or per_uid_window <= 0 or dedup_seconds < 0 or max_uids < 1:
+            raise ValueError("per_uid_burst >= 1, per_uid_window > 0, "
+                             "dedup_seconds >= 0 and max_uids >= 1 are required")
+        self._burst, self._window = per_uid_burst, per_uid_window
+        self._dedup, self._max = dedup_seconds, max_uids
+        self._clock = clock
+        # uid -> [tokens, updated, {fingerprint: last time let through}]
+        self._state: OrderedDict[str, list] = OrderedDict()
+        self._lock = threading.Lock()
+        self.suppressed: Counter[str] = Counter()
+
+    def allow(self, alert: Alert) -> bool:
+        key = alert.uid_ref or "-"
+        fingerprint = (alert.classification, tuple(sorted(alert.signals)))
+        now = self._clock()
+        with self._lock:
+            state = self._state.get(key)
+            if state is None:
+                state = [float(self._burst), now, {}]
+                self._state[key] = state
+                while len(self._state) > self._max:
+                    self._state.popitem(last=False)
+            self._state.move_to_end(key)
+            tokens, updated, seen = state
+            last = seen.get(fingerprint)
+            if last is not None and now - last < self._dedup:
+                reason = "duplicate"
+            else:
+                tokens = min(float(self._burst),
+                             tokens + (now - updated) * self._burst / self._window)
+                state[0], state[1] = tokens, now
+                if tokens >= 1:
+                    state[0] = tokens - 1
+                    seen[fingerprint] = now
+                    if len(seen) > 32:                  # keep the newest fingerprints
+                        for old in sorted(seen, key=seen.get)[:len(seen) - 32]:
+                            del seen[old]
+                    return True
+                reason = "rate"
+            self.suppressed[reason] += 1
+        _log.warning("alert_suppressed", extra={"fields": {
+            "event_id": alert.event_id, "uid_ref": alert.uid_ref,
+            "classification": alert.classification, "reason": reason}})
+        return False
 
 
 class LogAlertSink:
@@ -256,6 +326,7 @@ class BackgroundAlertSink:
 
     def __init__(self, sink: AlertSink, maxsize: int = 1000) -> None:
         self._sink = sink
+        self.dropped = 0                 # alerts refused because the queue was full
         self._queue: queue.Queue[Alert | None] = queue.Queue(maxsize)
         self._thread = threading.Thread(target=self._run, name="sphragis-alerts",
                                         daemon=True)
@@ -265,6 +336,7 @@ class BackgroundAlertSink:
         try:
             self._queue.put_nowait(alert)
         except queue.Full:
+            self.dropped += 1
             _log.error("alert queue full: alert dropped",
                        extra={"fields": {"event_id": alert.event_id}})
             raise RuntimeError("alert queue full") from None

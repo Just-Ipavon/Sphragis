@@ -8,6 +8,7 @@ POST /v1/verify {"url": ...}   an app or backend forwards a tapped URL
 GET  /healthz                  liveness probe (not rate limited)
 GET  /readyz                   readiness: storage reachable, alert queue not full
 POST /v1/webauthn/challenge    options for navigator.credentials.get() (fido2-webauthn)
+GET  /v1/alert-stats           alerts suppressed or dropped so far (reader token)
 
 Two response tiers
 ------------------
@@ -63,12 +64,15 @@ PUBLIC_MESSAGES = {
     "REPLAY": "This verification link was already used. Tap the tag again.",
     "CLONE_LIKELY": "Warning: this tag shows signs of duplication.",
     "INVALID": "This link could not be verified.",
+    "REVOKED": "This tag has been withdrawn and is no longer valid.",
+    "COUNTER_LIMIT": "This tag can no longer be verified. Contact the issuer.",
 }
 
 # The public score is fixed per verdict: the analyzer's score would tell an
 # anonymous caller which signals fired. Readers still get the real score.
 PUBLIC_SCORES = {"GENUINE": 0, "SUSPICIOUS": 50, "REPLAY": 100,
-                 "CLONE_LIKELY": 100, "INVALID": 100}
+                 "CLONE_LIKELY": 100, "INVALID": 100, "REVOKED": 100,
+                 "COUNTER_LIMIT": 100}
 
 # Link previewers fetch a shared URL before the person does; verifying for
 # them would spend the tap and show the owner REPLAY. They get a neutral
@@ -459,6 +463,15 @@ def create_app(
         def event_key() -> dict:
             # Public: anyone may verify the signed events.
             return dict(public_key)
+
+    @app.get("/v1/alert-stats")
+    def alert_stats(reader: str | None = Depends(reader_identity)) -> dict:
+        # Readers only: how many alerts were held back says something about
+        # what is being attempted.
+        if reader is None:
+            raise HTTPException(401, "reader token required",
+                                headers={"WWW-Authenticate": "Bearer"})
+        return service.alert_stats()
 
     @app.get("/t")
     def tap(request: Request, reader: str | None = Depends(reader_identity)) -> dict:

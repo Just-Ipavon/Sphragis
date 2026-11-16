@@ -46,6 +46,7 @@ so it can be tested without HTTP. `sphragis/api/` is a thin adapter on top of it
 | `GET`  | `/readyz` | Readiness: every store answers a read and the webhook queue is under 90% full; otherwise `503` with the failing checks |
 | `GET`  | `/v1/event-key` | Public key of the [signed events](events.md), when they are enabled |
 | `POST` | `/v1/webauthn/challenge` | Request options for `navigator.credentials.get()`, with `fido2-webauthn` enabled ([WebAuthn](backends.md#with-the-rest-api)) |
+| `GET`  | `/v1/alert-stats` | Alerts suppressed by the [throttle](clone-detection.md#tag-lifecycle) and dropped by the webhook queue (reader token) |
 
 Verdicts are always returned as `200`. The other status codes are `401` (bad
 credentials), `422` (malformed body or unknown fields) and `429` (rate limited,
@@ -126,8 +127,10 @@ There is one JSON line per verification on stdout, written with the stdlib
 
 ## Alerts
 
-`CLONE_LIKELY` (configurable with `SPHRAGIS_ALERT_ON`, e.g.
-`CLONE_LIKELY,REPLAY`) is sent to every configured `AlertSink`:
+`CLONE_LIKELY` and `REVOKED` (configurable with `SPHRAGIS_ALERT_ON`, e.g.
+`CLONE_LIKELY,REVOKED,REPLAY`), and the first tap near the counter limit
+(`counter_near_limit`), are sent to every configured `AlertSink`, through a
+per-tag throttle ([tag lifecycle](clone-detection.md#tag-lifecycle)):
 
 | Sink | Purpose |
 |------|---------|
@@ -203,7 +206,11 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: per-IP and per-UID buckets in the shared database ([rate limiting](#rate-limiting)) |
 | `SPHRAGIS_IPV6_PREFIX` | `64` | IPv6 prefix length one rate-limit bucket covers (16-128) |
 | `SPHRAGIS_LEDGER_WINDOW` | none (keep all) | keep the last N counter values per UID in the tap ledger ([retention](clone-detection.md#retention)) |
-| `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classifications that raise an alert |
+| `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY,REVOKED` | classifications that raise an alert |
+| `SPHRAGIS_ALERT_UID_BURST` / `_UID_WINDOW` | `5` / `3600` | alerts per tag per window before throttling |
+| `SPHRAGIS_ALERT_DEDUP_SECONDS` | `300` | identical alerts for one tag within this are dropped (`0`: off) |
+| `SPHRAGIS_COUNTER_WARN_AT` | `16711680` | counter that raises `counter_near_limit` once per tag (`off`) |
+| `SPHRAGIS_COUNTER_REFUSE_AT` | `off` | counter from which taps answer `COUNTER_LIMIT` without moving the floor |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | largest accepted request body |
 | `SPHRAGIS_WEBHOOK_URL` | none | alert webhook (https only) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` or `plain` |

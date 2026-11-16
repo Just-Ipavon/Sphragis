@@ -10,7 +10,8 @@ It wraps a `TagAnalyzer` with what a deployed verifier needs around the crypto:
   verified, through the analyzer's `admit` hook;
 - **one structured log event per verification**, with a pseudonymized UID;
 - **alert dispatch** for the classifications that warrant it (`CLONE_LIKELY`
-  by default);
+  and `REVOKED` by default) and for the signals that do (`counter_near_limit`),
+  through an optional `AlertThrottle` (per-UID de-duplication and rate limit);
 - optional **signed events** (COSE_Sign1, see `sphragis.events`) pushed to
   event sinks, e.g. a transparency log.
 
@@ -26,7 +27,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
-from .alerts import Alert, AlertSink, dispatch
+from .alerts import Alert, AlertSink, AlertThrottle, dispatch
 from .analyzer import AnalysisResult, TagAnalyzer
 from .events import EventChain, EventSigner, EventSink, SignedEvent, publish
 from .logs import UidPseudonymizer
@@ -34,7 +35,8 @@ from .ratelimit import RateLimiter
 
 _log = logging.getLogger("sphragis.verify")
 
-DEFAULT_ALERT_ON = frozenset({"CLONE_LIKELY"})
+DEFAULT_ALERT_ON = frozenset({"CLONE_LIKELY", "REVOKED"})
+DEFAULT_ALERT_SIGNALS = frozenset({"counter_near_limit"})
 # A genuine SUN URL is a couple of hundred characters; anything far larger is
 # rejected before parsing.
 MAX_INPUT_LENGTH = 4096
@@ -67,6 +69,8 @@ class VerificationService:
         event_sinks: Iterable[EventSink] = (),
         events_on: Iterable[str] | None = None,
         event_chain: EventChain | None = None,
+        alert_signals: Iterable[str] = DEFAULT_ALERT_SIGNALS,
+        alert_throttle: AlertThrottle | None = None,
     ) -> None:
         """
         With an `event_signer`, every verification whose classification is in
@@ -81,6 +85,8 @@ class VerificationService:
         # stable for the lifetime of the process).
         self._pseudo = pseudonymizer or UidPseudonymizer(uuid.uuid4().bytes)
         self._alert_on = frozenset(alert_on)
+        self._alert_signals = frozenset(alert_signals)
+        self._throttle = alert_throttle
         self._uid_limiter = uid_limiter
         self._clock = clock
         self._log = logger or _log
@@ -90,6 +96,15 @@ class VerificationService:
         self._chain = event_chain
         if (self._event_sinks or self._chain) and self._signer is None:
             raise ValueError("event sinks need an event signer")
+
+    def alert_stats(self) -> dict:
+        """Alerts held back so far: suppressed by the throttle (by reason) and
+        dropped by any sink that counts them (a full background queue)."""
+        suppressed = dict(self._throttle.suppressed) if self._throttle else {}
+        dropped = sum(getattr(sink, "dropped", 0) for sink in self._sinks)
+        return {"suppressed": {"duplicate": suppressed.get("duplicate", 0),
+                               "rate": suppressed.get("rate", 0)},
+                "dropped": dropped}
 
     def _admit(self, uid_hex: str) -> bool:
         assert self._uid_limiter is not None
@@ -120,7 +135,8 @@ class VerificationService:
         signal_names = tuple(s.name for s in result.signals)
 
         alerted = False
-        if result.classification in self._alert_on:
+        if (result.classification in self._alert_on
+                or self._alert_signals.intersection(signal_names)):
             alert = Alert(
                 event_id=event_id, timestamp=now,
                 classification=result.classification,
@@ -130,7 +146,8 @@ class VerificationService:
                 backend=result.backend, algorithm=result.algorithm,
                 key_version=result.key_version,
             )
-            alerted = dispatch(alert, self._sinks) > 0
+            if self._throttle is None or self._throttle.allow(alert):
+                alerted = dispatch(alert, self._sinks) > 0
 
         if self._signer is not None and (self._events_on is None
                                          or result.classification in self._events_on):

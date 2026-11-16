@@ -15,6 +15,15 @@ Classification:
     CLONE_LIKELY authentic MAC, but strong evidence of a duplicated tag
     THROTTLED    authentic MAC, but refused by the caller's `admit` policy
                  before any state was touched (e.g. a per-UID rate limit)
+    REVOKED      authentic MAC, but the identity is on the revocation list
+                 (retired or revoked); no state is touched
+    COUNTER_LIMIT authentic MAC, but the counter reached the policy's
+                 `refuse_at`; no state is touched, so a clone holding the
+                 keys cannot pin the floor at the 24-bit maximum
+
+A fresh tap whose counter first reaches the policy's `warn_at` carries the
+`counter_near_limit` signal (weight 0): the service alerts on it once per tag,
+because the ledger lets each counter value through only once.
 """
 
 from __future__ import annotations
@@ -31,8 +40,42 @@ from .backends import (
 )
 from .counterstore import CounterStore, TapLedger
 from .detection import CloneDetector, DetectionResult, RiskLevel, Signal
+from .revocation import RevocationList
 from .sdm import SdmError
 from .verifier import KeyProvider, Ntag424SunBackend
+
+
+MAX_READ_COUNTER = 0xFFFFFF
+REVOKED = "REVOKED"
+COUNTER_LIMIT = "COUNTER_LIMIT"
+NEAR_LIMIT_SIGNAL = "counter_near_limit"
+
+
+@dataclass(frozen=True)
+class CounterPolicy:
+    """
+    What to do as SDMReadCtr approaches its 24-bit limit (0xFFFFFF), after
+    which the tag emits no more taps.
+
+    `warn_at`: the first fresh tap at or above it carries `counter_near_limit`
+    (alerted once per tag). Default: 65 536 taps before the limit.
+    `refuse_at`: taps at or above it are `COUNTER_LIMIT` and leave the floor
+    where it is. Off by default; set it to keep a clone that holds the keys
+    from pinning a UID's floor at the maximum (every genuine tap would then be
+    a regression). Recovery is to retire the tag and issue a new one.
+    """
+
+    warn_at: int | None = MAX_READ_COUNTER - 0xFFFF
+    refuse_at: int | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("warn_at", "refuse_at"):
+            value = getattr(self, name)
+            if value is not None and not 1 <= value <= MAX_READ_COUNTER:
+                raise ValueError(f"{name} must be between 1 and {MAX_READ_COUNTER}")
+        if (self.warn_at is not None and self.refuse_at is not None
+                and self.warn_at >= self.refuse_at):
+            raise ValueError("warn_at must be below refuse_at")
 
 
 @dataclass(frozen=True)
@@ -70,6 +113,8 @@ class TagAnalyzer:
         store: TapLedger | None = None,
         *,
         backends: Sequence[VerificationBackend] | None = None,
+        revocations: RevocationList | None = None,
+        counter_policy: CounterPolicy | None = None,
     ) -> None:
         if (keys is None) == (backends is None):
             raise TypeError("TagAnalyzer needs either keys or backends")
@@ -87,6 +132,8 @@ class TagAnalyzer:
         if not isinstance(self._store, TapLedger):
             raise TypeError("TagAnalyzer needs a tap ledger store "
                             "(last_counter, record_tap)")
+        self._revocations = revocations
+        self._policy = counter_policy if counter_policy is not None else CounterPolicy()
 
     @property
     def detector(self) -> CloneDetector:
@@ -134,6 +181,13 @@ class TagAnalyzer:
 
         uid_hex = tap.identity
 
+        # Withdrawn tags: checked on authentic taps only (no oracle on made-up
+        # UIDs) and before any state is touched.
+        if self._revocations is not None:
+            entry = self._revocations.get(uid_hex)
+            if entry is not None:
+                return self._revoked(tap, entry)
+
         # 4: classify against the tap ledger (floor + every counter submitted).
         counter = tap.counter
         floor = self._store.last_counter(uid_hex)
@@ -144,6 +198,14 @@ class TagAnalyzer:
             tap = replace(tap, counter=0)
             counter = 0
         stale = floor is not None and counter <= floor
+        refuse_at = self._policy.refuse_at
+        if not stale and refuse_at is not None and counter >= refuse_at:
+            signal = Signal("counter_limit", 100,
+                            f"read counter {counter} is at or above the refusal "
+                            f"threshold {refuse_at}: retire this tag")
+            return AnalysisResult(COUNTER_LIMIT, True, uid_hex, counter, 100, (signal,),
+                                  signal.detail, tap.backend, tap.algorithm,
+                                  key_version=tap.key_version)
 
         # Only a fresh counter, which needs the physical tag, is charged to the
         # per-UID budget: replays of a captured URL cannot throttle the tag.
@@ -174,6 +236,14 @@ class TagAnalyzer:
             uid_hex, counter, timestamp=timestamp, reader_id=reader_id,
             floor_before=record.floor_before, provenance=Provenance.of(tap),
         )
+        warn_at = self._policy.warn_at
+        if (warn_at is not None and counter >= warn_at
+                and (record.floor_before is None or record.floor_before < warn_at)):
+            det = replace(det, signals=det.signals + (Signal(
+                NEAR_LIMIT_SIGNAL, 0,
+                f"read counter {counter} reached {warn_at}: "
+                f"{MAX_READ_COUNTER - counter} taps left before the 24-bit limit; "
+                "plan to retire this tag"),))
         return self._result(tap, det, tap.payload)
 
     @staticmethod
@@ -192,6 +262,15 @@ class TagAnalyzer:
             payload=payload,
             key_version=tap.key_version,
         )
+
+    @staticmethod
+    def _revoked(tap: AuthenticTap, entry) -> AnalysisResult:
+        detail = f"this tag was {entry.status.value}" + (
+            f": {entry.reason}" if entry.reason else "")
+        signal = Signal(entry.status.value, 100, detail)
+        return AnalysisResult(REVOKED, True, tap.identity, tap.counter, 100, (signal,),
+                              detail, tap.backend, tap.algorithm,
+                              key_version=tap.key_version)
 
     @staticmethod
     def _no_counter(tap: AuthenticTap,

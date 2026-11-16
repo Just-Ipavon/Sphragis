@@ -76,8 +76,10 @@ first-class, scored detector rather than a simple freshness flag.
   [keying safely](docs/key-management.md#keying-safely)). A passive radio
   capture of a factory keying session still yields its keys: key tags in a
   shielded place, from a controlled supply.
-- **Counter exhaustion**: `SDMReadCtr` is 24-bit. Rollover handling is a
-  deployment concern and not modelled here.
+- **Counter exhaustion**: `SDMReadCtr` is 24-bit. The first tap near the
+  limit raises one alert (`counter_near_limit`), and `refuse_at` keeps a
+  clone that holds the keys from pinning the floor at the maximum; the
+  recovery is to retire the tag ([tag lifecycle](docs/clone-detection.md#tag-lifecycle)).
 - `TagAnalyzer` keeps a persistent monotonic anti-replay floor (`CounterBackend`)
   *and* a scoring detector whose history lives in an `ObservationStore`. With
   the default in-memory store the scoring is rebuilt from the live stream after

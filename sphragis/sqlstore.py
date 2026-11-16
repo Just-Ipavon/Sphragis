@@ -417,3 +417,60 @@ class SqliteCredentialStore:
 
     def close(self) -> None:
         self._conns.close()
+
+
+# --- Revocation list (#73) --------------------------------------------------------
+
+_REVOCATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS revocations (
+    identity  TEXT PRIMARY KEY,
+    status    TEXT NOT NULL,
+    reason    TEXT NOT NULL,
+    since     REAL NOT NULL
+);
+"""
+
+
+class SqliteRevocationList:
+    """Retired and revoked identities, shared by every process on one database."""
+
+    def __init__(self, path: str | os.PathLike, clock=time.time) -> None:
+        self._path, self._clock = str(path), clock
+        secure_db_file(self._path)
+        self._conns = ThreadConnections(self._path, ("PRAGMA journal_mode=WAL",
+                                                     "PRAGMA busy_timeout=5000"))
+        self._conns.get().executescript(_REVOCATION_SCHEMA)
+
+    def get(self, identity: str):
+        from .revocation import Revocation, RevocationStatus
+        row = self._conns.get().execute(
+            "SELECT identity, status, reason, since FROM revocations WHERE identity = ?",
+            (store_key(identity),)).fetchone()
+        return None if row is None else Revocation(row[0], RevocationStatus(row[1]),
+                                                   row[2], row[3])
+
+    def revoke(self, identity: str, status="revoked", reason: str = ""):
+        from .revocation import Revocation, check_entry
+        key, status, reason = check_entry(identity, status, reason)
+        since = self._clock()
+        self._conns.get().execute(
+            "INSERT INTO revocations (identity, status, reason, since) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (identity) DO UPDATE SET status = excluded.status, "
+            "reason = excluded.reason, since = excluded.since",
+            (key, status.value, reason, since))
+        return Revocation(key, status, reason, since)
+
+    def reinstate(self, identity: str) -> bool:
+        cur = self._conns.get().execute("DELETE FROM revocations WHERE identity = ?",
+                                        (store_key(identity),))
+        return cur.rowcount > 0
+
+    def entries(self, limit: int = 1000):
+        from .revocation import Revocation, RevocationStatus
+        rows = self._conns.get().execute(
+            "SELECT identity, status, reason, since FROM revocations "
+            "ORDER BY since DESC LIMIT ?", (limit,)).fetchall()
+        return [Revocation(r[0], RevocationStatus(r[1]), r[2], r[3]) for r in rows]
+
+    def close(self) -> None:
+        self._conns.close()
