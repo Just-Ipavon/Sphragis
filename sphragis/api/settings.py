@@ -19,6 +19,11 @@ Key material (SDM keys, pseudonymization key, webhook secret) is read through a
 | SPHRAGIS_WEBHOOK_URL          | (none)          | HMAC-signed alert webhook (https)          |
 | SPHRAGIS_LOG_UID              | hmac            | `hmac` (pseudonymized) or `plain`          |
 | SPHRAGIS_LOG_LEVEL            | INFO            | log level                                  |
+| SPHRAGIS_WEBAUTHN_RP_ID       | (none)          | relying party ID (with fido2-webauthn)     |
+| SPHRAGIS_WEBAUTHN_ORIGINS     | (none)          | allowed origins, comma-separated (https)   |
+| SPHRAGIS_WEBAUTHN_USER_VERIFICATION | preferred | required, preferred or discouraged       |
+| SPHRAGIS_WEBAUTHN_CHALLENGE_TTL | 120           | seconds a challenge stays valid            |
+| SPHRAGIS_WEBAUTHN_MAX_CHALLENGES | 100000       | outstanding challenges before 503          |
 
 Every value is validated at startup: a typo or an out-of-range number stops
 the service instead of silently disabling a limit or an alert.
@@ -40,8 +45,8 @@ from typing import Iterable, Mapping
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = frozenset({"GENUINE", "SUSPICIOUS", "REPLAY", "CLONE_LIKELY",
                              "FORGED", "ERROR", "THROTTLED"})
-# Verification backends selectable with SPHRAGIS_BACKENDS.
-BACKENDS = ("ntag424-sun-enc", "ntag424-sun")
+# Verification backends selectable with SPHRAGIS_BACKENDS, most specific first.
+BACKENDS = ("fido2-webauthn", "ntag424-sun-enc", "ntag424-sun")
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
@@ -122,6 +127,11 @@ class ApiSettings:
     ipv6_prefix: int = 64
     ledger_window: int | None = None                # None: keep every counter
     event_log_id: str | None = None                 # set: chained events (schema 2)
+    webauthn_rp_id: str | None = None
+    webauthn_origins: tuple[str, ...] = ()
+    webauthn_user_verification: str = "preferred"
+    webauthn_challenge_ttl: float = 120.0
+    webauthn_max_challenges: int = 100_000
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -199,6 +209,21 @@ class ApiSettings:
             if ledger_window < 1:
                 raise ValueError("SPHRAGIS_LEDGER_WINDOW must be a positive number of "
                                  "counter values")
+        webauthn_rp_id = get("WEBAUTHN_RP_ID", "").lower() or None
+        webauthn_origins = tuple(csv("WEBAUTHN_ORIGINS"))
+        webauthn_uv = get("WEBAUTHN_USER_VERIFICATION", "preferred").lower()
+        if webauthn_uv not in ("required", "preferred", "discouraged"):
+            raise ValueError("SPHRAGIS_WEBAUTHN_USER_VERIFICATION must be required, "
+                             "preferred or discouraged")
+        if "fido2-webauthn" in backends:
+            if not webauthn_rp_id or not webauthn_origins:
+                raise ValueError("fido2-webauthn needs SPHRAGIS_WEBAUTHN_RP_ID and "
+                                 "SPHRAGIS_WEBAUTHN_ORIGINS")
+            from ..webauthn import check_rp_id
+            try:
+                check_rp_id(webauthn_rp_id, webauthn_origins)
+            except ValueError as exc:
+                raise ValueError(f"SPHRAGIS_WEBAUTHN_ORIGINS: {exc}") from None
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -230,4 +255,11 @@ class ApiSettings:
             ipv6_prefix=ipv6_prefix,
             ledger_window=ledger_window,
             event_log_id=get("EVENT_LOG_ID", "") or None,
+            webauthn_rp_id=webauthn_rp_id,
+            webauthn_origins=webauthn_origins,
+            webauthn_user_verification=webauthn_uv,
+            webauthn_challenge_ttl=_positive("WEBAUTHN_CHALLENGE_TTL",
+                                             get("WEBAUTHN_CHALLENGE_TTL", "120")),
+            webauthn_max_challenges=_positive("WEBAUTHN_MAX_CHALLENGES",
+                                              get("WEBAUTHN_MAX_CHALLENGES", "100000"), int),
         )

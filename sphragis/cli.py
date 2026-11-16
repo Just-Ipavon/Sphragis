@@ -28,6 +28,12 @@ Exit status of verify: 0 AUTHENTIC, 1 ERROR (malformed input), 3 REPLAY,
 4 FORGED; 2 is a usage error for every command. Taps with an `enc`
 parameter are verified as SDMENCFileData taps automatically.
 
+    # Import a WebAuthn credential the relying party registered, list, revoke
+    python -m sphragis.cli credentials import --sqlite sphragis.db \
+        --credential-id <base64url> --cose-key <base64url> --rp-id verify.example.com
+    python -m sphragis.cli credentials list --sqlite sphragis.db
+    python -m sphragis.cli credentials revoke --sqlite sphragis.db --credential-id <base64url>
+
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
 """
@@ -221,6 +227,68 @@ def _cmd_verify_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _b64url(value: str) -> bytes:
+    from .webauthn import b64url_decode
+    try:
+        data = b64url_decode(value.strip())
+    except Exception:  # noqa: BLE001 - SdmError or ValueError: a usage error
+        raise argparse.ArgumentTypeError("expected unpadded base64url") from None
+    if not data:
+        raise argparse.ArgumentTypeError("expected unpadded base64url")
+    return data
+
+
+def _credential_store(args: argparse.Namespace):
+    if args.db_url:
+        from .pgstore import PostgresCredentialStore
+        return PostgresCredentialStore(args.db_url)
+    from .sqlstore import SqliteCredentialStore
+    if not os.path.exists(args.sqlite):
+        raise SystemExit(f"error: {args.sqlite} does not exist (the API's database)")
+    return SqliteCredentialStore(args.sqlite)
+
+
+def _cmd_credentials(args: argparse.Namespace) -> int:
+    import datetime
+
+    from .webauthn import b64url_encode
+    store = _credential_store(args)
+    try:
+        if args.action == "import":
+            try:
+                store.add(args.credential_id, args.cose_key, args.rp_id)
+            except ValueError as exc:
+                raise SystemExit(f"error: {exc}") from None
+            print(f"IMPORTED  : {b64url_encode(args.credential_id)}"
+                  + (f"  (RP ID {args.rp_id})" if args.rp_id else ""))
+            return 0
+        if args.action == "revoke":
+            done = store.revoke(args.credential_id)
+            print(("REVOKED   : " if done else "NOT ACTIVE: ")
+                  + b64url_encode(args.credential_id))
+            return 0 if done else 1
+        records = store.entries(args.limit)
+    finally:
+        store.close()
+    if args.json:
+        print(json.dumps([{"credential_id": b64url_encode(r.credential_id),
+                           "rp_id": r.rp_id, "created": r.created,
+                           "revoked": r.revoked} for r in records]))
+        return 0
+    for r in records:
+        when = datetime.datetime.fromtimestamp(r.created, datetime.timezone.utc)
+        state = "revoked" if r.revoked is not None else "active"
+        print(f"{b64url_encode(r.credential_id)}  {state:<7}  {when:%Y-%m-%d %H:%M}Z  "
+              f"{r.rp_id or '-'}")
+    return 0
+
+
+def _add_db_args(parser: argparse.ArgumentParser) -> None:
+    db = parser.add_mutually_exclusive_group(required=True)
+    db.add_argument("--sqlite", metavar="DB", help="the API's SQLite database")
+    db.add_argument("--db-url", metavar="URL", help="the API's postgresql:// database")
+
+
 def _add_key_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--secrets-dir", help="directory with master_file and meta_read "
                                               "(hex, 0600): per-UID diversified keys")
@@ -274,6 +342,24 @@ def build_parser() -> argparse.ArgumentParser:
                     help="raw Ed25519 public key (hex), as served at /v1/event-key")
     ve.add_argument("--log-id", default=None, help="expected log id (default: the first)")
     ve.set_defaults(func=_cmd_verify_events)
+
+    c = sub.add_parser("credentials", help="WebAuthn credentials the API accepts")
+    actions = c.add_subparsers(dest="action", required=True)
+    ci = actions.add_parser("import", help="import a credential the relying party "
+                                           "registered (attestation is its job)")
+    ci.add_argument("--credential-id", type=_b64url, required=True, help="base64url")
+    ci.add_argument("--cose-key", type=_b64url, required=True,
+                    help="COSE_Key from the registration, base64url (ES256 or EdDSA)")
+    ci.add_argument("--rp-id", default=None,
+                    help="only accept it for this RP ID (recommended)")
+    cr = actions.add_parser("revoke", help="stop accepting a credential")
+    cr.add_argument("--credential-id", type=_b64url, required=True, help="base64url")
+    cl = actions.add_parser("list", help="list imported credentials, newest first")
+    cl.add_argument("--limit", type=_taps, default=1000)
+    cl.add_argument("--json", action="store_true", help="machine-readable output")
+    for action in (ci, cr, cl):
+        _add_db_args(action)
+    c.set_defaults(func=_cmd_credentials)
 
     e = sub.add_parser("emulate", help="emit SUN URL(s) from a virtual tag")
     _add_key_args(e)

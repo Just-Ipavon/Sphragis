@@ -43,10 +43,11 @@ di esso.
 | Metodo | Path | Uso |
 |--------|------|-----|
 | `GET`  | `/t?picc_data=…&cmac=…` | L'URL a cui punta il tag: il telefono lo apre al tap |
-| `POST` | `/v1/verify` `{"url": "…"}` | Un'app o un backend inoltra l'URL letto |
+| `POST` | `/v1/verify` `{"url": "…"}` o `{"assertion": {…}}` | Un'app o un backend inoltra l'URL letto, o un'asserzione WebAuthn |
 | `GET`  | `/healthz` | Sonda di liveness (senza rate limit) |
 | `GET`  | `/readyz` | Readiness: ogni storage risponde a una lettura e la coda del webhook è sotto il 90%; altrimenti `503` con i controlli falliti |
 | `GET`  | `/v1/event-key` | Chiave pubblica degli [eventi firmati](events.it.md), quando sono abilitati |
+| `POST` | `/v1/webauthn/challenge` | Opzioni per `navigator.credentials.get()`, con `fido2-webauthn` abilitato ([WebAuthn](backends.it.md#con-la-rest-api)) |
 
 I verdetti tornano sempre con `200`. Gli altri codici sono `401` (credenziali
 non valide), `422` (body malformato o campi sconosciuti) e `429` (rate limit,
@@ -223,7 +224,10 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_EVENTS_ON` | tutte | classificazioni da firmare |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | versione della chiave di firma degli eventi |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | versioni di chiave attive, la corrente per prima (es. `2,1`), vedi [gestione delle chiavi](key-management.it.md#versioni-delle-chiavi-e-rotazione) |
-| `SPHRAGIS_BACKENDS` | `ntag424-sun` | backend di verifica da abilitare (`ntag424-sun`, `ntag424-sun-enc`), vedi [backend](backends.it.md) |
+| `SPHRAGIS_BACKENDS` | `ntag424-sun` | backend di verifica da abilitare (`ntag424-sun`, `ntag424-sun-enc`, `fido2-webauthn`), vedi [backend](backends.it.md) |
+| `SPHRAGIS_WEBAUTHN_RP_ID` / `_ORIGINS` | nessuno | relying party ID e origini ammesse (obbligatori con `fido2-webauthn`) |
+| `SPHRAGIS_WEBAUTHN_USER_VERIFICATION` | `preferred` | `required` rifiuta le asserzioni senza verifica dell'utente |
+| `SPHRAGIS_WEBAUTHN_CHALLENGE_TTL` / `_MAX_CHALLENGES` | `120` / `100000` | durata di una challenge (s) e quante possono essere in sospeso |
 
 Ogni valore viene validato all'avvio: rate, burst e tempo di viaggio devono
 essere finiti e positivi, `SPHRAGIS_ALERT_ON` deve elencare classificazioni

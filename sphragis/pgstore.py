@@ -369,7 +369,8 @@ class PostgresRateLimiter(_PgBase):
 
 
 class PostgresChallengeStore(_PgBase):
-    """Single-use WebAuthn challenges shared by every replica."""
+    """Single-use WebAuthn challenges shared by every replica, at most
+    `max_outstanding` unexpired at a time."""
 
     _SCHEMA = """
     CREATE TABLE IF NOT EXISTS sphragis_webauthn_challenges (
@@ -378,19 +379,27 @@ class PostgresChallengeStore(_PgBase):
     );
     """
 
-    def __init__(self, dsn: str, ttl_seconds: float = 120.0, size: int = 32) -> None:
-        self._ttl, self._size = ttl_seconds, size
+    def __init__(self, dsn: str, ttl_seconds: float = 120.0, size: int = 32,
+                 max_outstanding: int = 100_000) -> None:
+        self._ttl, self._size, self._max = ttl_seconds, size, max_outstanding
         super().__init__(dsn)
 
     def issue(self) -> bytes:
         import secrets
         challenge = secrets.token_bytes(self._size)
         conn = self._connection()
-        conn.execute("DELETE FROM sphragis_webauthn_challenges "
-                     "WHERE expires < extract(epoch FROM clock_timestamp())")
-        conn.execute("INSERT INTO sphragis_webauthn_challenges (challenge, expires) "
-                     "VALUES (%s, extract(epoch FROM clock_timestamp()) + %s)",
-                     (challenge, self._ttl))
+        with conn.transaction():
+            # One issuer at a time, so the bound holds across replicas.
+            conn.execute("SELECT pg_advisory_xact_lock(%s, 1)", (_LOCK_NS,))
+            conn.execute("DELETE FROM sphragis_webauthn_challenges "
+                         "WHERE expires < extract(epoch FROM clock_timestamp())")
+            (count,) = conn.execute(
+                "SELECT count(*) FROM sphragis_webauthn_challenges").fetchone()
+            if count >= self._max:
+                raise RuntimeError("too many outstanding challenges")
+            conn.execute("INSERT INTO sphragis_webauthn_challenges (challenge, expires) "
+                         "VALUES (%s, extract(epoch FROM clock_timestamp()) + %s)",
+                         (challenge, self._ttl))
         return challenge
 
     def consume(self, challenge: bytes) -> bool:
@@ -399,3 +408,58 @@ class PostgresChallengeStore(_PgBase):
             "AND expires >= extract(epoch FROM clock_timestamp()) RETURNING 1",
             (bytes(challenge),)).fetchone()
         return row is not None
+
+
+class PostgresCredentialStore(_PgBase):
+    """Registered WebAuthn credentials shared by every replica (see
+    `SqliteCredentialStore`)."""
+
+    _SCHEMA = """
+    CREATE TABLE IF NOT EXISTS sphragis_webauthn_credentials (
+        credential_id  BYTEA PRIMARY KEY,
+        cose_key       BYTEA NOT NULL,
+        rp_id          TEXT,
+        created        DOUBLE PRECISION NOT NULL,
+        revoked        DOUBLE PRECISION
+    );
+    """
+
+    def add(self, credential_id: bytes, cose_key: bytes, rp_id: str | None = None):
+        from .webauthn import checked_credential
+        credential = checked_credential(credential_id, cose_key, rp_id)
+        row = self._connection().execute(
+            "INSERT INTO sphragis_webauthn_credentials "
+            "(credential_id, cose_key, rp_id, created) "
+            "VALUES (%s, %s, %s, extract(epoch FROM clock_timestamp())) "
+            "ON CONFLICT (credential_id) DO NOTHING RETURNING 1",
+            (credential.credential_id, bytes(cose_key), rp_id)).fetchone()
+        if row is None:
+            raise ValueError("credential id already imported")
+        return credential
+
+    def get(self, credential_id: bytes):
+        from .webauthn import RegisteredCredential
+        row = self._connection().execute(
+            "SELECT cose_key, rp_id FROM sphragis_webauthn_credentials "
+            "WHERE credential_id = %s AND revoked IS NULL",
+            (bytes(credential_id),)).fetchone()
+        if row is None:
+            return None
+        return RegisteredCredential.from_cose_key(bytes(credential_id), bytes(row[0]),
+                                                  row[1])
+
+    def revoke(self, credential_id: bytes) -> bool:
+        row = self._connection().execute(
+            "UPDATE sphragis_webauthn_credentials "
+            "SET revoked = extract(epoch FROM clock_timestamp()) "
+            "WHERE credential_id = %s AND revoked IS NULL RETURNING 1",
+            (bytes(credential_id),)).fetchone()
+        return row is not None
+
+    def entries(self, limit: int = 1000):
+        from .webauthn import CredentialRecord
+        rows = self._connection().execute(
+            "SELECT credential_id, rp_id, created, revoked "
+            "FROM sphragis_webauthn_credentials ORDER BY created DESC LIMIT %s",
+            (limit,)).fetchall()
+        return [CredentialRecord(bytes(r[0]), r[1], r[2], r[3]) for r in rows]

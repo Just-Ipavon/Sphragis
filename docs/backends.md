@@ -98,17 +98,57 @@ replayed assertion is `FORGED` (its challenge is spent). The identity is
   reported as *no counter*: the tap is `GENUINE` with the zero-weight signal
   `no_counter`, and no counter-based clone detection applies. If the credential
   reported a non-zero counter before, a 0 is scored as a regression.
-- **Registration** (attestation) is the relying party's job; implement
-  `CredentialStore.get(credential_id)` over your registry, and
-  `ChallengeStore` over a shared store when several processes verify.
+- **Registration** (attestation) is the relying party's job; import the
+  credentials into `SqliteCredentialStore` / `PostgresCredentialStore` (see
+  below), or implement `CredentialStore.get(credential_id)` over your own
+  registry, and `ChallengeStore` over a shared store when several processes
+  verify.
 - **RP ID binding.** A credential only works for the relying party ID (domain)
   it was registered under. If the verifying domain changes, existing cards
   stop working: choose the RP ID as carefully as a key, for the whole life of
   the cards.
 
-The REST API does not wire this backend from settings yet (it needs a
-credential registry and a challenge endpoint); build the service with
-`create_app(VerificationService(TagAnalyzer(backends=[...])))`.
+### With the REST API
+
+Add `fido2-webauthn` to `SPHRAGIS_BACKENDS` and set the relying party:
+
+```bash
+SPHRAGIS_BACKENDS=fido2-webauthn,ntag424-sun
+SPHRAGIS_WEBAUTHN_RP_ID=verify.example.com
+SPHRAGIS_WEBAUTHN_ORIGINS=https://verify.example.com
+SPHRAGIS_WEBAUTHN_USER_VERIFICATION=preferred     # or required, discouraged
+```
+
+Each origin must be https (http only for `localhost`) and lie within the RP
+ID; a mistake stops the service at startup. Credentials and challenges live
+in the database the API already uses (`SqliteCredentialStore` /
+`SqliteChallengeStore` on `SPHRAGIS_DB_PATH`, the Postgres ones on
+`SPHRAGIS_DB_URL`), so a challenge issued by one replica is consumed exactly
+once by whichever replica verifies the assertion.
+
+1. Import each credential the relying party registered (attestation stays its
+   job). Pass `--rp-id`: the credential then only verifies for that RP ID.
+
+   ```bash
+   sphragis credentials import --sqlite sphragis.db \
+       --credential-id <base64url> --cose-key <base64url> --rp-id verify.example.com
+   sphragis credentials list --sqlite sphragis.db
+   sphragis credentials revoke --sqlite sphragis.db --credential-id <base64url>
+   ```
+
+2. The page asks `POST /v1/webauthn/challenge` for the request options
+   (`challenge`, `rpId`, `timeout`, `userVerification`) and passes them to
+   `navigator.credentials.get()`. The endpoint names no credential, so it
+   reveals nothing about which ones exist; it is rate limited per IP like the
+   verification endpoints, and answers `503` once
+   `SPHRAGIS_WEBAUTHN_MAX_CHALLENGES` (100 000) are outstanding.
+3. The page posts the assertion to `POST /v1/verify`, as
+   `{"assertion": credential.toJSON()}` (or as a JSON string in `url`). A
+   replayed assertion is `INVALID`: its challenge is spent everywhere.
+
+A revoked credential stays in the table, so the same id cannot be imported
+again by mistake. Remember the RP ID binding above: moving the API to another
+domain later strands every imported card.
 
 ## Writing a backend
 

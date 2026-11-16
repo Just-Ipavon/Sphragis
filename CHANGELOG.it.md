@@ -15,6 +15,15 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- WebAuthn nella REST API (#57): `SPHRAGIS_BACKENDS=fido2-webauthn` con
+  `SPHRAGIS_WEBAUTHN_RP_ID`, `_ORIGINS` e `_USER_VERIFICATION` (validati
+  all'avvio). Le credenziali vivono in `SqliteCredentialStore` /
+  `PostgresCredentialStore` (importa, revoca ed elenca con
+  `sphragis credentials`; una credenziale può essere legata al suo RP ID).
+  `POST /v1/webauthn/challenge` fornisce le opzioni della richiesta, limitato
+  per IP e senza nominare credenziali; le challenge sono condivise da tutte le
+  repliche, monouso e in numero limitato (`SPHRAGIS_WEBAUTHN_MAX_CHALLENGES`).
+  `/v1/verify` accetta anche `{"assertion": {...}}`.
 - Limiti di frequenza e challenge condivisi tra repliche (#72):
   `SPHRAGIS_RATE_LIMIT_STORE=db` tiene i token bucket per IP e per UID nel
   database condiviso (`PostgresRateLimiter`, o `SqliteRateLimiter` per più

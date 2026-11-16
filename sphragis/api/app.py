@@ -7,6 +7,7 @@ GET  /t?picc_data=..&cmac=..   the URL a tag points to: a phone opens it on tap
 POST /v1/verify {"url": ...}   an app or backend forwards a tapped URL
 GET  /healthz                  liveness probe (not rate limited)
 GET  /readyz                   readiness: storage reachable, alert queue not full
+POST /v1/webauthn/challenge    options for navigator.credentials.get() (fido2-webauthn)
 
 Two response tiers
 ------------------
@@ -50,7 +51,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..ratelimit import RateLimiter
 from ..service import VerificationOutcome, VerificationService
@@ -93,8 +94,23 @@ _SECURITY_HEADERS = {
 
 
 class VerifyRequest(BaseModel):
+    """`url`: a tapped URL (or a WebAuthn assertion as a JSON string);
+    `assertion`: a WebAuthn assertion as an object. Exactly one of them."""
+
     model_config = ConfigDict(extra="forbid")
-    url: str = Field(min_length=1, max_length=4096)
+    url: str | None = Field(default=None, min_length=1, max_length=4096)
+    assertion: dict | None = None
+
+    @model_validator(mode="after")
+    def _one_input(self):
+        if (self.url is None) == (self.assertion is None):
+            raise ValueError("give exactly one of url and assertion")
+        return self
+
+    def tap(self) -> str:
+        if self.url is not None:
+            return self.url
+        return json.dumps(self.assertion, separators=(",", ":"))
 
 
 class RateLimited(Exception):
@@ -103,7 +119,7 @@ class RateLimited(Exception):
 
 
 DEFAULT_MAX_BODY_BYTES = 8 * 1024
-LIMITED_PATHS = frozenset({"/t", "/v1/verify"})
+LIMITED_PATHS = frozenset({"/t", "/v1/verify", "/v1/webauthn/challenge"})
 
 logger = logging.getLogger("sphragis.api")
 
@@ -334,6 +350,7 @@ def create_app(
     ipv6_prefix: int = 64,
     ready_checks: Mapping[str, Callable[[], object]] | None = None,
     on_shutdown: Sequence[Callable[[], object]] = (),
+    challenge_issuer=None,
 ) -> FastAPI:
     """
     Build the API around an already-configured service.
@@ -452,10 +469,23 @@ def create_app(
         outcome = service.verify("?" + request.url.query, reader_id=reader)
         return respond(outcome, reader)
 
+    if challenge_issuer is not None:
+        @app.post("/v1/webauthn/challenge")
+        def webauthn_challenge() -> JSONResponse:
+            # Rate limited per IP by the request guard. The answer is the same
+            # whoever asks: no credential is named, so none is revealed.
+            try:
+                options = challenge_issuer.options()
+            except RuntimeError:
+                logger.warning("webauthn challenge refused: too many outstanding")
+                return JSONResponse({"error": "unavailable"}, status_code=503,
+                                    headers={"Retry-After": "5"})
+            return JSONResponse(options, headers={"cache-control": "no-store"})
+
     @app.post("/v1/verify")
     def verify(body: VerifyRequest,
                reader: str | None = Depends(reader_identity)) -> dict:
-        outcome = service.verify(body.url, reader_id=reader)
+        outcome = service.verify(body.tap(), reader_id=reader)
         return respond(outcome, reader)
 
     return app

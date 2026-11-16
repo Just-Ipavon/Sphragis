@@ -41,10 +41,11 @@ so it can be tested without HTTP. `sphragis/api/` is a thin adapter on top of it
 | Method | Path | Use |
 |--------|------|-----|
 | `GET`  | `/t?picc_data=…&cmac=…` | The URL a tag points to: a phone opens it on tap |
-| `POST` | `/v1/verify` `{"url": "…"}` | An app or backend forwards a tapped URL |
+| `POST` | `/v1/verify` `{"url": "…"}` or `{"assertion": {…}}` | An app or backend forwards a tapped URL, or a WebAuthn assertion |
 | `GET`  | `/healthz` | Liveness probe (not rate limited) |
 | `GET`  | `/readyz` | Readiness: every store answers a read and the webhook queue is under 90% full; otherwise `503` with the failing checks |
 | `GET`  | `/v1/event-key` | Public key of the [signed events](events.md), when they are enabled |
+| `POST` | `/v1/webauthn/challenge` | Request options for `navigator.credentials.get()`, with `fido2-webauthn` enabled ([WebAuthn](backends.md#with-the-rest-api)) |
 
 Verdicts are always returned as `200`. The other status codes are `401` (bad
 credentials), `422` (malformed body or unknown fields) and `429` (rate limited,
@@ -212,7 +213,10 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_EVENTS_ON` | all | classifications to sign |
 | `SPHRAGIS_EVENT_KEY_VERSION` | `1` | version of the event signing key |
 | `SPHRAGIS_KEY_VERSIONS` | `1` | active key versions, current first (e.g. `2,1`), see [key management](key-management.md#key-versions-and-rotation) |
-| `SPHRAGIS_BACKENDS` | `ntag424-sun` | verification backends to enable (`ntag424-sun`, `ntag424-sun-enc`), see [backends](backends.md) |
+| `SPHRAGIS_BACKENDS` | `ntag424-sun` | verification backends to enable (`ntag424-sun`, `ntag424-sun-enc`, `fido2-webauthn`), see [backends](backends.md) |
+| `SPHRAGIS_WEBAUTHN_RP_ID` / `_ORIGINS` | none | relying party ID and allowed origins (required with `fido2-webauthn`) |
+| `SPHRAGIS_WEBAUTHN_USER_VERIFICATION` | `preferred` | `required` refuses assertions without user verification |
+| `SPHRAGIS_WEBAUTHN_CHALLENGE_TTL` / `_MAX_CHALLENGES` | `120` / `100000` | challenge lifetime (s) and how many may be outstanding |
 
 Every value is validated at startup: rates, bursts and the travel time must
 be finite and positive, `SPHRAGIS_ALERT_ON` must name known classifications.
