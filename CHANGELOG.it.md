@@ -3,7 +3,7 @@
 English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 [Semantic Versioning](https://semver.org/).
 
-## Non rilasciato
+## 2.1.0 — 2026-11-16
 
 ### Sicurezza
 
