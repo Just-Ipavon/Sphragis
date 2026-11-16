@@ -141,7 +141,7 @@ stream. See [the API docs](api.md#horizontal-scale-shared-detector-history).
 
 ## Hardening checklist
 
-- [ ] Keys in KMS/HSM, not in env on long-lived hosts
+- [x] Master keys in an HSM through PKCS#11 (`SPHRAGIS_KEY_PROVIDER=pkcs11`, [key management](key-management.md#master-keys-in-an-hsm-pkcs11))
 - [x] Postgres floor with atomic conditional update, shared history and audit trail
 - [x] Rate limiting on the verification endpoint (per IP + per authentic UID; in-process, see [API](api.md#rate-limiting))
 - [x] Structured logging + alerting on `CLONE_LIKELY`

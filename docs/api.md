@@ -194,6 +194,11 @@ replica (see [production](production.md#scaling-to-postgres)).
 | `SPHRAGIS_DB_PATH` | `sphragis.db` | SQLite file: counter floor, history, alerts |
 | `SPHRAGIS_DB_URL` | none | `postgresql://` URL; replaces SQLite for multi-host (needs `sphragis[pg]`) |
 | `SPHRAGIS_KEY_CONTEXT` | empty | AN10922 diversification context |
+| `SPHRAGIS_KEY_PROVIDER` | `secrets` | `pkcs11`: master keys in an HSM ([key management](key-management.md#master-keys-in-an-hsm-pkcs11)) |
+| `SPHRAGIS_PKCS11_MODULE` / `_TOKEN` | none | PKCS#11 library and token label (with `pkcs11`) |
+| `SPHRAGIS_PKCS11_PIN` / `_PIN_FILE` | none | token PIN, or a file holding it (with `pkcs11`) |
+| `SPHRAGIS_PKCS11_KEY_PREFIX` | `sphragis.` | key label prefix on the token |
+| `SPHRAGIS_PKCS11_CACHE_SECONDS` | `60` | per-UID key cache lifetime (`0`: off) |
 | `SPHRAGIS_READER_TOKENS` | none | `reader=sha256hex,…` |
 | `SPHRAGIS_TRUSTED_PROXIES` | none | proxy IPs or CIDRs (or `unix` for a Unix socket) allowed to set `X-Forwarded-For` |
 | `SPHRAGIS_IP_RATE` / `_IP_BURST` | `5` / `20` | per-IP bucket |

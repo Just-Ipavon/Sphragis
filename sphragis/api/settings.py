@@ -19,13 +19,21 @@ Key material (SDM keys, pseudonymization key, webhook secret) is read through a
 | SPHRAGIS_WEBHOOK_URL          | (none)          | HMAC-signed alert webhook (https)          |
 | SPHRAGIS_LOG_UID              | hmac            | `hmac` (pseudonymized) or `plain`          |
 | SPHRAGIS_LOG_LEVEL            | INFO            | log level                                  |
+| SPHRAGIS_KEY_PROVIDER         | secrets         | `secrets` or `pkcs11` (masters in an HSM)  |
+| SPHRAGIS_PKCS11_MODULE        | (none)          | PKCS#11 library path (with pkcs11)         |
+| SPHRAGIS_PKCS11_TOKEN         | (none)          | token label (with pkcs11)                  |
+| SPHRAGIS_PKCS11_KEY_PREFIX    | sphragis.       | prefix of the key labels on the token      |
+| SPHRAGIS_PKCS11_CACHE_SECONDS | 60              | per-UID key cache lifetime (0: off)        |
 
 Every value is validated at startup: a typo or an out-of-range number stops
 the service instead of silently disabling a limit or an alert.
 
 Secrets (through `EnvSecretsBackend` by default: `SPHRAGIS_<NAME>` hex):
-`master_file`, `meta_read` (required); `log_pseudonym` (required when
-SPHRAGIS_LOG_UID=hmac); `webhook` (required when SPHRAGIS_WEBHOOK_URL is set).
+`master_file`, `meta_read` (required, unless SPHRAGIS_KEY_PROVIDER=pkcs11 keeps
+them in the token); `log_pseudonym` (required when SPHRAGIS_LOG_UID=hmac);
+`webhook` (required when SPHRAGIS_WEBHOOK_URL is set). The token PIN is read
+from SPHRAGIS_PKCS11_PIN, or from the file named by SPHRAGIS_PKCS11_PIN_FILE,
+and is never kept in the settings.
 """
 
 from __future__ import annotations
@@ -122,6 +130,11 @@ class ApiSettings:
     ipv6_prefix: int = 64
     ledger_window: int | None = None                # None: keep every counter
     event_log_id: str | None = None                 # set: chained events (schema 2)
+    key_provider: str = "secrets"                   # or "pkcs11"
+    pkcs11_module: str | None = None
+    pkcs11_token: str | None = None
+    pkcs11_key_prefix: str = "sphragis."
+    pkcs11_cache_seconds: float = 60.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
@@ -199,6 +212,21 @@ class ApiSettings:
             if ledger_window < 1:
                 raise ValueError("SPHRAGIS_LEDGER_WINDOW must be a positive number of "
                                  "counter values")
+        key_provider = get("KEY_PROVIDER", "secrets").lower()
+        if key_provider not in ("secrets", "pkcs11"):
+            raise ValueError("SPHRAGIS_KEY_PROVIDER must be 'secrets' or 'pkcs11'")
+        pkcs11_module = get("PKCS11_MODULE", "") or None
+        pkcs11_token = get("PKCS11_TOKEN", "") or None
+        if key_provider == "pkcs11" and not (pkcs11_module and pkcs11_token):
+            raise ValueError("SPHRAGIS_KEY_PROVIDER=pkcs11 needs SPHRAGIS_PKCS11_MODULE "
+                             "and SPHRAGIS_PKCS11_TOKEN")
+        try:
+            pkcs11_cache = float(get("PKCS11_CACHE_SECONDS", "60"))
+        except ValueError:
+            pkcs11_cache = -1.0
+        if not 0 <= pkcs11_cache < math.inf:
+            raise ValueError("SPHRAGIS_PKCS11_CACHE_SECONDS must be a number of "
+                             "seconds >= 0")
         proxies = csv("TRUSTED_PROXIES")
         try:
             parse_trusted_proxies(proxies)
@@ -230,4 +258,9 @@ class ApiSettings:
             ipv6_prefix=ipv6_prefix,
             ledger_window=ledger_window,
             event_log_id=get("EVENT_LOG_ID", "") or None,
+            key_provider=key_provider,
+            pkcs11_module=pkcs11_module,
+            pkcs11_token=pkcs11_token,
+            pkcs11_key_prefix=get("PKCS11_KEY_PREFIX", "sphragis."),
+            pkcs11_cache_seconds=pkcs11_cache,
         )

@@ -81,7 +81,14 @@ def decrypt_picc_data(enc_picc_data: bytes, meta_read_key: bytes) -> PiccData:
             f"PICCData must be 16 bytes, got {len(enc_picc_data)}"
         )
     plain = AES.new(meta_read_key, AES.MODE_CBC, _ZERO_IV).decrypt(enc_picc_data)
+    return parse_picc_plain(plain)
 
+
+def parse_picc_plain(plain: bytes) -> PiccData:
+    """Parse a decrypted PICCData block (for key providers that decrypt it
+    themselves, e.g. inside an HSM)."""
+    if len(plain) != 16:
+        raise SdmError(f"PICCData must be 16 bytes, got {len(plain)}")
     tag_byte = plain[0]
     if not tag_byte & _TAG_UID_MIRROR:
         raise SdmError("PICCData does not contain a UID (UID mirror flag unset)")

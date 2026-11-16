@@ -153,7 +153,7 @@ coerente. Vedi [la documentazione API](api.it.md#scalabilità-orizzontale-cronol
 
 ## Checklist di indurimento
 
-- [ ] Chiavi in KMS/HSM, non in env su host a lunga vita
+- [x] Master key in un HSM tramite PKCS#11 (`SPHRAGIS_KEY_PROVIDER=pkcs11`, [gestione delle chiavi](key-management.it.md#master-key-in-un-hsm-pkcs11))
 - [x] Floor Postgres con update condizionale atomico, cronologia e audit trail condivisi
 - [x] Rate limiting sull'endpoint di verifica (per IP + per UID autentico; in-process, vedi [API](api.it.md#rate-limiting))
 - [x] Log strutturati + alert su `CLONE_LIKELY`

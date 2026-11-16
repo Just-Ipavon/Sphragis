@@ -197,10 +197,49 @@ records for the long term can re-sign or re-timestamp them with a new
 algorithm (e.g. ML-DSA) using these fields, while old tags keep verifying
 under the version they were keyed with.
 
-## Honest limitation
+## Master keys in an HSM (PKCS#11)
 
-A software backend fetches the key into process memory, where Python `bytes`
-cannot be reliably zeroized. A true HSM keeps the key resident and performs the
-crypto inside the module; `KmsSecretsBackend` is where that integration belongs.
-For NTAG 424 DNA the master key should live in an HSM/KMS and only diversified
-material should transit.
+A secrets backend fetches the keys into process memory, where Python `bytes`
+cannot be reliably zeroized. With `SPHRAGIS_KEY_PROVIDER=pkcs11` the masters
+stay in a PKCS#11 token as non-extractable keys (`pip install "sphragis[hsm]"`):
+
+- the AN10922 diversification runs in the token (two AES operations under the
+  master file key), and only the **per-UID key** comes back;
+- PICCData is decrypted in the token with the meta-read key, so this
+  fleet-wide key never reaches the process either.
+
+```bash
+# Once, from the offline copy of the keys (labels sphragis.master_file, ...)
+SPHRAGIS_PKCS11_PIN=... sphragis hsm-import --module /usr/lib/softhsm/libsofthsm2.so \
+    --token sphragis --secrets-dir ~/.sphragis/keys --versions 1
+
+SPHRAGIS_KEY_PROVIDER=pkcs11
+SPHRAGIS_PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so   # your HSM's library
+SPHRAGIS_PKCS11_TOKEN=sphragis
+SPHRAGIS_PKCS11_PIN_FILE=/run/secrets/pkcs11_pin         # or SPHRAGIS_PKCS11_PIN
+```
+
+`hsm-import` creates each key `CKA_SENSITIVE`, not `CKA_EXTRACTABLE`, allowed
+only the one operation the verifier needs (`CKA_ENCRYPT` for the master file
+key, `CKA_DECRYPT` for the meta-read key), and refuses to overwrite a label.
+Versions follow `SPHRAGIS_KEY_VERSIONS` (`sphragis.master_file_v2`, …), so
+[rotation](#key-versions-and-rotation) works unchanged. Tests run against
+SoftHSM2 in CI.
+
+What still transits:
+
+- **Per-UID keys** are in process memory while a tap is verified, and cached
+  for `SPHRAGIS_PKCS11_CACHE_SECONDS` (60; `0` turns the cache off). A
+  compromised process learns the keys of the tags it sees, not the masters.
+- **An encryption oracle.** A compromised process can still ask the token to
+  derive any UID's key while it runs. The HSM bounds the damage in time
+  (revoke its access and the oracle is gone; the masters were never copied),
+  not in scope.
+- **Provisioning** writes keys to tags, so `tools/rekey.py` needs the keys
+  themselves: keep the offline copy you imported from, under the controls
+  of [keying safely](#keying-safely).
+
+Cloud KMS services that only expose HMAC or high-level encryption (AWS KMS
+`GenerateMac` is HMAC, for one) cannot compute AN10922; use their PKCS#11
+interface (CloudHSM, Cloud HSM), or a Vault-style transit engine with raw AES,
+behind your own `KeyProvider` (`file_read_key(uid)` plus `decrypt_picc(enc)`).

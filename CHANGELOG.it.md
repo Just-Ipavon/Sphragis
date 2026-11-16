@@ -15,6 +15,15 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- Master key in un HSM (#58): `SPHRAGIS_KEY_PROVIDER=pkcs11` con
+  `sphragis.hsm.Pkcs11KeyProvider` (extra `sphragis[hsm]`). La
+  diversificazione AN10922 e la decifratura del PICCData avvengono nel token,
+  quindi né `master_file` né `meta_read` arrivano al processo; ci arrivano solo
+  le chiavi per UID, in cache per `SPHRAGIS_PKCS11_CACHE_SECONDS`.
+  `sphragis hsm-import` vi copia le chiavi come oggetti sensibili, non
+  estraibili e a uso singolo; le versioni delle chiavi ruotano come prima. Un
+  `KeyProvider` può ora definire `decrypt_picc(enc)` invece di esporre
+  `meta_read_key()`. Un job di CI esegue i test contro SoftHSM2.
 - Limiti di frequenza e challenge condivisi tra repliche (#72):
   `SPHRAGIS_RATE_LIMIT_STORE=db` tiene i token bucket per IP e per UID nel
   database condiviso (`PostgresRateLimiter`, o `SqliteRateLimiter` per più
