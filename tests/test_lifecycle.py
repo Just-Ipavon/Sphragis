@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from test_backends import needs_pg  # noqa: E402
+from test_backends import needs_pg, pg_dsn  # noqa: E402, F401
 
 from sphragis.alerts import Alert, AlertThrottle, BackgroundAlertSink  # noqa: E402
 from sphragis.analyzer import CounterPolicy, TagAnalyzer  # noqa: E402
