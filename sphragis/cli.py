@@ -30,9 +30,9 @@ parameter are verified as SDMENCFileData taps automatically.
 
     # Import a WebAuthn credential the relying party registered, list, revoke
     python -m sphragis.cli credentials import --sqlite sphragis.db \
-        --credential-id <base64url> --cose-key <base64url> --rp-id verify.example.com
+        --credential-id=<base64url> --cose-key=<base64url> --rp-id verify.example.com
     python -m sphragis.cli credentials list --sqlite sphragis.db
-    python -m sphragis.cli credentials revoke --sqlite sphragis.db --credential-id <base64url>
+    python -m sphragis.cli credentials revoke --sqlite sphragis.db --credential-id=<base64url>
 
     # Generate a demo tap from an emulated tag (no hardware needed)
     python -m sphragis.cli emulate --meta-key <hex> --file-key <hex> --uid 04DE5F1EACC040
@@ -347,13 +347,16 @@ def build_parser() -> argparse.ArgumentParser:
     actions = c.add_subparsers(dest="action", required=True)
     ci = actions.add_parser("import", help="import a credential the relying party "
                                            "registered (attestation is its job)")
-    ci.add_argument("--credential-id", type=_b64url, required=True, help="base64url")
+    ci.add_argument("--credential-id", type=_b64url, required=True,
+                    help="base64url; write --credential-id=ID, since an id may start with '-'")
     ci.add_argument("--cose-key", type=_b64url, required=True,
-                    help="COSE_Key from the registration, base64url (ES256 or EdDSA)")
+                    help="COSE_Key from the registration, base64url (ES256 or EdDSA); "
+                         "write --cose-key=KEY")
     ci.add_argument("--rp-id", default=None,
                     help="only accept it for this RP ID (recommended)")
     cr = actions.add_parser("revoke", help="stop accepting a credential")
-    cr.add_argument("--credential-id", type=_b64url, required=True, help="base64url")
+    cr.add_argument("--credential-id", type=_b64url, required=True,
+                    help="base64url; write --credential-id=ID, since an id may start with '-'")
     cl = actions.add_parser("list", help="list imported credentials, newest first")
     cl.add_argument("--limit", type=_taps, default=1000)
     cl.add_argument("--json", action="store_true", help="machine-readable output")

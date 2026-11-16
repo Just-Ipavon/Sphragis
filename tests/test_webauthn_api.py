@@ -178,24 +178,37 @@ def test_challenge_stores_bound_outstanding_challenges(tmp_path):
     store.close()
 
 
+def test_cli_takes_a_credential_id_starting_with_a_dash(tmp_path, capsys):
+    """base64url ids can start with '-': the documented --credential-id=ID form reads them."""
+    db = str(tmp_path / "s.db")
+    SqliteCredentialStore(db).close()
+    auth = SoftAuthenticator()
+    auth.credential_id = b"\xfb" + auth.credential_id[1:]        # base64url "-..."
+    cid = b64u(auth.credential_id)
+    assert cid.startswith("-")
+    assert cli(["credentials", "import", "--sqlite", db, f"--credential-id={cid}",
+                f"--cose-key={b64u(auth.cose_key)}"]) == 0
+    assert cli(["credentials", "revoke", "--sqlite", db, f"--credential-id={cid}"]) == 0
+
+
 def test_cli_credentials_import_list_revoke(tmp_path, capsys):
     db = str(tmp_path / "s.db")
     SqliteCredentialStore(db).close()
     auth = SoftAuthenticator()
     cid = b64u(auth.credential_id)
-    assert cli(["credentials", "import", "--sqlite", db, "--credential-id", cid,
-                "--cose-key", b64u(auth.cose_key), "--rp-id", RP_ID]) == 0
+    assert cli(["credentials", "import", "--sqlite", db, f"--credential-id={cid}",
+                f"--cose-key={b64u(auth.cose_key)}", "--rp-id", RP_ID]) == 0
     assert f"IMPORTED  : {cid}" in capsys.readouterr().out
     with pytest.raises(SystemExit):                            # already imported
-        cli(["credentials", "import", "--sqlite", db, "--credential-id", cid,
-             "--cose-key", b64u(auth.cose_key)])
+        cli(["credentials", "import", "--sqlite", db, f"--credential-id={cid}",
+             f"--cose-key={b64u(auth.cose_key)}"])
     with pytest.raises(SystemExit):                            # not a COSE key
-        cli(["credentials", "import", "--sqlite", db, "--credential-id", "AAAA",
-             "--cose-key", "AAAA"])
+        cli(["credentials", "import", "--sqlite", db, "--credential-id=AAAA",
+             "--cose-key=AAAA"])
     capsys.readouterr()
     assert cli(["credentials", "list", "--sqlite", db, "--json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert [(c["credential_id"], c["rp_id"], c["revoked"]) for c in listed] == [
         (cid, RP_ID, None)]
-    assert cli(["credentials", "revoke", "--sqlite", db, "--credential-id", cid]) == 0
-    assert cli(["credentials", "revoke", "--sqlite", db, "--credential-id", cid]) == 1
+    assert cli(["credentials", "revoke", "--sqlite", db, f"--credential-id={cid}"]) == 0
+    assert cli(["credentials", "revoke", "--sqlite", db, f"--credential-id={cid}"]) == 1

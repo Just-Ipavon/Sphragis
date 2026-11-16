@@ -135,9 +135,9 @@ una sola volta da qualunque replica verifichi l'asserzione.
 
    ```bash
    sphragis credentials import --sqlite sphragis.db \
-       --credential-id <base64url> --cose-key <base64url> --rp-id verify.example.com
+       --credential-id=<base64url> --cose-key=<base64url> --rp-id verify.example.com
    sphragis credentials list --sqlite sphragis.db
-   sphragis credentials revoke --sqlite sphragis.db --credential-id <base64url>
+   sphragis credentials revoke --sqlite sphragis.db --credential-id=<base64url>
    ```
 
 2. La pagina chiede a `POST /v1/webauthn/challenge` le opzioni della richiesta
