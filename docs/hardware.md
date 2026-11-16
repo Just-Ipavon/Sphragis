@@ -18,6 +18,7 @@ pip install -e ".[hw]"         # pyserial (Chameleon Ultra)
 |---------|------------|--------|
 | Chameleon Ultra (USB serial) | `chameleon --port /dev/ttyACM0` | validated on firmware v2.1 |
 | Software tag | `emulator` | read-only ISO subset, no hardware |
+| Simulated NTAG 424 DNA | `emulator --emulator-state tag.json` | EV2 secure messaging, no hardware |
 
 The Chameleon Ultra is used as a raw ISO 14443-A frame pipe. Sphragis speaks
 its serial protocol directly (no vendor client needed) and does ISO-DEP
@@ -31,6 +32,34 @@ device. Notes from the hardware:
   `STATUS_PAR_ERR` otherwise). The FSC is capped at 64, whatever the card
   announces, and longer APDUs go out with ISO-DEP chaining.
 - On Linux the user needs access to the serial port (group `dialout`).
+
+## Simulated tag (no hardware)
+
+`sphragis.simulator.SimulatedNtag424` models the PICC side of the chip: SDM
+mirroring, AuthenticateEV2First, ChangeFileSettings, ChangeKey, WriteData,
+GetKeyVersion, GetCardUID and Read_Sig, with the chip's status words (6D00
+for an unknown ISO instruction, 6E00 for an unknown class, 911C for an
+unknown native command). Its EV2 half is written independently of
+`sphragis.ev2`, so the two check each other. With `--emulator-state FILE` every
+tool uses it; the tag is created factory-fresh when FILE does not exist and
+saved back after each connection, so the whole lifecycle runs on a laptop
+or in CI:
+
+```bash
+S="--reader emulator --emulator-state tag.json"
+python tools/provision.py $S --base-url https://example.com/t --dry-run   # shows the UID
+python tools/provision.py $S --base-url https://example.com/t --yes --uid <UID>
+python tools/tap_verify.py $S --taps 2
+python tools/rekey.py $S --secrets-dir keys --inventory inv.db --uid <UID> --yes
+python tools/tap_verify.py $S --secrets-dir keys
+python tools/rekey.py $S --secrets-dir keys --inventory inv.db --uid <UID> --to-factory --yes
+```
+
+The state file holds the tag's keys, so it is written with mode 0600. The
+simulated originality signature uses a test key: `rekey.py` checks it against
+that key, never against the NXP one, and a simulated tag never passes the
+NXP originality check. Timing, RF and anti-tearing are not modelled: the
+simulator is for flows and protocol, not for hardware behaviour.
 
 ## Frozen SDM configuration
 
