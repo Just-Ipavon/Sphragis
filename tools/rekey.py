@@ -19,6 +19,10 @@ Without --uid, a real run asks you to type the UID shown before writing.
         --context DEMO --dry-run
     python tools/rekey.py ... --yes
     python tools/rekey.py ... --to-factory --yes
+
+With --reader emulator --emulator-state FILE the tool keys the simulated tag
+kept in FILE; its originality signature is checked against the simulator's
+test key, never the NXP one.
 """
 
 from __future__ import annotations
@@ -29,7 +33,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _reader import add_reader_args, reader_factory  # noqa: E402
+from _reader import (  # noqa: E402
+    TEST_ORIGINALITY_KEY,
+    add_reader_args,
+    reader_factory,
+    simulated,
+)
 
 from sphragis.apdu import ApduError  # noqa: E402
 from sphragis.keyprov import (  # noqa: E402
@@ -93,8 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--yes", action="store_true", help="confirm changing the keys")
     args = parser.parse_args(argv)
 
-    if args.reader in (None, "emulator"):
-        parser.error("a hardware reader is required (--reader chameleon --port ...)")
+    if args.reader is None or (args.reader == "emulator" and not simulated(args)):
+        parser.error("a reader with secure messaging is required (--reader chameleon "
+                     "--port ..., or --reader emulator --emulator-state FILE)")
     try:
         uid = bytes.fromhex(args.uid) if args.uid else None
     except ValueError:
@@ -109,7 +119,8 @@ def main(argv: list[str] | None = None) -> int:
             report = rekey_tag(
                 transport, target, known, uid=uid, dry_run=args.dry_run, log=print,
                 inventory=inventory,
-                originality_key=None if args.skip_originality_check else ORIGINALITY_KEY,
+                originality_key=None if args.skip_originality_check else (
+                    TEST_ORIGINALITY_KEY if simulated(args) else ORIGINALITY_KEY),
                 confirm=None if uid else confirm_by_typing,
                 allow_known_uid=args.allow_known_uid)
     except KeyProvisionError as exc:
