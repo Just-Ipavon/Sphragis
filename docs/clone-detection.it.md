@@ -36,6 +36,16 @@ storage aggiornato da un floor semplice registra dove è iniziato il registro di
 ogni UID; i contatori fino a quel punto sono segnalati come `REPLAY`
 (`stale_counter`), perché non si sa se siano già stati inviati.
 
+Registro e cronologia del rilevatore sono due scritture, spesso in due
+storage. Perché un crash o uno storage della cronologia che fallisce tra le
+due non possa consumare un contatore che non arriva mai nella cronologia (né
+far sparire l'alert di una regressione), il registro conserva una nota di ogni
+tap nuovo nella stessa transazione e la elimina quando la scrittura della
+cronologia riesce. Il tap successivo di quell'UID, compreso un nuovo invio
+dello stesso URL, completa le note rimaste; una regressione trovata così viene
+riportata con quel tap, come `CLONE_LIKELY` con `counter_regression`, quindi il
+suo alert arriva in ritardo invece di non arrivare mai.
+
 ### Conservazione
 
 Di default il registro conserva ogni contatore mai inviato. Con una finestra

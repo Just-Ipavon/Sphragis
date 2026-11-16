@@ -89,6 +89,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Fixed
 
+- A history write lost after the tap ledger write (a crash, or the history
+  store failing) no longer consumes the counter for nothing (#86). The ledger
+  keeps a note of each new tap in the same transaction and drops it once the
+  history write succeeds; the next tap of the UID completes what was left, and
+  a regression recovered that way still raises its alert. JSON, SQLite and
+  Postgres ledgers implement it (`SettlingLedger`); a custom `TapLedger`
+  without `settle` works as before.
 - Packaging, docs and CI (#69): a `MANIFEST.in` puts in the sdist what its
   tests read (test helpers, docs, tools, examples, locks, workflows), and a
   new CI job builds the sdist and the wheel and runs the suite from the

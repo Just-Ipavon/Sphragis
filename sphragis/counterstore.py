@@ -42,6 +42,19 @@ _FORMAT = 2   # JSON file layout with the tap ledger; older files are a bare flo
 
 
 @dataclass(frozen=True)
+class PendingTap:
+    """
+    A counter the ledger recorded whose detector history write was not
+    confirmed (`settle`): the process stopped, or the history store failed,
+    in between. The next tap of the UID completes it from `note`.
+    """
+
+    counter: int
+    floor_before: int | None
+    note: dict
+
+
+@dataclass(frozen=True)
 class TapRecord:
     """Outcome of recording one counter value for a UID."""
 
@@ -50,6 +63,8 @@ class TapRecord:
     floor_before: int | None  # the floor before this record (None: unknown UID)
     ledger_since: int | None = None   # the floor when this UID's ledger began:
                                       # counters up to it predate the ledger
+    pending: tuple[PendingTap, ...] = ()  # unsettled taps of this UID, read before
+                                          # this one was recorded
 
     @property
     def fresh(self) -> bool:
@@ -103,6 +118,23 @@ class TapLedger(Protocol):
 
 
 @runtime_checkable
+class SettlingLedger(TapLedger, Protocol):
+    """
+    A tap ledger that also keeps, in the same transaction as a new counter, a
+    note to finish its history write (`record_tap(..., note=...)`), drops it
+    once that write succeeded (`settle`), and returns a UID's unsettled notes
+    with every `TapRecord` (`pending`), so a crash or a failing history store
+    between the two writes never loses an observation or a regression alert
+    (#86).
+    """
+
+    def record_tap(self, uid_hex: str, counter: int,
+                   note: dict | None = None) -> TapRecord: ...
+
+    def settle(self, uid_hex: str, counter: int) -> None: ...
+
+
+@runtime_checkable
 class CounterBackend(Protocol):
     """
     Anti-replay floor. Any backend (JSON file, SQLite, a real RDBMS) that
@@ -141,8 +173,9 @@ class CounterStore:
         self._seen: dict[str, int] = {}
         self._taps: dict[str, set[int]] = {}
         self._since: dict[str, int | None] = {}
+        self._pending: dict[str, dict[int, dict]] = {}
         if self._path and self._path.exists():
-            self._seen, self._taps, self._since = self._read()
+            self._seen, self._taps, self._since, self._pending = self._read()
 
     # -- file I/O ----------------------------------------------------------------
     def _read(self):
@@ -163,18 +196,23 @@ class CounterStore:
                 taps = {store_key(u): {int(c) for c in v} for u, v in data["taps"].items()}
                 since = {store_key(u): (None if c is None else int(c))
                          for u, c in data["since"].items()}
+                pending = {store_key(u): {int(c): dict(n) for c, n in v.items()}
+                           for u, v in data.get("pending", {}).items()}
             else:                                    # bare floor map (older files)
                 floors = {store_key(u): int(c) for u, c in data.items()}
-                taps, since = {}, {}
+                taps, since, pending = {}, {}, {}
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise CounterStoreError(f"{self._path} is not a valid counter store: "
                                     f"{exc}") from exc
-        return floors, taps, since
+        return floors, taps, since, pending
 
-    def _write(self, floors, taps, since) -> None:
+    def _write(self, floors, taps, since, pending) -> None:
         if taps:
             data = {"format": _FORMAT, "floors": floors,
                     "taps": {u: sorted(v) for u, v in taps.items()}, "since": since}
+            live = {u: {str(c): n for c, n in v.items()} for u, v in pending.items() if v}
+            if live:
+                data["pending"] = live
         else:                                  # keep the bare map until the ledger is used
             data = floors
         directory = self._path.parent
@@ -212,22 +250,28 @@ class CounterStore:
         finally:
             os.close(fd)
 
-    def _mutate(self, change):
+    def _mutate(self, change, with_pending: bool = False):
         """
-        Apply `change(floors, taps, since) -> (result, dirty)` to the latest
+        Apply `change(floors, taps, since) -> (result, dirty)` (with
+        `pending` as a fourth argument when `with_pending`) to the latest
         state on disk; persist before memory moves.
         """
         with self._lock, self._file_lock():
             if self._path is not None and self._path.exists():
-                floors, taps, since = self._read()
+                floors, taps, since, pending = self._read()
             else:
                 floors = dict(self._seen)
                 taps = {u: set(v) for u, v in self._taps.items()}
                 since = dict(self._since)
-            result, dirty = change(floors, taps, since)
+                pending = {u: dict(v) for u, v in self._pending.items()}
+            if with_pending:
+                result, dirty = change(floors, taps, since, pending)
+            else:
+                result, dirty = change(floors, taps, since)
             if dirty and self._path is not None:
-                self._write(floors, taps, since)
+                self._write(floors, taps, since, pending)
             self._seen, self._taps, self._since = floors, taps, since
+            self._pending = pending
             return result
 
     # -- floor ---------------------------------------------------------------------
@@ -281,16 +325,22 @@ class CounterStore:
         uid_hex = store_key(uid_hex)
         return self._view(lambda floors, taps: counter in taps.get(uid_hex, ()))
 
-    def record_tap(self, uid_hex: str, counter: int) -> TapRecord:
+    def record_tap(self, uid_hex: str, counter: int,
+                   note: dict | None = None) -> TapRecord:
         uid_hex = store_key(uid_hex)
 
-        def change(floors, taps, since):
+        def change(floors, taps, since, pending):
             floor = floors.get(uid_hex)
             dirty = False
             if uid_hex not in taps:
                 taps[uid_hex], since[uid_hex] = set(), floor
                 dirty = True
-            record = TapRecord(counter, counter not in taps[uid_hex], floor, since[uid_hex])
+            unsettled = tuple(PendingTap(c, n.get("floor_before"), n)
+                              for c, n in sorted(pending.get(uid_hex, {}).items()))
+            record = TapRecord(counter, counter not in taps[uid_hex], floor, since[uid_hex],
+                               unsettled)
+            if record.new and note is not None:
+                pending.setdefault(uid_hex, {})[counter] = {**note, "floor_before": floor}
             if record.new:
                 taps[uid_hex].add(counter)
                 if record.fresh:
@@ -302,4 +352,19 @@ class CounterStore:
                 dirty = True
             return record, dirty
 
-        return self._mutate(change)
+        return self._mutate(change, with_pending=True)
+
+    def settle(self, uid_hex: str, counter: int) -> None:
+        """The history write for `counter` succeeded: drop its pending note."""
+        uid_hex = store_key(uid_hex)
+
+        def change(floors, taps, since, pending):
+            notes = pending.get(uid_hex)
+            if not notes or counter not in notes:
+                return None, False
+            del notes[counter]
+            if not notes:
+                del pending[uid_hex]
+            return None, True
+
+        self._mutate(change, with_pending=True)
