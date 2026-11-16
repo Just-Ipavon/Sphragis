@@ -14,6 +14,13 @@ Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 
 ### Added
 
+- Packaged NTAG 424 DNA simulator (#74): `sphragis.simulator.SimulatedNtag424`,
+  formerly `tests/fake_ntag424.py`, models EV2 authentication, ChangeKey,
+  ChangeFileSettings, WriteData and SDM mirroring. With
+  `--reader emulator --emulator-state FILE` the tools provision, tap, rekey
+  and reset a simulated tag kept in FILE (mode 0600), so the whole lifecycle
+  runs in CI without hardware. `tap_verify.py` reports a tag it cannot read
+  instead of a traceback.
 - Shared rate limits and challenges for several replicas (#72):
   `SPHRAGIS_RATE_LIMIT_STORE=db` keeps the per-IP and per-UID token buckets
   in the shared database (`PostgresRateLimiter`, or `SqliteRateLimiter` for

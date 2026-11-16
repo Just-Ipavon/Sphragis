@@ -23,12 +23,26 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _reader import add_reader_args, reader_factory  # noqa: E402
+from _reader import add_reader_args, reader_factory, simulated  # noqa: E402
 
 from sphragis import EncFileVerifier, StaticKeys, TagAnalyzer  # noqa: E402
 from sphragis.secrets import FileSecretsBackend, build_diversified_keys  # noqa: E402
 from sphragis.counterstore import CounterStore  # noqa: E402
-from sphragis.ndef import read_uri  # noqa: E402
+from sphragis.apdu import ApduError  # noqa: E402
+from sphragis.ndef import NdefError, read_uri  # noqa: E402
+from sphragis.transport import TransportError  # noqa: E402
+
+READ_ERRORS = (TransportError, ApduError, NdefError)
+
+
+def _read(open_reader):
+    """One tap's URI, or None after printing why it could not be read."""
+    try:
+        with open_reader() as transport:
+            return read_uri(transport)
+    except READ_ERRORS as exc:
+        print(f"ERROR        : {exc}")
+        return None
 
 ZERO = bytes(16)
 
@@ -49,9 +63,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="taps mirror SDMENCFileData: verify with EncFileVerifier")
     args = parser.parse_args(argv)
     if args.enc:
-        if args.reader == "emulator":
-            parser.error("the emulator backend emits plain SUN taps; --enc needs a "
-                         "tag provisioned with --enc-data")
+        if args.reader == "emulator" and not simulated(args):
+            parser.error("the read-only emulator emits plain SUN taps; --enc needs a "
+                         "tag provisioned with --enc-data (--emulator-state FILE)")
         return _enc_taps(args)
 
     analyzer = TagAnalyzer(_keys(args), store=CounterStore(args.store))
@@ -60,8 +74,9 @@ def main(argv: list[str] | None = None) -> int:
     for n in range(1, args.taps + 1):
         if args.wait:
             input(f"[tap {n}/{args.taps}] place the tag and press Enter... ")
-        with open_reader() as transport:
-            url = read_uri(transport)
+        url = _read(open_reader)
+        if url is None:
+            return 2
         r = analyzer.analyze(url, reader_id=args.reader_id)
         print(f"tap {n}: {r.classification:<12} UID {r.uid}  ctr {r.read_counter}  "
               f"score {r.risk_score}")
@@ -79,8 +94,9 @@ def _enc_taps(args: argparse.Namespace) -> int:
     for n in range(1, args.taps + 1):
         if args.wait:
             input(f"[tap {n}/{args.taps}] place the tag and press Enter... ")
-        with open_reader() as transport:
-            url = read_uri(transport)
+        url = _read(open_reader)
+        if url is None:
+            return 2
         r = verifier.verify(url)
         data = r.file_data.hex().upper() if r.file_data is not None else "-"
         print(f"tap {n}: {r.verdict.value:<12} UID {r.uid}  ctr {r.read_counter}  "
