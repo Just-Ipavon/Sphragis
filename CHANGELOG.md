@@ -3,7 +3,7 @@
 Italiano: [CHANGELOG.it.md](CHANGELOG.it.md). Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.1.0 — 2026-11-16
 
 ### Security
 
