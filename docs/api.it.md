@@ -47,6 +47,7 @@ di esso.
 | `GET`  | `/healthz` | Sonda di liveness (senza rate limit) |
 | `GET`  | `/readyz` | Readiness: ogni storage risponde a una lettura e la coda del webhook è sotto il 90%; altrimenti `503` con i controlli falliti |
 | `GET`  | `/v1/event-key` | Chiave pubblica degli [eventi firmati](events.it.md), quando sono abilitati |
+| `GET`  | `/v1/alert-stats` | Alert soppressi dalla [limitazione](clone-detection.it.md#ciclo-di-vita-delle-tag) e scartati dalla coda del webhook (token di lettore) |
 
 I verdetti tornano sempre con `200`. Gli altri codici sono `401` (credenziali
 non valide), `422` (body malformato o campi sconosciuti) e `429` (rate limit,
@@ -131,8 +132,11 @@ della stdlib (`sphragis.logs.JsonFormatter`):
 
 ## Alert
 
-`CLONE_LIKELY` (configurabile con `SPHRAGIS_ALERT_ON`, es. `CLONE_LIKELY,REPLAY`)
-viene inviato a ogni `AlertSink` configurato:
+`CLONE_LIKELY` e `REVOKED` (configurabili con `SPHRAGIS_ALERT_ON`, es.
+`CLONE_LIKELY,REVOKED,REPLAY`), e il primo tap vicino al limite del contatore
+(`counter_near_limit`), vengono inviati a ogni `AlertSink` configurato,
+attraverso una limitazione per tag
+([ciclo di vita](clone-detection.it.md#ciclo-di-vita-delle-tag)):
 
 | Sink | Scopo |
 |------|-------|
@@ -213,7 +217,11 @@ allora in un unico database Postgres condiviso da tutte le repliche (vedi
 | `SPHRAGIS_RATE_LIMIT_STORE` | `memory` | `db`: bucket per IP e per UID nel database condiviso ([rate limiting](#rate-limiting)) |
 | `SPHRAGIS_IPV6_PREFIX` | `64` | lunghezza del prefisso IPv6 coperto da un bucket (16-128) |
 | `SPHRAGIS_LEDGER_WINDOW` | nessuno (tutti) | conserva gli ultimi N valori del contatore per UID nel registro dei tap ([conservazione](clone-detection.it.md#conservazione)) |
-| `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY` | classificazioni che generano un alert |
+| `SPHRAGIS_ALERT_ON` | `CLONE_LIKELY,REVOKED` | classificazioni che generano un alert |
+| `SPHRAGIS_ALERT_UID_BURST` / `_UID_WINDOW` | `5` / `3600` | alert per tag per finestra prima della limitazione |
+| `SPHRAGIS_ALERT_DEDUP_SECONDS` | `300` | alert identici per una tag entro questo intervallo vengono scartati (`0`: disattivato) |
+| `SPHRAGIS_COUNTER_WARN_AT` | `16711680` | contatore che genera `counter_near_limit` una volta per tag (`off`) |
+| `SPHRAGIS_COUNTER_REFUSE_AT` | `off` | contatore da cui i tap rispondono `COUNTER_LIMIT` senza spostare il floor |
 | `SPHRAGIS_MAX_BODY_BYTES` | `8192` | body di richiesta più grande accettato |
 | `SPHRAGIS_WEBHOOK_URL` | nessuno | webhook degli alert (solo https) |
 | `SPHRAGIS_LOG_UID` | `hmac` | `hmac` o `plain` |

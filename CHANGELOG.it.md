@@ -15,6 +15,21 @@ English: [CHANGELOG.md](CHANGELOG.md). Le versioni seguono il
 
 ### Aggiunto
 
+- Ciclo di vita delle tag (#73):
+  - Lista di revoca: `REVOKED` risponde ai tap di tag ritirate o revocate,
+    controllato sui tap autentici prima di toccare qualsiasi stato.
+    Implementazioni in memoria, SQLite e Postgres; si gestisce con
+    `sphragis revoke`, `reinstate` e `revocations`. `REVOKED` genera un alert
+    per default.
+  - Rollover del contatore: il primo tap nuovo a `SPHRAGIS_COUNTER_WARN_AT`
+    (65 536 prima del limite a 24 bit) porta `counter_near_limit` e genera un
+    alert per tag. `SPHRAGIS_COUNTER_REFUSE_AT` risponde `COUNTER_LIMIT` senza
+    spostare il floor, così un clone con le chiavi non può bloccarlo al massimo.
+  - Limitazione degli alert: `AlertThrottle` elimina i duplicati e limita gli
+    alert per tag (`SPHRAGIS_ALERT_UID_BURST`, `_UID_WINDOW`,
+    `_DEDUP_SECONDS`), così una raffica per una tag non scalza le altre.
+    `GET /v1/alert-stats` (token di lettore) riporta gli alert soppressi e
+    scartati; `BackgroundAlertSink.dropped` conta la coda piena.
 - Simulatore NTAG 424 DNA nel package (#74): `sphragis.simulator.SimulatedNtag424`,
   prima `tests/fake_ntag424.py`, modella autenticazione EV2, ChangeKey,
   ChangeFileSettings, WriteData e mirroring SDM. Con

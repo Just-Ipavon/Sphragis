@@ -13,12 +13,13 @@ from typing import Mapping
 
 from ..alerts import (
     AlertSink,
+    AlertThrottle,
     BackgroundAlertSink,
     LogAlertSink,
     SqliteAlertSink,
     WebhookAlertSink,
 )
-from ..analyzer import TagAnalyzer
+from ..analyzer import CounterPolicy, TagAnalyzer
 from ..backends import VerificationBackend
 from ..detection import CloneDetector
 from ..encverifier import Ntag424EncBackend
@@ -29,7 +30,7 @@ from ..observations import SqliteObservationStore
 from ..ratelimit import TokenBucketLimiter
 from ..secrets import EnvSecretsBackend, SecretsBackend
 from ..service import VerificationService
-from ..sqlstore import SqliteCounterStore
+from ..sqlstore import SqliteCounterStore, SqliteRevocationList
 from ..verifier import Ntag424SunBackend
 from .app import create_app
 from .settings import ApiSettings, parse_reader_tokens
@@ -47,18 +48,28 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
     keys = build_keyring(secrets, settings.key_versions, context=settings.key_context)
     if settings.db_url:
         # One shared database for every replica, on any number of hosts.
-        from ..pgstore import PostgresAlertSink, PostgresCounterStore, PostgresObservationStore
+        from ..pgstore import (
+            PostgresAlertSink,
+            PostgresCounterStore,
+            PostgresObservationStore,
+            PostgresRevocationList,
+        )
         history, floor = (PostgresObservationStore(settings.db_url),
                           PostgresCounterStore(settings.db_url, settings.ledger_window))
         audit: AlertSink = PostgresAlertSink(settings.db_url)
+        revocations = PostgresRevocationList(settings.db_url)
     else:
         history, floor = (SqliteObservationStore(settings.db_path),
                           SqliteCounterStore(settings.db_path, settings.ledger_window))
         audit = SqliteAlertSink(settings.db_path)
+        revocations = SqliteRevocationList(settings.db_path)
     detector = CloneDetector(min_travel_seconds=settings.min_travel_seconds, store=history)
     factories = {"ntag424-sun-enc": Ntag424EncBackend, "ntag424-sun": Ntag424SunBackend}
     backends: list[VerificationBackend] = [factories[n](keys) for n in settings.backends]
-    analyzer = TagAnalyzer(backends=backends, detector=detector, store=floor)
+    analyzer = TagAnalyzer(backends=backends, detector=detector, store=floor,
+                           revocations=revocations,
+                           counter_policy=CounterPolicy(settings.counter_warn_at,
+                                                        settings.counter_refuse_at))
 
     sinks: list[AlertSink] = [LogAlertSink(), audit]
     background = None
@@ -90,6 +101,8 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         event_sinks=sinks_for_events or (),
         events_on=settings.events_on,
         event_chain=chain,
+        alert_throttle=AlertThrottle(settings.alert_uid_burst, settings.alert_uid_window,
+                                     settings.alert_dedup_seconds),
     )
     return create_app(
         service,
@@ -100,12 +113,12 @@ def create_app_from_env(env: Mapping[str, str] | None = None,
         throttle_retry_after=1.0 / settings.uid_rate,
         max_body_bytes=settings.max_body_bytes,
         event_signer=signer,
-        ready_checks=_ready_checks(floor, history, background),
+        ready_checks=_ready_checks(floor, history, revocations, background),
         # Deliver queued webhook alerts first, then close the stores they
         # and the requests in flight were using.
         on_shutdown=[*([lambda: background.close(SHUTDOWN_DRAIN_SECONDS)]
                        if background is not None else []),
-                     floor.close, history.close, audit.close],
+                     floor.close, history.close, audit.close, revocations.close],
     )
 
 
@@ -125,11 +138,12 @@ SHUTDOWN_DRAIN_SECONDS = 10.0
 every alert regardless)."""
 
 
-def _ready_checks(floor, history, background) -> dict:
+def _ready_checks(floor, history, revocations, background) -> dict:
     checks = {
         # A read on each store: the database is reachable and the schema there.
         "counters": lambda: floor.last_counter("00") or True,
         "history": lambda: history.history("00") is not None,
+        "revocations": lambda: revocations.get("00") or True,
     }
     if background is not None:
         checks["alert_queue"] = lambda: background.pending < background.capacity * 0.9
